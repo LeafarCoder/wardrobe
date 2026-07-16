@@ -12,14 +12,9 @@ Your clothes, extracted and organized with OpenAI.
 
 </div>
 
-![Wardrobe editor](docs/screenshots/editor.jpg)
+![Wardrobe gallery](docs/screenshots/gallery.png)
 
-<table>
-  <tr>
-    <td width="72%"><img src="docs/screenshots/modeled-view.jpg" alt="Modeled wardrobe view" /></td>
-    <td width="28%"><img src="docs/screenshots/mobile.jpg" alt="Mobile wardrobe view" /></td>
-  </tr>
-</table>
+![Modeled wardrobe editor](docs/screenshots/editor.png)
 
 ## Quick start
 
