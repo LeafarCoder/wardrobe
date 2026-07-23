@@ -16,7 +16,24 @@ const TYPES = [
 ];
 
 const TYPE_MAP = Object.fromEntries(TYPES.map((type) => [type.id, type]));
-const TYPE_ORDER = Object.fromEntries(TYPES.slice(1).map((type, index) => [type.id, index]));
+const ORGANIZATION_MODES = [
+  { id: "custom", label: "My order" },
+  { id: "updated", label: "Last updated" },
+  { id: "color", label: "Colors" },
+];
+const ORGANIZATION_MODE_IDS = new Set(ORGANIZATION_MODES.map((mode) => mode.id));
+const COLOR_GROUPS = [
+  { id: "light-neutrals", label: "Light neutrals", tones: ["#f7f4ed", "#d8cfbd", "#aaa8a3"] },
+  { id: "greens", label: "Greens & teals", tones: ["#afbd80", "#487b52", "#1e6666"] },
+  { id: "blues", label: "Blues", tones: ["#a9c8dc", "#3d70a3", "#263c72"] },
+  { id: "purples", label: "Purples", tones: ["#c8afd4", "#765188", "#432f5c"] },
+  { id: "reds", label: "Reds & pinks", tones: ["#e7b1b3", "#b64d55", "#762d3b"] },
+  { id: "warm", label: "Yellows & oranges", tones: ["#e4cc6a", "#c7803f", "#934f28"] },
+  { id: "browns", label: "Browns", tones: ["#b28d6b", "#76523c", "#3f2b24"] },
+  { id: "dark-neutrals", label: "Dark neutrals", tones: ["#686763", "#393a3a", "#171818"] },
+  { id: "other", label: "Other colors", tones: ["#aaa19a", "#77716c", "#4b4845"] },
+];
+const COLOR_GROUP_INDEX = Object.fromEntries(COLOR_GROUPS.map((group, index) => [group.id, index]));
 const LEGACY_ORIGINAL_FOCUS = {
   upperbody: [50, 44],
   wholebody_up: [50, 52],
@@ -24,6 +41,51 @@ const LEGACY_ORIGINAL_FOCUS = {
   accessories_up: [50, 54],
   shoes: [50, 78],
 };
+
+function hexToHsl(value) {
+  const match = /^#([0-9a-f]{6})$/i.exec(value || "");
+  if (!match) return { hue: 0, saturation: 0, lightness: 0.5 };
+  const [red, green, blue] = match[1].match(/.{2}/g).map((channel) => Number.parseInt(channel, 16) / 255);
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  const lightness = (maximum + minimum) / 2;
+  const difference = maximum - minimum;
+  if (!difference) return { hue: 0, saturation: 0, lightness };
+  const saturation = difference / (1 - Math.abs((2 * lightness) - 1));
+  let hue = maximum === red
+    ? 60 * (((green - blue) / difference) % 6)
+    : maximum === green
+      ? 60 * (((blue - red) / difference) + 2)
+      : 60 * (((red - green) / difference) + 4);
+  if (hue < 0) hue += 360;
+  return { hue, saturation, lightness };
+}
+
+function colorGroup(item) {
+  const color = hexToHsl(item.color);
+  const { hue, saturation, lightness } = color;
+  let id = "other";
+
+  if (
+    lightness >= 0.86
+    || (saturation <= 0.18 && lightness >= 0.46)
+    || (hue >= 25 && hue <= 65 && saturation <= 0.58 && lightness >= 0.5)
+  ) id = "light-neutrals";
+  else if (saturation <= 0.2 || lightness <= 0.06) id = "dark-neutrals";
+  else if (hue >= 18 && hue <= 55 && lightness < 0.5) id = "browns";
+  else if (hue >= 58 && hue < 192) id = "greens";
+  else if (hue >= 192 && hue < 260) id = "blues";
+  else if (hue >= 260 && hue < 325) id = "purples";
+  else if (hue >= 325 || hue < 18) id = "reds";
+  else if (hue >= 18 && hue < 70) id = "warm";
+
+  return { id, ...color };
+}
+
+function timestampValue(item) {
+  const value = Date.parse(item.updatedAt || item.modeledGeneratedAt || item.createdAt || "");
+  return Number.isFinite(value) ? value : 0;
+}
 
 function originalPhotoPosition(item) {
   const center = (box) => box && ["x", "y", "width", "height"].every((key) => Number.isFinite(Number(box[key])))
@@ -218,15 +280,31 @@ function sampleImageColor(image, canvas, event) {
   return null;
 }
 
-function GalleryItem({ item, selected, onOpen }) {
+function GalleryItem({
+  item,
+  selected,
+  onOpen,
+  draggable = false,
+  dragging = false,
+  dropTarget = false,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+}) {
   const type = TYPE_MAP[item.part]?.singular || "wardrobe item";
 
   return (
     <button
-      className={`gallery-item${selected ? " selected" : ""}`}
+      className={`gallery-item${selected ? " selected" : ""}${dragging ? " is-dragging" : ""}${dropTarget ? " is-drop-target" : ""}`}
       type="button"
+      draggable={draggable}
       onClick={() => onOpen(item.id)}
-      aria-label={`View ${item.name || type}`}
+      onDragStart={(event) => onDragStart?.(event, item.id)}
+      onDragOver={(event) => onDragOver?.(event, item.id)}
+      onDrop={(event) => onDrop?.(event, item.id)}
+      onDragEnd={onDragEnd}
+      aria-label={`View ${item.name || type}${draggable ? ". Drag to change its position" : ""}`}
       aria-pressed={selected}
       data-testid={`wardrobe-item-${item.id}`}
     >
@@ -855,9 +933,14 @@ export function App() {
   const [profileError, setProfileError] = useState("");
   const [items, setItems] = useState([]);
   const [activeType, setActiveType] = useState("all");
+  const [organizationMode, setOrganizationMode] = useState("custom");
+  const [organizationStatus, setOrganizationStatus] = useState("");
+  const [draggedId, setDraggedId] = useState(null);
+  const [dropTargetId, setDropTargetId] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const suppressOpenAfterDrag = useRef(false);
 
   useEffect(() => {
     profileApi("/api/auth/status")
@@ -949,20 +1032,154 @@ export function App() {
   const currentUser = users.find((user) => user.id === currentUserId) || null;
   const selectedItem = items.find((item) => item.id === selectedId) || null;
 
-  const visibleItems = useMemo(() => {
-    const filtered = activeType === "all" ? items : items.filter((item) => item.part === activeType);
-    return [...filtered].sort((a, b) => {
-      if (activeType === "all") {
-        const typeDifference = (TYPE_ORDER[a.part] ?? 99) - (TYPE_ORDER[b.part] ?? 99);
-        if (typeDifference) return typeDifference;
-      }
-      return a.id.localeCompare(b.id);
+  useEffect(() => {
+    const nextMode = ORGANIZATION_MODE_IDS.has(currentUser?.wardrobeSortMode)
+      ? currentUser.wardrobeSortMode
+      : "custom";
+    setOrganizationMode(nextMode);
+    setOrganizationStatus("");
+    setDraggedId(null);
+    setDropTargetId(null);
+  }, [currentUserId, currentUser?.wardrobeSortMode]);
+
+  const customOrderedItems = useMemo(() => {
+    const sourcePositions = new Map(items.map((item, index) => [item.id, index]));
+    return [...items].sort((first, second) => {
+      const firstOrder = first.customOrder;
+      const secondOrder = second.customOrder;
+      const firstHasOrder = Number.isFinite(firstOrder);
+      const secondHasOrder = Number.isFinite(secondOrder);
+      if (firstHasOrder && secondHasOrder && firstOrder !== secondOrder) return firstOrder - secondOrder;
+      if (firstHasOrder !== secondHasOrder) return firstHasOrder ? -1 : 1;
+      return sourcePositions.get(first.id) - sourcePositions.get(second.id);
     });
-  }, [activeType, items]);
+  }, [items]);
+
+  const visibleItems = useMemo(() => {
+    const filtered = activeType === "all"
+      ? customOrderedItems
+      : customOrderedItems.filter((item) => item.part === activeType);
+    if (organizationMode === "custom") return filtered;
+    if (organizationMode === "updated") {
+      return [...filtered].sort((first, second) => (
+        timestampValue(second) - timestampValue(first)
+        || first.name.localeCompare(second.name)
+      ));
+    }
+    return [...filtered].sort((first, second) => {
+      const firstColor = colorGroup(first);
+      const secondColor = colorGroup(second);
+      return (
+        COLOR_GROUP_INDEX[firstColor.id] - COLOR_GROUP_INDEX[secondColor.id]
+        || firstColor.hue - secondColor.hue
+        || secondColor.lightness - firstColor.lightness
+        || first.name.localeCompare(second.name)
+      );
+    });
+  }, [activeType, customOrderedItems, organizationMode]);
+
+  const colorSections = useMemo(() => {
+    if (organizationMode !== "color") return [];
+    return COLOR_GROUPS.map((group) => ({
+      ...group,
+      items: visibleItems.filter((item) => colorGroup(item).id === group.id),
+    })).filter((group) => group.items.length);
+  }, [organizationMode, visibleItems]);
 
   const chooseType = (typeId) => {
     setActiveType(typeId);
     setSelectedId(null);
+  };
+
+  const saveOrganizationMode = async (mode) => {
+    if (!ORGANIZATION_MODE_IDS.has(mode) || mode === organizationMode || !currentUserId) return;
+    const previousMode = organizationMode;
+    setOrganizationMode(mode);
+    setDraggedId(null);
+    setDropTargetId(null);
+    setOrganizationStatus("saving");
+    setUsers((current) => current.map((user) => (
+      user.id === currentUserId ? { ...user, wardrobeSortMode: mode } : user
+    )));
+    try {
+      const result = await profileApi(`/api/import/wardrobe/organization?user=${encodeURIComponent(currentUserId)}`, {
+        method: "PUT",
+        body: JSON.stringify({ mode }),
+      });
+      setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+      setOrganizationStatus("saved");
+      window.setTimeout(() => setOrganizationStatus((status) => status === "saved" ? "" : status), 1600);
+    } catch (requestError) {
+      setOrganizationMode(previousMode);
+      setUsers((current) => current.map((user) => (
+        user.id === currentUserId ? { ...user, wardrobeSortMode: previousMode } : user
+      )));
+      setOrganizationStatus("");
+      setError(`Could not save this organization mode. ${requestError.message}`);
+    }
+  };
+
+  const saveCustomOrder = async (sourceId, targetId) => {
+    if (!currentUserId || sourceId === targetId || organizationStatus === "saving") return;
+    const sourceIndex = customOrderedItems.findIndex((item) => item.id === sourceId);
+    const targetIndex = customOrderedItems.findIndex((item) => item.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const previousItems = items;
+    const reordered = [...customOrderedItems];
+    const [moved] = reordered.splice(sourceIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+    const positions = new Map(reordered.map((item, index) => [item.id, index]));
+    setItems((current) => current.map((item) => ({ ...item, customOrder: positions.get(item.id) })));
+    setOrganizationStatus("saving");
+    try {
+      await profileApi(`/api/import/wardrobe/organization?user=${encodeURIComponent(currentUserId)}`, {
+        method: "PUT",
+        body: JSON.stringify({ ids: reordered.map((item) => item.id) }),
+      });
+      setOrganizationStatus("saved");
+      window.setTimeout(() => setOrganizationStatus((status) => status === "saved" ? "" : status), 1600);
+    } catch (requestError) {
+      setItems(previousItems);
+      setOrganizationStatus("");
+      setError(`Could not save your wardrobe order. ${requestError.message}`);
+    }
+  };
+
+  const beginItemDrag = (event, id) => {
+    if (organizationMode !== "custom" || organizationStatus === "saving") {
+      event.preventDefault();
+      return;
+    }
+    suppressOpenAfterDrag.current = true;
+    setDraggedId(id);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", id);
+  };
+
+  const dragOverItem = (event, id) => {
+    if (!draggedId || draggedId === id) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetId(id);
+  };
+
+  const dropItem = (event, targetId) => {
+    event.preventDefault();
+    const sourceId = event.dataTransfer.getData("text/plain") || draggedId;
+    setDraggedId(null);
+    setDropTargetId(null);
+    if (sourceId) void saveCustomOrder(sourceId, targetId);
+    window.setTimeout(() => { suppressOpenAfterDrag.current = false; }, 150);
+  };
+
+  const finishItemDrag = () => {
+    setDraggedId(null);
+    setDropTargetId(null);
+    window.setTimeout(() => { suppressOpenAfterDrag.current = false; }, 150);
+  };
+
+  const openItem = (id) => {
+    if (!suppressOpenAfterDrag.current) setSelectedId(id);
   };
 
   const saveItem = async (updatedItem) => {
@@ -1129,19 +1346,49 @@ export function App() {
               />
             )}
           </div>
-          <nav className="category-nav" aria-label="Filter wardrobe by item type">
-            {TYPES.map((type) => (
-              <button
-                key={type.id}
-                type="button"
-                className={activeType === type.id ? "active" : ""}
-                onClick={() => chooseType(type.id)}
-                aria-pressed={activeType === type.id}
-              >
-                {type.label}
-              </button>
-            ))}
-          </nav>
+          <div className="gallery-controls">
+            <nav className="category-nav" aria-label="Filter wardrobe by item type">
+              {TYPES.map((type) => (
+                <button
+                  key={type.id}
+                  type="button"
+                  className={activeType === type.id ? "active" : ""}
+                  onClick={() => chooseType(type.id)}
+                  aria-pressed={activeType === type.id}
+                >
+                  {type.label}
+                </button>
+              ))}
+            </nav>
+            <div className="organization-control">
+              <span className="organization-label">Organize</span>
+              <div className="organization-options" role="group" aria-label="Organize wardrobe">
+                {ORGANIZATION_MODES.map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    className={organizationMode === mode.id ? "active" : ""}
+                    onClick={() => saveOrganizationMode(mode.id)}
+                    aria-pressed={organizationMode === mode.id}
+                    disabled={organizationStatus === "saving"}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+              <small className="organization-help" aria-live="polite">
+                {organizationStatus === "saving"
+                  ? "Saving…"
+                  : organizationStatus === "saved"
+                    ? "Saved"
+                    : organizationMode === "custom"
+                      ? "Drag pieces to arrange"
+                      : organizationMode === "color"
+                        ? "Grouped by tone"
+                        : "Newest changes first"}
+              </small>
+            </div>
+          </div>
         </header>
 
         {error && <p className="status error">{error}</p>}
@@ -1149,15 +1396,40 @@ export function App() {
         {!error && !loading && !items.length && <p className="status empty">Drop, paste, or add a photo to import your first piece.</p>}
 
         {!!items.length && (
-          <section className="gallery-grid" aria-label={`${TYPE_MAP[activeType]?.label || "All"} wardrobe items`}>
-            {visibleItems.map((item) => (
-              <GalleryItem
-                key={item.id}
-                item={item}
-                selected={selectedId === item.id}
-                onOpen={setSelectedId}
-              />
-            ))}
+          <section className={`gallery-grid${organizationMode === "color" ? " is-color-organized" : ""}`} aria-label={`${TYPE_MAP[activeType]?.label || "All"} wardrobe items`}>
+            {organizationMode === "color"
+              ? colorSections.flatMap((section) => [
+                  <header className="color-collection-heading" key={`heading-${section.id}`}>
+                    <span className="color-collection-swatches" aria-hidden="true">
+                      {section.tones.map((tone) => <i key={tone} style={{ background: tone }} />)}
+                    </span>
+                    <h2>{section.label}</h2>
+                    <span>{section.items.length} {section.items.length === 1 ? "piece" : "pieces"}</span>
+                  </header>,
+                  ...section.items.map((item) => (
+                    <GalleryItem
+                      key={item.id}
+                      item={item}
+                      selected={selectedId === item.id}
+                      onOpen={openItem}
+                    />
+                  )),
+                ])
+              : visibleItems.map((item) => (
+                  <GalleryItem
+                    key={item.id}
+                    item={item}
+                    selected={selectedId === item.id}
+                    onOpen={openItem}
+                    draggable={organizationMode === "custom" && organizationStatus !== "saving"}
+                    dragging={draggedId === item.id}
+                    dropTarget={dropTargetId === item.id}
+                    onDragStart={beginItemDrag}
+                    onDragOver={dragOverItem}
+                    onDrop={dropItem}
+                    onDragEnd={finishItemDrag}
+                  />
+                ))}
           </section>
         )}
       </main>

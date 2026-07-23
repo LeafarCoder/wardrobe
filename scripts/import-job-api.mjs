@@ -17,6 +17,7 @@ const AUTH_CONTEXT = "wardrobe-access-v1";
 const STAGES = new Set(["crop", "garment", "modeled"]);
 const DECISIONS = new Set(["approve", "reject"]);
 const PARTS = new Set(["upperbody", "wholebody_up", "lowerbody", "accessories_up", "shoes"]);
+const WARDROBE_SORT_MODES = new Set(["custom", "updated", "color"]);
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 const USER_ID = /^(?:default|[a-f0-9-]{36})$/i;
 const TAR_BLOCK_SIZE = 512;
@@ -1139,6 +1140,9 @@ export function wardrobeImportApi(options = {}) {
       fashionStyle: cleanProfileText(input.fashionStyle ?? existing.fashionStyle, 240),
       sizes: cleanProfileText(input.sizes ?? existing.sizes, 240),
       preferences: cleanProfileText(input.preferences ?? existing.preferences, 1200),
+      wardrobeSortMode: WARDROBE_SORT_MODES.has(input.wardrobeSortMode)
+        ? input.wardrobeSortMode
+        : WARDROBE_SORT_MODES.has(existing.wardrobeSortMode) ? existing.wardrobeSortMode : "custom",
     };
   };
 
@@ -1263,8 +1267,45 @@ export function wardrobeImportApi(options = {}) {
       ? store.currentUserId
       : store.users[0].id;
     const records = await loadImported();
-    if (records.some((record) => !record.userId)) {
-      await atomicJson(importedFile, records.map((record) => ({ ...record, userId: record.userId || ownerId })));
+    if (records.length) {
+      const migrated = records.map((record) => ({ ...record, userId: record.userId || ownerId }));
+      const assetTimestamp = async (asset) => {
+        if (!asset) return null;
+        try {
+          const fileName = path.basename(new URL(asset, "http://localhost").pathname);
+          return (await stat(path.join(libraryAssetDir, fileName))).mtime.toISOString();
+        } catch {
+          return null;
+        }
+      };
+      for (const record of migrated) {
+        if (record.createdAt && record.updatedAt) continue;
+        const garmentTimestamp = await assetTimestamp(record.image);
+        const modeledTimestamp = await assetTimestamp(record.modeledImage);
+        const createdAt = record.createdAt || garmentTimestamp || modeledTimestamp;
+        const updatedAt = record.updatedAt || [record.modeledGeneratedAt, modeledTimestamp, createdAt]
+          .filter(Boolean)
+          .sort()
+          .at(-1);
+        if (createdAt) record.createdAt = createdAt;
+        if (updatedAt) record.updatedAt = updatedAt;
+      }
+      for (const userId of new Set(migrated.map((record) => record.userId))) {
+        migrated
+          .map((record, sourceIndex) => ({ record, sourceIndex }))
+          .filter(({ record }) => record.userId === userId)
+          .sort((first, second) => {
+            const firstOrder = first.record.customOrder;
+            const secondOrder = second.record.customOrder;
+            const firstHasOrder = Number.isFinite(firstOrder);
+            const secondHasOrder = Number.isFinite(secondOrder);
+            if (firstHasOrder && secondHasOrder && firstOrder !== secondOrder) return firstOrder - secondOrder;
+            if (firstHasOrder !== secondHasOrder) return firstHasOrder ? -1 : 1;
+            return first.sourceIndex - second.sourceIndex;
+          })
+          .forEach(({ record }, index) => { record.customOrder = index; });
+      }
+      if (JSON.stringify(migrated) !== JSON.stringify(records)) await atomicJson(importedFile, migrated);
     }
     const ids = await readdir(jobsDir).catch(() => []);
     for (const id of ids) {
@@ -1375,6 +1416,10 @@ export function wardrobeImportApi(options = {}) {
     const metadata = job.metadata || {};
     const records = await loadImported();
     const existing = records.find((record) => record.id === id);
+    const now = new Date().toISOString();
+    const nextCustomOrder = records
+      .filter((record) => record.userId === job.userId && record.id !== id)
+      .reduce((highest, record) => Math.max(highest, Number.isFinite(record.customOrder) ? record.customOrder : -1), -1) + 1;
     const record = {
       id,
       userId: job.userId,
@@ -1392,6 +1437,9 @@ export function wardrobeImportApi(options = {}) {
       modeledImage: modeledImage || existing?.modeledImage || null,
       originalImage: originalImage || existing?.originalImage || null,
       importJobId: job.id,
+      customOrder: Number.isFinite(existing?.customOrder) ? existing.customOrder : nextCustomOrder,
+      createdAt: existing?.createdAt || job.createdAt || now,
+      updatedAt: now,
     };
     const next = [...records.filter((item) => item.id !== id), record];
     await atomicJson(importedFile, next);
@@ -1462,6 +1510,7 @@ export function wardrobeImportApi(options = {}) {
         modeledModel: generation.model,
         modeledFallbackUsed: generation.fallbackUsed,
         modeledGeneratedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
       await atomicJson(importedFile, latest);
       return latest[index];
@@ -1768,6 +1817,58 @@ export function wardrobeImportApi(options = {}) {
       if (url.pathname === "/api/import/config" && req.method === "GET") {
         return json(res, 200, await setupStatus(user.id));
       }
+      if (url.pathname === "/api/import/wardrobe/organization" && req.method === "PUT") {
+        const input = await body(req, 256 * 1024);
+        const changingMode = Object.hasOwn(input, "mode");
+        const changingOrder = Object.hasOwn(input, "ids");
+        if (!changingMode && !changingOrder) {
+          throw apiError("Choose an organization mode or provide a wardrobe order.", 400, "organization_update_required");
+        }
+
+        if (changingMode && !WARDROBE_SORT_MODES.has(input.mode)) {
+          throw apiError("Organization mode must be custom, updated, or color.", 400, "invalid_organization_mode");
+        }
+
+        let orderedIds = null;
+        if (changingOrder) {
+          if (!Array.isArray(input.ids) || input.ids.some((id) => typeof id !== "string")) {
+            throw apiError("Wardrobe order must be a list of item IDs.", 400, "invalid_wardrobe_order");
+          }
+          const records = await loadImported();
+          const owned = records.filter((record) => record.userId === user.id);
+          const submitted = new Set(input.ids);
+          if (
+            submitted.size !== input.ids.length
+            || input.ids.length !== owned.length
+            || owned.some((record) => !submitted.has(record.id))
+          ) {
+            throw apiError("Wardrobe order must include each of this user's items exactly once.", 409, "incomplete_wardrobe_order");
+          }
+          const positions = new Map(input.ids.map((id, index) => [id, index]));
+          for (const record of records) {
+            if (record.userId === user.id) record.customOrder = positions.get(record.id);
+          }
+          await atomicJson(importedFile, records);
+          orderedIds = input.ids;
+        }
+
+        let profile = user;
+        if (changingMode) {
+          const store = await loadUsersStore();
+          const index = store.users.findIndex((candidate) => candidate.id === user.id);
+          if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+          store.users[index] = { ...store.users[index], wardrobeSortMode: input.mode };
+          profile = store.users[index];
+          await saveUsersStore(store);
+        }
+
+        console.info(`[wardrobe] Saved ${user.name}'s wardrobe organization${changingMode ? ` (${input.mode})` : ""}${changingOrder ? ` with ${orderedIds.length} items` : ""}.`);
+        return json(res, 200, {
+          mode: profile.wardrobeSortMode || "custom",
+          ids: orderedIds,
+          user: publicProfile(profile),
+        });
+      }
       const wardrobeItemMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})(?:\/(modeled))?$/i);
       if (wardrobeItemMatch?.[2] === "modeled" && req.method === "POST") {
         const record = await generateImportedModeledLook(wardrobeItemMatch[1], user);
@@ -1794,6 +1895,7 @@ export function wardrobeImportApi(options = {}) {
           secondaryColor: metadata.secondaryColor,
           palette: [metadata.color, metadata.secondaryColor].filter(Boolean),
           tags: metadata.tags,
+          updatedAt: new Date().toISOString(),
         };
         await atomicJson(importedFile, records);
         return json(res, 200, {
