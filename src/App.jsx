@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Plus, Trash, X } from "@phosphor-icons/react";
+import { CaretDown, Check, DownloadSimple, LockKey, PencilSimple, Plus, Trash, UploadSimple, UserCircle, X } from "@phosphor-icons/react";
 import { WardrobeImportFlow } from "./import-flow.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 
@@ -19,17 +19,23 @@ const TYPE_MAP = Object.fromEntries(TYPES.map((type) => [type.id, type]));
 const TYPE_ORDER = Object.fromEntries(TYPES.slice(1).map((type, index) => [type.id, index]));
 
 
-function readEdits() {
+function userStorageKey(base, userId) {
+  return `${base}:${userId || "default"}`;
+}
+
+function readEdits(userId) {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    const scoped = localStorage.getItem(userStorageKey(STORAGE_KEY, userId));
+    const legacy = userId === "default" ? localStorage.getItem(STORAGE_KEY) : null;
+    return JSON.parse(scoped || legacy || "{}");
   } catch {
     return {};
   }
 }
 
 
-function persistEdit(item) {
-  const edits = readEdits();
+function persistEdit(item, userId) {
+  const edits = readEdits(userId);
   edits[item.id] = {
     name: item.name || "",
     part: item.part,
@@ -37,28 +43,59 @@ function persistEdit(item) {
     secondaryColor: item.secondaryColor || null,
     tags: item.tags || [],
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(edits));
+  localStorage.setItem(userStorageKey(STORAGE_KEY, userId), JSON.stringify(edits));
 }
 
-function removePersistedEdit(id) {
-  const edits = readEdits();
+function removePersistedEdit(id, userId) {
+  const edits = readEdits(userId);
   delete edits[id];
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(edits));
+  localStorage.setItem(userStorageKey(STORAGE_KEY, userId), JSON.stringify(edits));
 }
 
-function readDeletedItems() {
+function readDeletedItems(userId) {
   try {
-    const value = JSON.parse(localStorage.getItem(DELETED_STORAGE_KEY) || "[]");
+    const scoped = localStorage.getItem(userStorageKey(DELETED_STORAGE_KEY, userId));
+    const legacy = userId === "default" ? localStorage.getItem(DELETED_STORAGE_KEY) : null;
+    const value = JSON.parse(scoped || legacy || "[]");
     return new Set(Array.isArray(value) ? value : []);
   } catch {
     return new Set();
   }
 }
 
-function persistDeletedItem(id) {
-  const deleted = readDeletedItems();
+function persistDeletedItem(id, userId) {
+  const deleted = readDeletedItems(userId);
   deleted.add(id);
-  localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify([...deleted]));
+  localStorage.setItem(userStorageKey(DELETED_STORAGE_KEY, userId), JSON.stringify([...deleted]));
+}
+
+function removePersistedDeletedItem(id, userId) {
+  const deleted = readDeletedItems(userId);
+  deleted.delete(id);
+  localStorage.setItem(userStorageKey(DELETED_STORAGE_KEY, userId), JSON.stringify([...deleted]));
+}
+
+const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(reader.error || new Error("Could not read that photo."));
+  reader.readAsDataURL(file);
+});
+
+async function profileApi(path, options) {
+  const response = await fetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
+  });
+  const value = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event("wardrobe:unauthorized"));
+    const error = new Error(value.error || "The profile could not be saved.");
+    error.status = response.status;
+    error.code = value.code;
+    throw error;
+  }
+  return value;
 }
 
 function rgbToHex(red, green, blue) {
@@ -346,8 +383,10 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
   const [draft, setDraft] = useState({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
   const [shaking, setShaking] = useState(false);
   const [closeBlocked, setCloseBlocked] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
   const type = TYPE_MAP[item.part]?.singular || "Wardrobe item";
   const hasModeledImage = Boolean(item.modeledImage);
+  const hasOriginalImage = Boolean(item.originalImage);
   const pieceRotation = useMemo(() => {
     const hash = [...item.id].reduce((total, character) => total + character.charCodeAt(0), 0);
     return `${(hash % 9) - 4}deg`;
@@ -412,6 +451,7 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
     setSampleStatus("");
     setPalette(item.palette || []);
     setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
+    setShowOriginal(false);
   }, [item]);
 
   const cancelEditing = () => {
@@ -476,15 +516,39 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
 
       {hasModeledImage ? (
         <div className="modeled-hero">
-          <OptimizedImage
-            className="modeled-hero-photo"
-            src={item.modeledImage}
-            alt={`${draft.name || type} worn by a model`}
-            sizes="(max-width: 860px) 100vw, 520px"
-            breakpoints={[320, 480, 640, 800, 1040, 1280]}
-            quality={82}
-            priority
-          />
+          {hasOriginalImage ? (
+            <button
+              className="modeled-hero-toggle"
+              type="button"
+              aria-pressed={showOriginal}
+              onClick={() => setShowOriginal((current) => !current)}
+            >
+              <OptimizedImage
+                className="modeled-hero-photo"
+                src={showOriginal ? item.originalImage : item.modeledImage}
+                alt={showOriginal ? `Original photo containing ${draft.name || type}` : `${draft.name || type} worn by a model`}
+                sizes="(max-width: 860px) 100vw, 520px"
+                breakpoints={[320, 480, 640, 800, 1040, 1280]}
+                quality={82}
+                priority
+              />
+            </button>
+          ) : (
+            <OptimizedImage
+              className="modeled-hero-photo"
+              src={item.modeledImage}
+              alt={`${draft.name || type} worn by a model`}
+              sizes="(max-width: 860px) 100vw, 520px"
+              breakpoints={[320, 480, 640, 800, 1040, 1280]}
+              quality={82}
+              priority
+            />
+          )}
+          {hasOriginalImage && (
+            <span className="modeled-toggle-hint">
+              {showOriginal ? "Click photo to see modeled look" : "Click photo to see original"}
+            </span>
+          )}
           <div className="viewer-heading modeled-heading">
             <div>
               <h2>{draft.name || TYPE_MAP[draft.part]?.singular}</h2>
@@ -532,7 +596,198 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
   );
 }
 
+function PasswordGate({ error: statusError, onAuthenticated }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(statusError || "");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const result = await profileApi("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+      setPassword("");
+      onAuthenticated(result);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="password-gate">
+      <form onSubmit={submit}>
+        <span className="password-gate__mark"><LockKey size={26} weight="light" aria-hidden="true" /></span>
+        <p>Private wardrobe</p>
+        <h1>Enter the shared password</h1>
+        <label>
+          <span>Password</span>
+          <input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} autoFocus />
+        </label>
+        {error && <p className="password-gate__error" role="alert">{error}</p>}
+        <button type="submit" disabled={busy || !password}>{busy ? "Unlocking…" : "Open wardrobe"}</button>
+        <small>Access is shared with anyone who knows this password.</small>
+      </form>
+    </main>
+  );
+}
+
+function ProfileAvatar({ user, size = "medium" }) {
+  const reference = user?.referenceImages?.[0];
+  return (
+    <span className={`profile-avatar is-${size}`}>
+      {reference ? <img src={reference.url} alt="" /> : <UserCircle size={size === "large" ? 40 : 24} weight="light" aria-hidden="true" />}
+    </span>
+  );
+}
+
+function ProfileMenu({ users, currentUser, onSelect, onAdd, onEdit, onExport, onLogout }) {
+  const detailsRef = useRef(null);
+  const closeMenu = () => { if (detailsRef.current) detailsRef.current.open = false; };
+
+  return (
+    <details className="profile-menu" ref={detailsRef}>
+      <summary>
+        <ProfileAvatar user={currentUser} />
+        <span className="profile-menu__current">
+          <small>Wardrobe</small>
+          <strong>{currentUser?.name || "Choose user"}</strong>
+        </span>
+        <CaretDown size={14} aria-hidden="true" />
+      </summary>
+      <div className="profile-menu__popover">
+        <p className="profile-menu__label">Switch wardrobe</p>
+        <div className="profile-menu__users">
+          {users.map((user) => (
+            <button
+              className={user.id === currentUser?.id ? "is-current" : ""}
+              type="button"
+              key={user.id}
+              onClick={() => { onSelect(user.id); closeMenu(); }}
+            >
+              <ProfileAvatar user={user} />
+              <span><strong>{user.name}</strong><small>{user.fashionStyle || `${user.referenceImages?.length || 0} reference photo${user.referenceImages?.length === 1 ? "" : "s"}`}</small></span>
+              {user.id === currentUser?.id && <Check size={14} weight="bold" aria-hidden="true" />}
+            </button>
+          ))}
+        </div>
+        <div className="profile-menu__actions">
+          <button type="button" onClick={() => { onEdit(); closeMenu(); }}><PencilSimple size={14} /> Edit profile</button>
+          <button type="button" onClick={() => { onAdd(); closeMenu(); }}><Plus size={14} /> Add person</button>
+          <button className="profile-menu__export" type="button" onClick={() => { onExport(); closeMenu(); }} title="Includes every person's wardrobe and photos">
+            <DownloadSimple size={14} /> Download all data
+          </button>
+          {onLogout && <button className="profile-menu__logout" type="button" onClick={() => { onLogout(); closeMenu(); }}><LockKey size={14} /> Lock wardrobe</button>}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function ProfileEditor({ user, busy, error, onClose, onSave }) {
+  const isNew = !user;
+  const [draft, setDraft] = useState({
+    name: user?.name || "",
+    age: user?.age || "",
+    fashionStyle: user?.fashionStyle || "",
+    sizes: user?.sizes || "",
+    preferences: user?.preferences || "",
+  });
+  const [files, setFiles] = useState([]);
+  const [fileError, setFileError] = useState("");
+  const previews = useMemo(() => files.map((file) => ({ name: file.name, url: URL.createObjectURL(file) })), [files]);
+
+  useEffect(() => () => previews.forEach((preview) => URL.revokeObjectURL(preview.url)), [previews]);
+
+  const chooseReferences = (event) => {
+    const selected = [...event.target.files].filter((file) => file.type.startsWith("image/"));
+    if (selected.length > 3) {
+      setFileError("Choose no more than three reference photos.");
+      setFiles(selected.slice(0, 3));
+    } else {
+      setFileError("");
+      setFiles(selected);
+    }
+    event.target.value = "";
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (isNew && !files.length) {
+      setFileError("Add at least one reference photo.");
+      return;
+    }
+    const referenceImages = files.length
+      ? await Promise.all(files.map(async (file) => ({ name: file.name, dataUrl: await fileToDataUrl(file) })))
+      : undefined;
+    await onSave({ ...draft, age: draft.age === "" ? null : Number(draft.age), ...(referenceImages ? { referenceImages } : {}) });
+  };
+
+  const visibleReferences = previews.length ? previews : (user?.referenceImages || []);
+
+  return (
+    <div className="profile-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
+      <form className="profile-editor" onSubmit={submit}>
+        <header>
+          <div>
+            <p>{isNew ? "New wardrobe" : "Personal profile"}</p>
+            <h2>{isNew ? "Add a person" : `Edit ${user.name}`}</h2>
+          </div>
+          <button type="button" onClick={onClose} disabled={busy} aria-label="Close profile editor"><X size={20} /></button>
+        </header>
+
+        <div className="profile-editor__body">
+          <div className="profile-reference-field">
+            <div className="profile-reference-field__heading">
+              <span>Reference photos</span>
+              <small>1–3 photos</small>
+            </div>
+            {!!visibleReferences.length && (
+              <div className="profile-reference-grid">
+                {visibleReferences.map((reference) => <img src={reference.url} alt="" key={reference.id || reference.url} />)}
+              </div>
+            )}
+            <label className="profile-upload">
+              <UploadSimple size={17} />
+              <span>{files.length ? "Choose different photos" : user?.referenceImages?.length ? "Replace reference photos" : "Choose reference photos"}</span>
+              <input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={chooseReferences} />
+            </label>
+            <p>Use clear, complementary photos of the same person. Replacing photos affects future modeled images only.</p>
+            {fileError && <small className="profile-field-error">{fileError}</small>}
+          </div>
+
+          <div className="profile-fields">
+            <label><span>Name</span><input required maxLength="80" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Rafael" /></label>
+            <label><span>Age <small>optional</small></span><input type="number" min="1" max="120" value={draft.age} onChange={(event) => setDraft({ ...draft, age: event.target.value })} placeholder="32" /></label>
+            <label className="profile-field-wide"><span>Fashion style</span><input maxLength="240" value={draft.fashionStyle} onChange={(event) => setDraft({ ...draft, fashionStyle: event.target.value })} placeholder="Minimal, relaxed tailoring, quiet colors" /></label>
+            <label className="profile-field-wide"><span>Sizes and fit</span><input maxLength="240" value={draft.sizes} onChange={(event) => setDraft({ ...draft, sizes: event.target.value })} placeholder="Usually M tops, 32 trousers; prefers a relaxed fit" /></label>
+            <label className="profile-field-wide"><span>Preferences</span><textarea rows="4" maxLength="1200" value={draft.preferences} onChange={(event) => setDraft({ ...draft, preferences: event.target.value })} placeholder="Favorite colors, materials, occasions, styling goals, and anything to avoid." /></label>
+          </div>
+          {error && <p className="profile-save-error" role="alert">{error}</p>}
+        </div>
+
+        <footer>
+          <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="profile-save" type="submit" disabled={busy || !draft.name.trim()}><Check size={14} weight="bold" /> {busy ? "Saving…" : "Save profile"}</button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
 export function App() {
+  const [auth, setAuth] = useState(null);
+  const [authError, setAuthError] = useState("");
+  const [users, setUsers] = useState([]);
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [profileEditor, setProfileEditor] = useState(null);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileError, setProfileError] = useState("");
   const [items, setItems] = useState([]);
   const [activeType, setActiveType] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
@@ -540,21 +795,93 @@ export function App() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch("/api/import/wardrobe", { cache: "no-store" })
-      .then((response) => {
-        if (!response.ok) throw new Error("Could not load the wardrobe.");
-        return response.json();
-      })
-      .then((loadedItems) => {
-        const edits = readEdits();
-        const deleted = readDeletedItems();
-        const visibleItems = loadedItems.filter((item) => !deleted.has(item.id));
-        setItems(visibleItems.map((item) => ({ ...item, ...(edits[item.id] || {}) })));
-      })
-      .catch((requestError) => setError(requestError.message))
-      .finally(() => setLoading(false));
+    profileApi("/api/auth/status")
+      .then(setAuth)
+      .catch((requestError) => {
+        setAuth({ enabled: true, authenticated: false });
+        setAuthError(requestError.message);
+        setLoading(false);
+      });
+    const onUnauthorized = () => {
+      setAuth((current) => ({ enabled: Boolean(current?.enabled), authenticated: false }));
+      setUsers([]);
+      setCurrentUserId(null);
+      setItems([]);
+      setSelectedId(null);
+    };
+    window.addEventListener("wardrobe:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("wardrobe:unauthorized", onUnauthorized);
   }, []);
 
+  useEffect(() => {
+    if (!auth?.authenticated) return;
+    profileApi("/api/users")
+      .then((result) => {
+        setUsers(result.users || []);
+        setCurrentUserId(result.currentUserId);
+      })
+      .catch((requestError) => {
+        setError(requestError.message);
+        setLoading(false);
+      });
+  }, [auth?.authenticated]);
+
+  useEffect(() => {
+    if (!auth?.authenticated || !currentUserId) return;
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    setItems([]);
+    setSelectedId(null);
+    fetch(`/api/import/wardrobe?user=${encodeURIComponent(currentUserId)}`, { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) {
+          if (response.status === 401) window.dispatchEvent(new Event("wardrobe:unauthorized"));
+          throw new Error("Could not load the wardrobe.");
+        }
+        return response.json();
+      })
+      .then(async (loadedItems) => {
+        const edits = readEdits(currentUserId);
+        const deleted = readDeletedItems(currentUserId);
+        const visibleItems = loadedItems.filter((item) => !deleted.has(item.id));
+        const mergedItems = visibleItems.map((item) => ({ ...item, ...(edits[item.id] || {}) }));
+        const migrations = [
+          ...mergedItems
+            .filter((item) => item.id.startsWith("import-") && edits[item.id])
+            .map(async (item) => {
+              await profileApi(`/api/import/wardrobe/${item.id}?user=${encodeURIComponent(currentUserId)}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                  name: item.name,
+                  part: item.part,
+                  color: item.color,
+                  secondaryColor: item.secondaryColor,
+                  tags: item.tags,
+                }),
+              });
+              removePersistedEdit(item.id, currentUserId);
+            }),
+          ...[...deleted]
+            .filter((id) => id.startsWith("import-"))
+            .map(async (id) => {
+              const response = await fetch(`/api/import/wardrobe/${id}?user=${encodeURIComponent(currentUserId)}`, { method: "DELETE" });
+              if (!response.ok && response.status !== 404) throw new Error("Could not migrate a locally deleted item.");
+              removePersistedDeletedItem(id, currentUserId);
+            }),
+        ];
+        const migrationResults = await Promise.allSettled(migrations);
+        if (migrationResults.some((result) => result.status === "rejected")) {
+          console.warn("[wardrobe] Some browser-only edits could not be moved into the portable database.");
+        }
+        if (!cancelled) setItems(mergedItems);
+      })
+      .catch((requestError) => { if (!cancelled) setError(requestError.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [auth?.authenticated, currentUserId]);
+
+  const currentUser = users.find((user) => user.id === currentUserId) || null;
   const selectedItem = items.find((item) => item.id === selectedId) || null;
 
   const visibleItems = useMemo(() => {
@@ -573,15 +900,32 @@ export function App() {
     setSelectedId(null);
   };
 
-  const saveItem = (updatedItem) => {
+  const saveItem = async (updatedItem) => {
     setItems((current) => current.map((item) => item.id === updatedItem.id ? updatedItem : item));
-    persistEdit(updatedItem);
+    persistEdit(updatedItem, currentUserId);
+    if (!updatedItem.id.startsWith("import-")) return;
+    try {
+      const saved = await profileApi(`/api/import/wardrobe/${updatedItem.id}?user=${encodeURIComponent(currentUserId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: updatedItem.name,
+          part: updatedItem.part,
+          color: updatedItem.color,
+          secondaryColor: updatedItem.secondaryColor,
+          tags: updatedItem.tags,
+        }),
+      });
+      removePersistedEdit(updatedItem.id, currentUserId);
+      setItems((current) => current.map((item) => item.id === saved.id ? { ...item, ...saved } : item));
+    } catch (requestError) {
+      setError(`${requestError.message} Your change is still saved in this browser.`);
+    }
   };
 
   const deleteItem = async (id) => {
     if (id.startsWith("import-")) {
       try {
-        const response = await fetch(`/api/import/wardrobe/${id}`, { method: "DELETE" });
+        const response = await fetch(`/api/import/wardrobe/${id}?user=${encodeURIComponent(currentUserId)}`, { method: "DELETE" });
         if (!response.ok && response.status !== 404) throw new Error("Could not delete the imported item.");
       } catch (requestError) {
         setError(requestError.message);
@@ -589,9 +933,85 @@ export function App() {
       }
     }
     setItems((current) => current.filter((item) => item.id !== id));
-    removePersistedEdit(id);
-    persistDeletedItem(id);
+    removePersistedEdit(id, currentUserId);
+    if (id.startsWith("import-")) removePersistedDeletedItem(id, currentUserId);
+    else persistDeletedItem(id, currentUserId);
     setSelectedId(null);
+  };
+
+  const selectUser = async (userId) => {
+    if (userId === currentUserId) return;
+    try {
+      await profileApi("/api/users/current", { method: "PUT", body: JSON.stringify({ userId }) });
+      setCurrentUserId(userId);
+      setActiveType("all");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
+  const downloadPersonalData = async () => {
+    setError("");
+    const migrations = users.flatMap((user) => {
+      const edits = readEdits(user.id);
+      const deleted = readDeletedItems(user.id);
+      return [
+        ...Object.entries(edits)
+          .filter(([id]) => id.startsWith("import-"))
+          .map(async ([id, edit]) => {
+            try {
+              await profileApi(`/api/import/wardrobe/${id}?user=${encodeURIComponent(user.id)}`, {
+                method: "PATCH",
+                body: JSON.stringify(edit),
+              });
+              removePersistedEdit(id, user.id);
+            } catch (requestError) {
+              if (requestError.status === 404) {
+                removePersistedEdit(id, user.id);
+                return;
+              }
+              throw requestError;
+            }
+          }),
+        ...[...deleted]
+          .filter((id) => id.startsWith("import-"))
+          .map(async (id) => {
+            const response = await fetch(`/api/import/wardrobe/${id}?user=${encodeURIComponent(user.id)}`, { method: "DELETE" });
+            if (!response.ok && response.status !== 404) throw new Error(`Could not prepare ${user.name}'s deleted items for export.`);
+            removePersistedDeletedItem(id, user.id);
+          }),
+      ];
+    });
+    const results = await Promise.allSettled(migrations);
+    if (results.some((result) => result.status === "rejected")) {
+      setError("The backup could not include every browser-only change. Check your connection and try the download again.");
+      return;
+    }
+    window.location.assign("/api/export");
+  };
+
+  const saveProfile = async (input) => {
+    setProfileBusy(true);
+    setProfileError("");
+    try {
+      const editingUser = profileEditor === "new" ? null : users.find((user) => user.id === profileEditor);
+      const result = await profileApi(editingUser ? `/api/users/${editingUser.id}` : "/api/users", {
+        method: editingUser ? "PATCH" : "POST",
+        body: JSON.stringify(input),
+      });
+      setUsers((current) => editingUser
+        ? current.map((user) => user.id === result.user.id ? result.user : user)
+        : [...current, result.user]);
+      if (!editingUser) {
+        setCurrentUserId(result.currentUserId);
+        setActiveType("all");
+      }
+      setProfileEditor(null);
+    } catch (requestError) {
+      setProfileError(requestError.message);
+    } finally {
+      setProfileBusy(false);
+    }
   };
 
   const addImportedItem = useCallback((newItem) => {
@@ -603,12 +1023,43 @@ export function App() {
     setItems((current) => current.map((item) => item.id === id ? { ...item, modeledImage } : item));
   }, []);
 
+  const logout = async () => {
+    try {
+      await profileApi("/api/auth/logout", { method: "POST" });
+    } finally {
+      setAuth((current) => ({ enabled: current?.enabled !== false, authenticated: false }));
+      setUsers([]);
+      setCurrentUserId(null);
+      setItems([]);
+      setSelectedId(null);
+    }
+  };
+
+  if (auth === null) return <main className="password-gate"><p className="status">Checking access</p></main>;
+  if (!auth.authenticated) {
+    return <PasswordGate error={authError} onAuthenticated={(result) => { setAuthError(""); setAuth(result); setLoading(true); }} />;
+  }
+
   return (
     <div className={`app-shell${selectedItem ? " has-selection" : ""}`}>
       <main className="gallery-pane">
         <header className="gallery-header">
           <div className="gallery-meta-row">
-            <p className="piece-count">{items.length} {items.length === 1 ? "piece" : "pieces"}</p>
+            <div>
+              <p className="wardrobe-owner">{currentUser?.name || "Wardrobe"}</p>
+              <p className="piece-count">{items.length} {items.length === 1 ? "piece" : "pieces"}</p>
+            </div>
+            {!!currentUser && (
+              <ProfileMenu
+                users={users}
+                currentUser={currentUser}
+                onSelect={selectUser}
+                onAdd={() => { setProfileError(""); setProfileEditor("new"); }}
+                onEdit={() => { setProfileError(""); setProfileEditor(currentUser.id); }}
+                onExport={downloadPersonalData}
+                onLogout={auth.enabled ? logout : null}
+              />
+            )}
           </div>
           <nav className="category-nav" aria-label="Filter wardrobe by item type">
             {TYPES.map((type) => (
@@ -644,7 +1095,23 @@ export function App() {
       </main>
 
       {selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} />}
-      <WardrobeImportFlow onGarmentApproved={addImportedItem} onModeledApproved={attachImportedModeledImage} />
+      {currentUser && (
+        <WardrobeImportFlow
+          key={`${currentUser.id}:${currentUser.updatedAt}`}
+          userId={currentUser.id}
+          onGarmentApproved={addImportedItem}
+          onModeledApproved={attachImportedModeledImage}
+        />
+      )}
+      {profileEditor && (
+        <ProfileEditor
+          user={profileEditor === "new" ? null : users.find((user) => user.id === profileEditor)}
+          busy={profileBusy}
+          error={profileError}
+          onClose={() => !profileBusy && setProfileEditor(null)}
+          onSave={saveProfile}
+        />
+      )}
     </div>
   );
 }
