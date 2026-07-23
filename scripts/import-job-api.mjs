@@ -466,12 +466,15 @@ Avoid: person, body, skin, hair, mannequin, hanger, props, other garments, retai
 Critical: Use no ${chromaKey} anywhere in the garment. Produce exactly one complete garment with a crisp, separable outer silhouette.`;
 }
 
-export function buildModeledPrompt(personReferenceCount = 1, profile = {}) {
+export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metadata = {}) {
   const count = Math.max(1, Math.min(3, Math.round(personReferenceCount)));
   const personImages = count === 1
     ? "Image 1 is the identity reference for the person."
     : `Images 1 through ${count} are complementary identity references of the same person. Use them together to preserve one consistent person; do not blend identities, duplicate the person, or copy the reference poses and backgrounds.`;
   const garmentImage = count + 1;
+  const categoryDirection = metadata.part === "shoes"
+    ? "The featured item is footwear. Compose this as a conventional retail fashion editorial: show the complete person in ordinary daywear, standing naturally in a head-to-toe view, with both pieces of footwear fully visible and worn normally. Keep the footwear prominent through framing and pose rather than an isolated body-part close-up. Preserve the person's apparent age exactly from the identity references."
+    : "";
   const profileDetails = [
     profile.name ? `The wardrobe owner is ${profile.name}.` : null,
     profile.age ? `They are ${profile.age} years old.` : null,
@@ -480,7 +483,7 @@ export function buildModeledPrompt(personReferenceCount = 1, profile = {}) {
     profile.preferences ? `Personal styling preferences and constraints: ${profile.preferences}.` : null,
   ].filter(Boolean).join(" ");
 
-  return `Create a professional horizontal 3:2 editorial fashion photograph. ${personImages} Image ${garmentImage} is the exact garment reference. Show that person wearing that garment. ${profileDetails} Preserve the person's recognizable identity, face, hair, age, skin tone, and proportions across the references. Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.`;
+  return `Create a professional horizontal 3:2 editorial fashion photograph. ${personImages} Image ${garmentImage} is the exact garment reference. Show that person wearing that garment. ${categoryDirection} ${profileDetails} Preserve the person's recognizable identity, face, hair, age, skin tone, and proportions across the references. Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.`;
 }
 
 function cleanupTolerance(value) {
@@ -1291,7 +1294,7 @@ export function wardrobeImportApi(options = {}) {
           if (!models.length) {
             throw new Error(`${profile.name}'s profile has no reference photo. Add one before generating a modeled image.`);
           }
-          const basePrompt = options.modeledPrompt || buildModeledPrompt(models.length, profile);
+          const basePrompt = options.modeledPrompt || buildModeledPrompt(models.length, profile, current.metadata);
           console.info(`[wardrobe] Generating modeled image with ${provider.label} / ${provider.modeledModel}...`);
           bytes = await withGenerationSlot(() => editImage({
             provider,
