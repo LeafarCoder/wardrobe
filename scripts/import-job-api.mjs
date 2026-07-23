@@ -707,6 +707,21 @@ async function atomicJson(file, value) {
   }
 }
 
+async function atomicFile(file, value) {
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  await writeFile(tmp, value);
+  try {
+    await rename(tmp, file);
+  } catch (error) {
+    if (!["EBUSY", "EXDEV", "EPERM"].includes(error.code)) {
+      await rm(tmp, { force: true });
+      throw error;
+    }
+    await copyFile(tmp, file);
+    await rm(tmp, { force: true });
+  }
+}
+
 function stageState() {
   return { status: "pending", decision: null, attempts: 0, assetUrl: null, failedAssetUrl: null, cleanupPreviewUrl: null, cleanupTolerance: 46, cleanupDiagnostics: null, error: null, prompt: null, model: null, fallbackUsed: false, updatedAt: null };
 }
@@ -1191,6 +1206,33 @@ export function wardrobeImportApi(options = {}) {
     return references;
   }
 
+  async function loadProfileReferenceImages(profile) {
+    const references = profile?.referenceImages || [];
+    const images = await Promise.all(references.map(async (reference, index) => {
+      const modelPath = path.join(profileReferenceDir(profile.id), reference.fileName);
+      try {
+        return { data: await readFile(modelPath), name: reference.name || `person-${index + 1}` };
+      } catch (error) {
+        if (error.code === "ENOENT") {
+          throw apiError(
+            `Reference photo "${reference.name || index + 1}" is missing from ${profile.name}'s profile. Open the profile and add it again.`,
+            400,
+            "profile_reference_missing",
+          );
+        }
+        throw error;
+      }
+    }));
+    if (!images.length) {
+      throw apiError(
+        `${profile?.name || "This wardrobe"} has no reference photo. Add one before generating a modeled look.`,
+        400,
+        "profile_reference_required",
+      );
+    }
+    return images;
+  }
+
   async function initializeUsers() {
     await mkdir(profilesDir, { recursive: true });
     let store = await loadUsersStore();
@@ -1255,7 +1297,8 @@ export function wardrobeImportApi(options = {}) {
     }
     const hasModelReference = modelReferences.length > 0 && missingModelReferences.length === 0;
     return {
-      ready: !provider.configurationError && hasApiKey && hasModelReference,
+      ready: !provider.configurationError && hasApiKey,
+      modeledReady: !provider.configurationError && hasApiKey && hasModelReference,
       provider: provider.id,
       providerLabel: provider.label,
       apiKeyName: provider.keyEnv,
@@ -1353,6 +1396,78 @@ export function wardrobeImportApi(options = {}) {
     const next = [...records.filter((item) => item.id !== id), record];
     await atomicJson(importedFile, next);
     return record;
+  }
+
+  async function generateImportedModeledLook(itemId, user) {
+    const lock = `library:${itemId}:modeled`;
+    if (running.has(lock)) return running.get(lock);
+    const task = (async () => {
+      const records = await loadImported();
+      const record = records.find((candidate) => candidate.id === itemId && candidate.userId === user.id);
+      if (!record) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+      if (record.modeledImage) return record;
+
+      const provider = aiProvider();
+      if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
+      if (!provider.key) {
+        throw apiError(
+          `${provider.keyEnv} is not configured. Add it to .env, then restart the app.`,
+          503,
+          `${provider.id}_key_missing`,
+        );
+      }
+
+      const store = await loadUsersStore();
+      const profile = store?.users.find((candidate) => candidate.id === user.id);
+      if (!profile) throw apiError("The wardrobe profile for this item no longer exists.", 404, "user_not_found");
+      const models = await loadProfileReferenceImages(profile);
+      const garmentName = path.basename(new URL(record.image, "http://localhost").pathname);
+      const garment = {
+        data: await readFile(path.join(libraryAssetDir, garmentName)),
+        mime: "image/png",
+        name: "garment.png",
+      };
+      const editImage = provider.id === "openrouter" ? openRouterEdit : openAIEdit;
+      const prompt = options.modeledPrompt || buildModeledPrompt(models.length, profile, record);
+      console.info(`[wardrobe] Generating requested modeled look with ${provider.label} / ${provider.modeledModel} for "${record.name}"...`);
+      const generation = await withGenerationSlot(() => editWithSafetyFallback({
+        editImage,
+        provider,
+        model: provider.modeledModel,
+        fallbackModels: provider.imageFallbackModels,
+        quality: provider.imageQuality,
+        size: "1536x1024",
+        images: [...models, garment],
+        prompt,
+        operation: "modeled-on-demand",
+        trace: {
+          jobId: itemId,
+          itemName: record.name,
+          attempt: 1,
+          personReferenceCount: models.length,
+        },
+      }));
+
+      const modeledName = `${itemId}-modeled.png`;
+      await atomicFile(path.join(libraryAssetDir, modeledName), generation.bytes);
+      const latest = await loadImported();
+      const index = latest.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
+      if (index < 0) {
+        await rm(path.join(libraryAssetDir, modeledName), { force: true });
+        throw apiError("The wardrobe item was deleted while its modeled look was being generated.", 409, "wardrobe_item_deleted");
+      }
+      latest[index] = {
+        ...latest[index],
+        modeledImage: `${LIBRARY_ASSET_ROOT}/${modeledName}`,
+        modeledModel: generation.model,
+        modeledFallbackUsed: generation.fallbackUsed,
+        modeledGeneratedAt: new Date().toISOString(),
+      };
+      await atomicJson(importedFile, latest);
+      return latest[index];
+    })().finally(() => running.delete(lock));
+    running.set(lock, task);
+    return task;
   }
 
   async function backfillOriginalFocus() {
@@ -1468,21 +1583,7 @@ export function wardrobeImportApi(options = {}) {
           const users = await loadUsersStore();
           const profile = users?.users.find((user) => user.id === current.userId);
           if (!profile) throw new Error("The wardrobe profile for this import no longer exists.");
-          const references = profile.referenceImages || [];
-          const models = await Promise.all(references.map(async (reference, index) => {
-            const modelPath = path.join(profileReferenceDir(profile.id), reference.fileName);
-            try {
-              return { data: await readFile(modelPath), name: reference.name || `person-${index + 1}` };
-            } catch (error) {
-              if (error.code === "ENOENT") {
-                throw new Error(`Reference photo "${reference.name || index + 1}" is missing from ${profile.name}'s profile. Open the profile and add it again.`);
-              }
-              throw error;
-            }
-          }));
-          if (!models.length) {
-            throw new Error(`${profile.name}'s profile has no reference photo. Add one before generating a modeled image.`);
-          }
+          const models = await loadProfileReferenceImages(profile);
           const basePrompt = options.modeledPrompt || buildModeledPrompt(models.length, profile, current.metadata);
           console.info(`[wardrobe] Generating modeled image with ${provider.label} / ${provider.modeledModel}...`);
           const generation = await withGenerationSlot(() => editWithSafetyFallback({
@@ -1667,8 +1768,18 @@ export function wardrobeImportApi(options = {}) {
       if (url.pathname === "/api/import/config" && req.method === "GET") {
         return json(res, 200, await setupStatus(user.id));
       }
-      const wardrobeItemMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})$/i);
-      if (wardrobeItemMatch && req.method === "PATCH") {
+      const wardrobeItemMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})(?:\/(modeled))?$/i);
+      if (wardrobeItemMatch?.[2] === "modeled" && req.method === "POST") {
+        const record = await generateImportedModeledLook(wardrobeItemMatch[1], user);
+        return json(res, 200, {
+          ...record,
+          image: withUser(record.image, user.id),
+          thumbnail: withUser(record.thumbnail, user.id),
+          modeledImage: withUser(record.modeledImage, user.id),
+          originalImage: withUser(record.originalImage, user.id),
+        });
+      }
+      if (wardrobeItemMatch && !wardrobeItemMatch[2] && req.method === "PATCH") {
         const id = wardrobeItemMatch[1];
         const input = await body(req, 32 * 1024);
         const records = await loadImported();
@@ -1693,7 +1804,7 @@ export function wardrobeImportApi(options = {}) {
           originalImage: withUser(records[index].originalImage, user.id),
         });
       }
-      if (wardrobeItemMatch && req.method === "DELETE") {
+      if (wardrobeItemMatch && !wardrobeItemMatch[2] && req.method === "DELETE") {
         const id = wardrobeItemMatch[1];
         const records = await loadImported();
         const next = records.filter((record) => record.id !== id || record.userId !== user.id);
@@ -1740,7 +1851,6 @@ export function wardrobeImportApi(options = {}) {
           }
           const missing = [
             !setup.hasApiKey && `${setup.apiKeyName} in .env`,
-            !setup.hasModelReference && `one to three reference photos in ${user.name}'s profile`,
           ].filter(Boolean).join(" and ");
           return json(res, 503, { error: `Setup required for ${setup.providerLabel}: add ${missing}.`, code: "setup_required" });
         }
@@ -1852,8 +1962,7 @@ export function wardrobeImportApi(options = {}) {
         job.stages[stageName].error = null;
         job.stages[stageName].updatedAt = new Date().toISOString();
         const startGarment = stageName === "crop" && decision === "approve" && job.stages.garment.status === "pending";
-        const startModeled = stageName === "garment" && decision === "approve" && job.stages.modeled.status === "pending";
-        if (stageName === "modeled" && decision === "approve") job.status = "complete";
+        if ((stageName === "garment" || stageName === "modeled") && decision === "approve") job.status = "complete";
         await saveJob(job);
         if (decision === "approve" && stageName !== "crop") {
           try {
@@ -1868,7 +1977,6 @@ export function wardrobeImportApi(options = {}) {
         }
         if (decision === "reject") await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
         if (startGarment) void generate(job, "garment");
-        if (startModeled) void generate(job, "modeled");
         const response = publicJob(job);
         if (job.status === "complete") await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
         return json(res, 200, response);
@@ -1904,14 +2012,25 @@ export function wardrobeImportApi(options = {}) {
         if (!job) continue;
         if (job.status === "complete") {
           try {
-            await persistImported(job, true);
+            const includeModeled = Boolean(job.stages.modeled?.assetUrl);
+            await persistImported(job, includeModeled);
             await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
           } catch (error) {
             job.status = "active";
-            job.stages.modeled.status = "review";
-            job.stages.modeled.decision = null;
-            job.stages.modeled.error = null;
+            job.stages.garment.status = "review";
+            job.stages.garment.decision = null;
+            job.stages.garment.error = error.message;
             await saveJob(job);
+          }
+          continue;
+        }
+        if (job.stages.garment?.status === "approved") {
+          try {
+            const includeModeled = job.stages.modeled?.status === "review" && Boolean(job.stages.modeled.assetUrl);
+            await persistImported(job, includeModeled);
+            await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
+          } catch (error) {
+            console.warn(`[wardrobe] Could not finish legacy import ${job.id}: ${error.message}`);
           }
           continue;
         }
@@ -1924,10 +2043,6 @@ export function wardrobeImportApi(options = {}) {
           job.stages.garment.status = "pending";
           await saveJob(job);
           void generate(job, "garment");
-        } else if (job.stages.garment.status === "approved" && ["pending", "processing", "queued"].includes(job.stages.modeled.status)) {
-          job.stages.modeled.status = "pending";
-          await saveJob(job);
-          void generate(job, "modeled");
         }
       }
       if (booleanSetting("WARDROBE_BACKFILL_ORIGINAL_FOCUS", false)) {

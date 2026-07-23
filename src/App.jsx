@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CaretDown, Check, DownloadSimple, LockKey, PencilSimple, Plus, Trash, UploadSimple, UserCircle, X } from "@phosphor-icons/react";
-import { WardrobeImportFlow } from "./import-flow.jsx";
+import { CaretDown, Check, DownloadSimple, LockKey, PencilSimple, Plus, Sparkle, SpinnerGap, Trash, UploadSimple, UserCircle, X } from "@phosphor-icons/react";
+import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 
 const STORAGE_KEY = "open-wardrobe-edits-v1";
@@ -400,7 +400,7 @@ function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleSta
   );
 }
 
-function ItemViewer({ item, onClose, onSave, onDelete }) {
+function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled }) {
   const closeButtonRef = useRef(null);
   const imageRef = useRef(null);
   const samplingCanvasRef = useRef(null);
@@ -412,9 +412,12 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
   const [shaking, setShaking] = useState(false);
   const [closeBlocked, setCloseBlocked] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
+  const [generatingModeled, setGeneratingModeled] = useState(false);
+  const [generationError, setGenerationError] = useState("");
   const type = TYPE_MAP[item.part]?.singular || "Wardrobe item";
   const hasModeledImage = Boolean(item.modeledImage);
   const hasOriginalImage = Boolean(item.originalImage);
+  const hasHeroImage = hasModeledImage || hasOriginalImage;
   const pieceRotation = useMemo(() => {
     const hash = [...item.id].reduce((total, character) => total + character.charCodeAt(0), 0);
     return `${(hash % 9) - 4}deg`;
@@ -480,6 +483,7 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
     setPalette(item.palette || []);
     setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
     setShowOriginal(false);
+    setGenerationError("");
   }, [item]);
 
   const cancelEditing = () => {
@@ -515,10 +519,27 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
     setSampling(null);
   };
 
+  const generateModeledLook = async () => {
+    if (isDirty) {
+      setGenerationError("Save your item changes before generating the modeled look.");
+      nudgeUnsaved();
+      return;
+    }
+    setGeneratingModeled(true);
+    setGenerationError("");
+    try {
+      await onGenerateModeled(item.id);
+    } catch (requestError) {
+      setGenerationError(readableError(requestError));
+    } finally {
+      setGeneratingModeled(false);
+    }
+  };
+
   const garmentArtwork = (
     <div
-      className={`viewer-art${hasModeledImage ? " viewer-art-floating" : ""}${sampling ? " sampling" : ""}`}
-      style={hasModeledImage ? { "--piece-rotation": pieceRotation } : undefined}
+      className={`viewer-art${hasHeroImage ? " viewer-art-floating" : ""}${sampling ? " sampling" : ""}`}
+      style={hasHeroImage ? { "--piece-rotation": pieceRotation } : undefined}
     >
       <OptimizedImage
         ref={imageRef}
@@ -537,14 +558,14 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
   return (
     <div className="viewer-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
     <div className="viewer-entry">
-    <aside className={`viewer editing${hasModeledImage ? " has-modeled-image" : ""}${shaking ? " shake" : ""}`} role="dialog" aria-modal="true" aria-label="Selected wardrobe item">
+    <aside className={`viewer editing${hasHeroImage ? " has-hero-image" : ""}${shaking ? " shake" : ""}`} role="dialog" aria-modal="true" aria-label="Selected wardrobe item">
       <button className="viewer-icon-close" type="button" onClick={requestClose} aria-label="Close viewer" ref={closeButtonRef}>
         <X size={24} weight="light" aria-hidden="true" />
       </button>
 
-      {hasModeledImage ? (
+      {hasHeroImage ? (
         <div className="modeled-hero">
-          {hasOriginalImage ? (
+          {hasModeledImage && hasOriginalImage ? (
             <button
               className="modeled-hero-toggle"
               type="button"
@@ -565,15 +586,16 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
           ) : (
             <OptimizedImage
               className="modeled-hero-photo"
-              src={item.modeledImage}
-              alt={`${draft.name || type} worn by a model`}
+              src={hasModeledImage ? item.modeledImage : item.originalImage}
+              alt={hasModeledImage ? `${draft.name || type} worn by a model` : `Original photo containing ${draft.name || type}`}
+              style={!hasModeledImage ? { objectPosition: originalPhotoPosition(item) } : undefined}
               sizes="(max-width: 860px) 100vw, 520px"
               breakpoints={[320, 480, 640, 800, 1040, 1280]}
               quality={82}
               priority
             />
           )}
-          {hasOriginalImage && (
+          {hasModeledImage && hasOriginalImage && (
             <span className="modeled-toggle-hint">
               {showOriginal ? "Click photo to see modeled look" : "Click photo to see original"}
             </span>
@@ -597,6 +619,20 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
       )}
 
       <div className="viewer-details editing">
+        {!hasModeledImage && item.id.startsWith("import-") && (
+          <section className="modeled-request" aria-label="Modeled look">
+            <div>
+              <strong>See this piece styled on you</strong>
+              <p>Generates and saves one AI image only when you request it.</p>
+            </div>
+            <button className="modeled-request__button" type="button" disabled={generatingModeled} onClick={generateModeledLook}>
+              {generatingModeled ? <SpinnerGap className="modeled-request__spinner" size={16} /> : <Sparkle size={16} weight="fill" />}
+              {generatingModeled ? "Generating look…" : "Generate modeled look"}
+            </button>
+            {generationError && <p className="modeled-request__error" role="alert">{generationError}</p>}
+          </section>
+        )}
+
         <ItemEditor
           draft={draft}
           setDraft={setDraft}
@@ -1047,10 +1083,13 @@ export function App() {
     setItems((current) => current.some((item) => item.id === newItem.id) ? current : [...current, newItem]);
   }, []);
 
-  const attachImportedModeledImage = useCallback((jobId, modeledImage) => {
-    const id = `import-${jobId}`;
-    setItems((current) => current.map((item) => item.id === id ? { ...item, modeledImage } : item));
-  }, []);
+  const generateModeledLook = async (id) => {
+    const generated = await profileApi(`/api/import/wardrobe/${id}/modeled?user=${encodeURIComponent(currentUserId)}`, {
+      method: "POST",
+    });
+    setItems((current) => current.map((item) => item.id === generated.id ? { ...item, ...generated } : item));
+    return generated;
+  };
 
   const logout = async () => {
     try {
@@ -1123,13 +1162,12 @@ export function App() {
         )}
       </main>
 
-      {selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} />}
+      {selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} onGenerateModeled={generateModeledLook} />}
       {currentUser && (
         <WardrobeImportFlow
           key={`${currentUser.id}:${currentUser.updatedAt}`}
           userId={currentUser.id}
           onGarmentApproved={addImportedItem}
-          onModeledApproved={attachImportedModeledImage}
         />
       )}
       {profileEditor && (

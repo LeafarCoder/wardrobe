@@ -25,7 +25,7 @@ cp .env.example .env
 npm run dev
 ```
 
-⚠️ The importer stays disabled until you add the API key for your selected provider to `.env` and the current user has at least one reference photo. Add or edit people from the wardrobe switcher in the top-right corner.
+⚠️ The importer stays disabled until you add the API key for your selected provider to `.env`. A user needs at least one profile reference photo only when they request a modeled look.
 
 Open [localhost:5173](http://localhost:5173).
 
@@ -51,11 +51,11 @@ If you are setting up Wardrobe for a user, ask how they want to import their clo
 
 - Detects every garment in a photo with structured multimodal analysis
 - Extracts clean product cutouts with reference-image editing
-- Generates an optional modeled editorial preview
+- Generates and saves a modeled editorial look only when requested from an item's detail panel
 - Supports multiple local users with separate clothes, references, active imports, sizing, style, and preferences
 - Keeps originals, jobs, generated images, and the JSON database local in `data/`
 - Supports drag, drop, paste, editing, review, regeneration, and approval
-- Keeps the original uploaded photo so a modeled item can be toggled back to its source
+- Shows the original uploaded photo by default, then lets a modeled item toggle between its generated look and source
 
 ## User profiles
 
@@ -133,7 +133,7 @@ Existing OpenAI configuration remains supported:
 
 ### Local-first boundary
 
-Your database, user profiles, import jobs, originals, and generated assets stay in the local `data/` directory. AI processing is not fully local: the imported photo and garment crop are sent to OpenRouter or OpenAI, while the current user's reference photos and profile styling context are sent for modeled-image generation. API keys stay on the local Vite server and are never exposed to the browser bundle.
+Your database, user profiles, import jobs, originals, and generated assets stay in the local `data/` directory. AI processing is not fully local: the imported photo and garment crop are sent to OpenRouter or OpenAI. The current user's reference photos and profile styling context are sent only when that user explicitly requests a modeled look. API keys stay on the local Vite server and are never exposed to the browser bundle.
 
 Other settings:
 
@@ -228,7 +228,7 @@ Railway also offers private S3-compatible Buckets at a lower per-GB storage rate
 - Keep `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, and the access password in Railway variables only. Never use a `VITE_` prefix for secrets.
 - Keep a single service replica. The JSON store and attached volume are not safe for concurrent writers, and Railway volumes do not support horizontal replicas.
 - Turn on volume backups and periodically download an off-platform copy. A password wall does not replace a backup.
-- Leave `OPENROUTER_ZDR=true` if the selected routes support it. AI imports still send clothing and reference photos to the configured AI provider for processing.
+- Leave `OPENROUTER_ZDR=true` if the selected routes support it. Imports send clothing photos to the configured AI provider; profile reference photos are sent only for explicitly requested modeled looks.
 - Do not use a public Supabase or S3 bucket for these photos. Use a private bucket plus short-lived signed URLs if storage is moved later.
 - Review Railway logs after deployment. The server logs AI model, status, duration, token usage, and reported provider cost, but never logs API keys or image contents.
 

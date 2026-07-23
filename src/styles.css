@@ -571,7 +571,7 @@ button { font: inherit; }
   box-shadow: -18px 0 50px rgba(25, 24, 22, .08);
 }
 
-.viewer.has-modeled-image {
+.viewer.has-hero-image {
   padding: 0;
 }
 
@@ -735,7 +735,7 @@ button { font: inherit; }
   text-transform: none;
 }
 
-.has-modeled-image .viewer-icon-close {
+.has-hero-image .viewer-icon-close {
   top: 24px;
   right: 24px;
   background: rgba(246, 241, 232, .88);
@@ -837,8 +837,77 @@ button { font: inherit; }
 
 .viewer-details.editing { padding-top: 8px; }
 
-.has-modeled-image .viewer-details.editing {
+.has-hero-image .viewer-details.editing {
   padding: 12px 34px 46px;
+}
+
+.modeled-request {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 18px;
+  margin: 0 0 24px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 18px 0;
+}
+
+.modeled-request strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 560;
+}
+
+.modeled-request p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.modeled-request__button {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--ink);
+  padding: 9px 12px;
+  background: var(--ink);
+  color: var(--paper);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 540;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.modeled-request__button:hover,
+.modeled-request__button:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent);
+  outline: none;
+}
+
+.modeled-request__button:disabled {
+  border-color: var(--line);
+  background: var(--line);
+  color: var(--muted);
+  cursor: wait;
+}
+
+.modeled-request__spinner {
+  animation: modeled-request-spin 900ms linear infinite;
+}
+
+@keyframes modeled-request-spin {
+  to { transform: rotate(360deg); }
+}
+
+.modeled-request .modeled-request__error {
+  grid-column: 1 / -1;
+  color: var(--accent);
 }
 
 .details-label {
@@ -1236,7 +1305,7 @@ button { font: inherit; }
   .gallery-grid { padding-inline: 32px; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap-inline: 18px; }
   .category-nav { max-width: 100%; }
   .viewer { padding-inline: 30px; }
-  .has-modeled-image .viewer-details.editing { padding-inline: 30px; }
+  .has-hero-image .viewer-details.editing { padding-inline: 30px; }
 }
 
 @media (max-width: 860px) {
@@ -1260,8 +1329,8 @@ button { font: inherit; }
   }
   .viewer-heading { padding-top: 0; }
   .viewer-icon-close { top: 18px; right: 18px; }
-  .has-modeled-image .viewer-icon-close { top: 20px; right: 20px; }
-  .has-modeled-image .viewer-details.editing { padding: 14px 30px 38px; }
+  .has-hero-image .viewer-icon-close { top: 20px; right: 20px; }
+  .has-hero-image .viewer-details.editing { padding: 14px 30px 38px; }
   .viewer-art { flex-basis: min(32vh, 300px); height: min(32vh, 300px); min-height: 210px; }
   .viewer-art.viewer-art-floating { flex-basis: auto; width: 36%; height: 178px; min-height: 0; }
   .item-editor { grid-template-columns: 1fr; }
@@ -1305,12 +1374,14 @@ button { font: inherit; }
   .modeled-hero::after { height: 112px; }
   .modeled-heading { top: 20px; left: 20px; padding: 11px 13px 12px; }
   .modeled-heading h2 { font-size: 17px; }
-  .has-modeled-image .viewer-icon-close { top: 20px; right: 20px; }
+  .has-hero-image .viewer-icon-close { top: 20px; right: 20px; }
   .viewer-art.viewer-art-floating { right: 15px; bottom: 0; flex-basis: auto; width: 40%; height: 158px; min-height: 0; padding: 0; }
-  .has-modeled-image .viewer-details.editing { padding: 12px 22px 30px; }
+  .has-hero-image .viewer-details.editing { padding: 12px 22px 30px; }
   .viewer-heading { padding-top: 0; }
   .viewer-art { flex-basis: min(30vh, 260px); height: min(30vh, 260px); min-height: 190px; padding-block: 10px 8px; }
   .viewer-details { padding-top: 10px; }
+  .modeled-request { grid-template-columns: 1fr; }
+  .modeled-request__button { width: 100%; }
   .details-label { margin-bottom: 16px; }
   .detail-tags { padding-bottom: 20px; gap: 8px 22px; }
   .viewer-text-close { margin-top: 20px; }
@@ -1326,6 +1397,7 @@ button { font: inherit; }
   .viewer-art-floating { transition: none; }
   .viewer-overlay,
   .viewer-entry { animation: none; }
+  .modeled-request__spinner { animation: none; }
   .viewer.shake {
     animation: none;
     box-shadow: inset 3px 0 0 var(--accent), -18px 0 50px rgba(25, 24, 22, .08);
