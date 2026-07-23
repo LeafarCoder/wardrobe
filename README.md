@@ -140,6 +140,7 @@ Other settings:
 | `WARDROBE_MODEL_REFERENCE` | Legacy first-run reference: `data/model-reference.png` |
 | `WARDROBE_MODEL_REFERENCES` | Optional legacy first-run list of 2–3 person photos |
 | `WARDROBE_DATA_DIR` | `data` |
+| `WARDROBE_BACKFILL_ORIGINAL_FOCUS` | `false`; set to `true` to analyze and save framing metadata for older stored originals |
 
 On the first multi-user startup, the legacy reference setting is copied into the initial profile. After that, manage reference photos from the profile editor. For a fresh checkout, this optional bootstrap configuration still works:
 

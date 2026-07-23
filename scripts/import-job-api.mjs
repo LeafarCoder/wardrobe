@@ -1,4 +1,4 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -400,6 +400,25 @@ export function combineBoundingBoxes(values = []) {
     width: right - left,
     height: bottom - top,
   });
+}
+
+function metadataMatch(record, detected, used) {
+  const tokens = (value) => new Set(String(value || "").toLowerCase().match(/[a-z0-9]+/g) || []);
+  const recordTokens = tokens(record.name);
+  const candidates = detected
+    .map((metadata, index) => ({ metadata, index }))
+    .filter(({ index }) => !used.has(index))
+    .map(({ metadata, index }) => {
+      const sharedNameTokens = [...tokens(metadata.name)].filter((token) => recordTokens.has(token)).length;
+      const partScore = metadata.part === record.part ? 1000 : 0;
+      const colorScore = metadata.color === record.color ? 100 : 0;
+      return { metadata, index, score: partScore + colorScore + (sharedNameTokens * 20) };
+    })
+    .sort((first, second) => second.score - first.score);
+  const match = candidates[0];
+  if (!match || match.score < 1000) return null;
+  used.add(match.index);
+  return match.metadata;
 }
 
 async function normalizeImage(bytes) {
@@ -1240,6 +1259,7 @@ export function wardrobeImportApi(options = {}) {
       tags: Array.isArray(metadata.tags) ? metadata.tags : [],
       boundingBox: metadata.boundingBox || existing?.boundingBox || null,
       originalFocusBox: job.originalFocusBox || existing?.originalFocusBox || metadata.boundingBox || null,
+      originalFocusSource: job.originalFocusBox ? "ai-import" : existing?.originalFocusSource || null,
       image: `${LIBRARY_ASSET_ROOT}/${garmentName}`,
       thumbnail: `${LIBRARY_ASSET_ROOT}/${garmentName}`,
       modeledImage: modeledImage || existing?.modeledImage || null,
@@ -1249,6 +1269,65 @@ export function wardrobeImportApi(options = {}) {
     const next = [...records.filter((item) => item.id !== id), record];
     await atomicJson(importedFile, next);
     return record;
+  }
+
+  async function backfillOriginalFocus() {
+    if (!booleanSetting("WARDROBE_BACKFILL_ORIGINAL_FOCUS", false)) return;
+    const records = await loadImported();
+    const missing = records.filter((record) => record.originalImage && !record.originalFocusBox);
+    if (!missing.length) {
+      console.info("[wardrobe] Original-photo focus backfill is already complete.");
+      return;
+    }
+    const provider = aiProvider();
+    if (provider.configurationError || !provider.key) {
+      console.warn(`[wardrobe] Skipping original-photo focus backfill: ${provider.configurationError || `${provider.keyEnv} is not configured.`}`);
+      return;
+    }
+    const groups = new Map();
+    for (const record of missing) {
+      try {
+        const fileName = path.basename(new URL(record.originalImage, "http://localhost").pathname);
+        const bytes = await readFile(path.join(libraryAssetDir, fileName));
+        const hash = createHash("sha256").update(bytes).digest("hex");
+        const group = groups.get(hash) || { bytes, recordIds: [] };
+        group.recordIds.push(record.id);
+        groups.set(hash, group);
+      } catch (error) {
+        console.warn(`[wardrobe] Could not prepare original-photo focus for "${record.name}": ${error.message}`);
+      }
+    }
+    const analyzeImage = provider.id === "openrouter" ? openRouterAnalyze : openAIAnalyze;
+    let completed = 0;
+    for (const group of groups.values()) {
+      try {
+        console.info(`[wardrobe] Backfilling original-photo focus for ${group.recordIds.length} wardrobe ${group.recordIds.length === 1 ? "item" : "items"} with ${provider.label} / ${provider.visionModel}...`);
+        const image = await prepareProviderImage(group.bytes);
+        const detected = (await analyzeImage({
+          provider,
+          model: provider.visionModel,
+          image: image.data,
+          mime: image.mime,
+        })).map(normalizeMetadata);
+        const originalFocusBox = combineBoundingBoxes(detected.map((metadata) => metadata.boundingBox));
+        if (!originalFocusBox) throw new Error("No clothing was detected in the stored original photo.");
+        const used = new Set();
+        const latestRecords = await loadImported();
+        for (const recordId of group.recordIds) {
+          const record = latestRecords.find((candidate) => candidate.id === recordId);
+          if (!record) continue;
+          const match = metadataMatch(record, detected, used);
+          record.originalFocusBox = originalFocusBox;
+          record.originalFocusSource = "ai-backfill";
+          if (!record.boundingBox && match?.boundingBox) record.boundingBox = match.boundingBox;
+        }
+        await atomicJson(importedFile, latestRecords);
+        completed += 1;
+      } catch (error) {
+        console.warn(`[wardrobe] Original-photo focus backfill failed for one stored photo: ${error.message}`);
+      }
+    }
+    console.info(`[wardrobe] Original-photo focus backfill completed for ${completed} of ${groups.size} stored ${groups.size === 1 ? "photo" : "photos"}.`);
   }
 
   async function generate(job, stageName) {
@@ -1752,6 +1831,13 @@ export function wardrobeImportApi(options = {}) {
           await saveJob(job);
           void generate(job, "modeled");
         }
+      }
+      if (booleanSetting("WARDROBE_BACKFILL_ORIGINAL_FOCUS", false)) {
+        setTimeout(() => {
+          backfillOriginalFocus().catch((error) => {
+            console.warn(`[wardrobe] Original-photo focus backfill could not start: ${error.message}`);
+          });
+        }, 0);
       }
     })().catch((error) => {
       initialization = null;
