@@ -68,6 +68,27 @@ function apiError(message, status, code, cause) {
   return Object.assign(new Error(message, cause ? { cause } : undefined), { status, code });
 }
 
+function safetyPolicySignal(value) {
+  return /(?:content[_\s-]*policy(?:[_\s-]*violation)?|prohibited[_\s-]*content|image[_\s-]*safety|safety[_\s-]*(?:filter|violation|blocked)|moderation[_\s-]*(?:blocked|flagged)|\brefusal\b)/i.test(String(value || ""));
+}
+
+export function isSafetyPolicyError(error) {
+  return safetyPolicySignal([
+    error?.code,
+    error?.message,
+    error?.cause?.code,
+    error?.cause?.message,
+  ].filter(Boolean).join(" "));
+}
+
+export function parseModelList(value) {
+  const models = String(value || "")
+    .split(/[\n,]/)
+    .map((model) => model.trim())
+    .filter((model) => model && !["false", "none", "off"].includes(model.toLowerCase()));
+  return [...new Set(models)];
+}
+
 function parseCookies(header = "") {
   return Object.fromEntries(String(header).split(";").map((part) => {
     const separator = part.indexOf("=");
@@ -216,6 +237,12 @@ function providerResponseError(response, result, { provider, model, operation })
   if (/zero.data.retention|\bZDR\b|data polic|no endpoints.*privacy/i.test(signal)) {
     return apiError(`${label} could not find a zero-data-retention route for ${model}. Choose a ZDR-capable model, adjust the account privacy settings, or set OPENROUTER_ZDR=false if you accept provider retention.`, 400, "openrouter_zdr_unavailable");
   }
+  if (safetyPolicySignal(signal)) {
+    const fallback = operation === "analysis"
+      ? `${label} could not analyze this image because its safety policy blocked the request.`
+      : `${label} could not generate the requested image because its safety policy blocked the request.`;
+    return apiError(detail ? `${fallback} ${detail}` : fallback, 400, String(code || `${provider.id}_content_policy`));
+  }
   if (response.status === 403) {
     return apiError(`${label} denied access to ${model}. Check the API key's model permissions or choose another model in .env.`, 403, `${provider.id}_model_forbidden`);
   }
@@ -288,6 +315,7 @@ function logAiCall({ provider, model, operation, response, result = {}, startedA
     `model=${cleanLogValue(model)}`,
     upstream ? `upstream=${cleanLogValue(upstream)}` : null,
     trace.route ? `route=${cleanLogValue(trace.route)}` : null,
+    trace.fallbackFrom ? `fallback_for=${cleanLogValue(trace.fallbackFrom)}` : null,
     trace.itemName ? `item=${JSON.stringify(cleanLogValue(trace.itemName))}` : null,
     trace.jobId ? `job=${cleanLogValue(trace.jobId)}` : null,
     trace.attempt ? `attempt=${trace.attempt}` : null,
@@ -680,7 +708,7 @@ async function atomicJson(file, value) {
 }
 
 function stageState() {
-  return { status: "pending", decision: null, attempts: 0, assetUrl: null, failedAssetUrl: null, cleanupPreviewUrl: null, cleanupTolerance: 46, cleanupDiagnostics: null, error: null, prompt: null, updatedAt: null };
+  return { status: "pending", decision: null, attempts: 0, assetUrl: null, failedAssetUrl: null, cleanupPreviewUrl: null, cleanupTolerance: 46, cleanupDiagnostics: null, error: null, prompt: null, model: null, fallbackUsed: false, updatedAt: null };
 }
 
 function parseWardrobeItems(outputText, provider) {
@@ -706,8 +734,13 @@ function openRouterHeaders(provider) {
   };
 }
 
-function openRouterImageRouting(provider, model) {
-  const configured = provider.imageProvider
+function openRouterImageRouting(provider, model, fallbackFrom = "") {
+  const configuredProvider = fallbackFrom && model.startsWith("bytedance-seed/")
+    ? provider.imageFallbackProvider
+    : fallbackFrom
+      ? ""
+      : provider.imageProvider;
+  const configured = configuredProvider
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
@@ -771,7 +804,7 @@ async function openRouterEdit({ provider, model, prompt, images, size, backgroun
   };
   if (quality && quality !== "auto") request.quality = quality;
   if (background) request.background = background;
-  const routing = openRouterImageRouting(provider, model);
+  const routing = openRouterImageRouting(provider, model, trace?.fallbackFrom);
   if (routing) request.provider = routing;
   const requestBody = JSON.stringify(request);
   const callTrace = routing?.only?.length
@@ -796,6 +829,52 @@ async function openRouterEdit({ provider, model, prompt, images, size, backgroun
   const encoded = result.data?.[0]?.b64_json;
   if (!encoded) throw apiError("OpenRouter returned no image data. Try the generation again.", 502, "openrouter_empty_image");
   return normalizeImage(Buffer.from(encoded, "base64"));
+}
+
+export async function editWithSafetyFallback({
+  editImage,
+  provider,
+  model,
+  fallbackModels = [],
+  trace = {},
+  ...request
+}) {
+  const candidates = [model, ...fallbackModels].filter((candidate, index, values) => candidate && values.indexOf(candidate) === index);
+  for (const [index, candidate] of candidates.entries()) {
+    try {
+      const bytes = await editImage({
+        ...request,
+        provider,
+        model: candidate,
+        trace: index ? { ...trace, fallbackFrom: model } : trace,
+      });
+      return { bytes, model: candidate, fallbackUsed: index > 0 };
+    } catch (error) {
+      const fallback = candidates[index + 1];
+      if (!fallback || !isSafetyPolicyError(error)) {
+        if (index > 0 && isSafetyPolicyError(error)) {
+          throw apiError(
+            "The primary and fallback image models both declined this image under their safety policies. Try a different source or reference photo.",
+            400,
+            "all_image_models_safety_blocked",
+            error,
+          );
+        }
+        throw error;
+      }
+      const parts = [
+        "safety fallback",
+        `operation=${cleanLogValue(request.operation || "generation")}`,
+        `blocked_model=${cleanLogValue(candidate)}`,
+        `next_model=${cleanLogValue(fallback)}`,
+        trace.itemName ? `item=${JSON.stringify(cleanLogValue(trace.itemName))}` : null,
+        trace.jobId ? `job=${cleanLogValue(trace.jobId)}` : null,
+        error.code ? `reason=${cleanLogValue(error.code)}` : null,
+      ].filter(Boolean);
+      console.warn(`[wardrobe:ai] ${parts.join(" | ")}`);
+    }
+  }
+  throw apiError(`${provider.label} could not generate the requested image.`, 502, `${provider.id}_empty_fallback_chain`);
 }
 
 async function openAIAnalyze({ provider, model, image, mime }) {
@@ -1000,8 +1079,10 @@ export function wardrobeImportApi(options = {}) {
         visionModel: setting("OPENROUTER_VISION_MODEL", "google/gemini-3.1-flash-lite"),
         garmentModel: setting("OPENROUTER_GARMENT_MODEL", imageModel || "google/gemini-3.1-flash-lite-image"),
         modeledModel: setting("OPENROUTER_MODELED_MODEL", imageModel || "google/gemini-3.1-flash-lite-image"),
+        imageFallbackModels: parseModelList(setting("OPENROUTER_IMAGE_FALLBACK_MODELS", "bytedance-seed/seedream-4.5")),
         imageQuality: setting("OPENROUTER_IMAGE_QUALITY", "auto"),
         imageProvider: setting("OPENROUTER_IMAGE_PROVIDER"),
+        imageFallbackProvider: setting("OPENROUTER_IMAGE_FALLBACK_PROVIDER", "seed"),
         zdr: booleanSetting("OPENROUTER_ZDR", true),
       };
     }
@@ -1016,8 +1097,10 @@ export function wardrobeImportApi(options = {}) {
       visionModel: setting("OPENAI_VISION_MODEL", "gpt-5.4-mini"),
       garmentModel: setting("OPENAI_GARMENT_MODEL", imageModel),
       modeledModel: setting("OPENAI_MODELED_MODEL", imageModel),
+      imageFallbackModels: [],
       imageQuality: setting("OPENAI_IMAGE_QUALITY", "high"),
       imageProvider: "",
+      imageFallbackProvider: "",
       zdr: false,
     };
   };
@@ -1188,6 +1271,7 @@ export function wardrobeImportApi(options = {}) {
         vision: provider.visionModel,
         garment: provider.garmentModel,
         modeled: provider.modeledModel,
+        imageFallbacks: provider.imageFallbackModels,
       },
     };
   }
@@ -1340,6 +1424,8 @@ export function wardrobeImportApi(options = {}) {
       await saveJob(current);
       let failedAssetUrl = null;
       let chromaKeyUsed = null;
+      let usedModel = null;
+      let fallbackUsed = false;
       try {
         const dir = path.join(jobsDir, current.id);
         const output = path.join(dir, `${stageName}-${stage.attempts}.png`);
@@ -1354,9 +1440,11 @@ export function wardrobeImportApi(options = {}) {
           chromaKeyUsed = chooseChromaKey(current.metadata.color);
           const basePrompt = options.garmentPrompt || buildGarmentPrompt(current.metadata, chromaKeyUsed);
           console.info(`[wardrobe] Generating garment with ${provider.label} / ${provider.garmentModel}...`);
-          bytes = await withGenerationSlot(() => editImage({
+          const generation = await withGenerationSlot(() => editWithSafetyFallback({
+            editImage,
             provider,
             model: provider.garmentModel,
+            fallbackModels: provider.imageFallbackModels,
             quality: provider.imageQuality,
             size: "1024x1024",
             images: [original],
@@ -1364,6 +1452,9 @@ export function wardrobeImportApi(options = {}) {
             operation: "garment",
             trace: { jobId: current.id, itemName: current.metadata.name, attempt: stage.attempts },
           }));
+          bytes = generation.bytes;
+          usedModel = generation.model;
+          fallbackUsed = generation.fallbackUsed;
           const rawName = `${stageName}-${stage.attempts}-source.png`;
           await writeFile(path.join(dir, rawName), bytes);
           failedAssetUrl = `${ASSET_ROOT}/${current.id}/${rawName}`;
@@ -1394,9 +1485,11 @@ export function wardrobeImportApi(options = {}) {
           }
           const basePrompt = options.modeledPrompt || buildModeledPrompt(models.length, profile, current.metadata);
           console.info(`[wardrobe] Generating modeled image with ${provider.label} / ${provider.modeledModel}...`);
-          bytes = await withGenerationSlot(() => editImage({
+          const generation = await withGenerationSlot(() => editWithSafetyFallback({
+            editImage,
             provider,
             model: provider.modeledModel,
+            fallbackModels: provider.imageFallbackModels,
             quality: provider.imageQuality,
             size: "1536x1024",
             images: [...models, garment],
@@ -1409,6 +1502,9 @@ export function wardrobeImportApi(options = {}) {
               personReferenceCount: models.length,
             },
           }));
+          bytes = generation.bytes;
+          usedModel = generation.model;
+          fallbackUsed = generation.fallbackUsed;
         }
         await writeFile(output, bytes);
         const fresh = await loadJob(current.id);
@@ -1417,6 +1513,8 @@ export function wardrobeImportApi(options = {}) {
         fresh.stages[stageName].failedAssetUrl = null;
         fresh.stages[stageName].cleanupPreviewUrl = null;
         fresh.stages[stageName].cleanupDiagnostics = null;
+        fresh.stages[stageName].model = usedModel;
+        fresh.stages[stageName].fallbackUsed = fallbackUsed;
         if (chromaKeyUsed) fresh.stages[stageName].chromaKey = chromaKeyUsed;
         fresh.stages[stageName].updatedAt = new Date().toISOString();
         await saveJob(fresh);
