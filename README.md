@@ -76,7 +76,7 @@ The checked-in `.env.example` uses a low-cost OpenRouter mix:
 | --- | --- |
 | Garment detection and metadata | `google/gemini-3.1-flash-lite` |
 | Clean garment reconstruction | `google/gemini-3.1-flash-lite-image` |
-| Modeled editorial image | `google/gemini-3.1-flash-image` |
+| Modeled editorial image | `google/gemini-3.1-flash-lite-image` |
 
 Add your key and start the app:
 
@@ -91,8 +91,8 @@ OPENROUTER_API_KEY=sk-or-v1-your-key
 
 | Preset | `OPENROUTER_GARMENT_MODEL` | `OPENROUTER_MODELED_MODEL` |
 | --- | --- | --- |
-| Cheapest | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-lite-image` |
-| Balanced (default) | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-image` |
+| Cheapest (default) | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-lite-image` |
+| Balanced | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-image` |
 | Highest fidelity | `google/gemini-3.1-flash-image` | `google/gemini-3-pro-image` |
 
 The garment and modeled stages can use different image models because a clean single-product reconstruction is simpler than preserving both a person's identity and a garment in one scene.
@@ -105,7 +105,7 @@ The garment and modeled stages can use different image models because a clean si
 | `OPENROUTER_API_BASE_URL` | `https://openrouter.ai/api/v1` |
 | `OPENROUTER_VISION_MODEL` | `google/gemini-3.1-flash-lite` |
 | `OPENROUTER_GARMENT_MODEL` | `google/gemini-3.1-flash-lite-image` |
-| `OPENROUTER_MODELED_MODEL` | `google/gemini-3.1-flash-image` |
+| `OPENROUTER_MODELED_MODEL` | `google/gemini-3.1-flash-lite-image` |
 | `OPENROUTER_IMAGE_QUALITY` | `auto` |
 | `OPENROUTER_ZDR` | `true` |
 | `OPENROUTER_IMAGE_PROVIDER` | Automatic |

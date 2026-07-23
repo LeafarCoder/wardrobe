@@ -999,7 +999,7 @@ export function wardrobeImportApi(options = {}) {
         baseUrlEnv: "OPENROUTER_API_BASE_URL",
         visionModel: setting("OPENROUTER_VISION_MODEL", "google/gemini-3.1-flash-lite"),
         garmentModel: setting("OPENROUTER_GARMENT_MODEL", imageModel || "google/gemini-3.1-flash-lite-image"),
-        modeledModel: setting("OPENROUTER_MODELED_MODEL", imageModel || "google/gemini-3.1-flash-image"),
+        modeledModel: setting("OPENROUTER_MODELED_MODEL", imageModel || "google/gemini-3.1-flash-lite-image"),
         imageQuality: setting("OPENROUTER_IMAGE_QUALITY", "auto"),
         imageProvider: setting("OPENROUTER_IMAGE_PROVIDER"),
         zdr: booleanSetting("OPENROUTER_ZDR", true),
