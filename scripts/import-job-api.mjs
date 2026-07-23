@@ -256,6 +256,13 @@ function providerResponseError(response, result, { provider, model, operation })
   if (response.status === 429) {
     return apiError(`${label} is receiving too many requests right now. Wait a moment and try again.`, 429, `${provider.id}_rate_limited`);
   }
+  if (isImageResolutionTooSmall(result)) {
+    return apiError(
+      `${label}'s selected image route requires a larger output. Wardrobe tried a larger resolution automatically, but the route still rejected it. Set OPENROUTER_IMAGE_FALLBACK_RESOLUTION=4K or choose another fallback model.`,
+      400,
+      "openrouter_image_resolution_too_small",
+    );
+  }
   if (response.status >= 500) {
     return apiError(`${label} or its upstream model provider is temporarily unavailable. Wait a moment and try again.`, 502, `${provider.id}_unavailable`);
   }
@@ -321,6 +328,7 @@ function logAiCall({ provider, model, operation, response, result = {}, startedA
     trace.jobId ? `job=${cleanLogValue(trace.jobId)}` : null,
     trace.attempt ? `attempt=${trace.attempt}` : null,
     trace.personReferenceCount ? `person_refs=${trace.personReferenceCount}` : null,
+    trace.resolution ? `resolution=${cleanLogValue(trace.resolution)}` : null,
     response ? `status=${response.status}` : "status=network_error",
     `duration=${(durationMs / 1000).toFixed(2)}s`,
     trace.payloadBytes ? `payload=${formatByteSize(trace.payloadBytes)}` : null,
@@ -802,7 +810,31 @@ async function openAIEdit({ provider, model, prompt, images, size, background, q
   return Buffer.from(encoded, "base64");
 }
 
-async function openRouterEdit({ provider, model, prompt, images, size, background, quality, operation = "generation", trace }) {
+const OPENROUTER_RESOLUTION_TIERS = ["512", "1K", "2K", "4K"];
+
+function normalizeOpenRouterResolution(value, fallback) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return OPENROUTER_RESOLUTION_TIERS.includes(normalized) ? normalized : fallback;
+}
+
+export function isImageResolutionTooSmall(result) {
+  const detail = [
+    result?.error?.message,
+    result?.error?.code,
+    result?.message,
+    result?.detail,
+  ].filter(Boolean).join(" ");
+  return /(?:image\s+size|parameter\s+[`'"]?size).*?(?:must\s+be\s+)?at\s+least\s+[\d,]+\s+pixels/i.test(detail);
+}
+
+function nextOpenRouterResolution(resolution) {
+  const index = OPENROUTER_RESOLUTION_TIERS.indexOf(resolution);
+  return index >= 0 && index < OPENROUTER_RESOLUTION_TIERS.length - 1
+    ? OPENROUTER_RESOLUTION_TIERS[index + 1]
+    : null;
+}
+
+export async function openRouterEdit({ provider, model, prompt, images, size, background, quality, operation = "generation", trace }) {
   const inputReferences = await Promise.all(images.map(async (image) => {
     const prepared = await prepareProviderImage(image.data);
     return {
@@ -810,41 +842,57 @@ async function openRouterEdit({ provider, model, prompt, images, size, backgroun
       image_url: { url: `data:${prepared.mime};base64,${prepared.data.toString("base64")}` },
     };
   }));
-  const request = {
-    model,
-    prompt,
-    n: 1,
-    resolution: "1K",
-    aspect_ratio: size === "1536x1024" ? "3:2" : "1:1",
-    input_references: inputReferences,
-  };
-  if (quality && quality !== "auto") request.quality = quality;
-  if (background) request.background = background;
-  const routing = openRouterImageRouting(provider, model, trace?.fallbackFrom);
-  if (routing) request.provider = routing;
-  const requestBody = JSON.stringify(request);
-  const callTrace = routing?.only?.length
-    ? { ...trace, route: routing.only.join(","), payloadBytes: Buffer.byteLength(requestBody) }
-    : { ...trace, payloadBytes: Buffer.byteLength(requestBody) };
+  const configuredResolution = trace?.fallbackFrom
+    ? provider.imageFallbackResolution
+    : provider.imageResolution;
+  let resolution = normalizeOpenRouterResolution(configuredResolution, trace?.fallbackFrom ? "2K" : "1K");
 
-  let response;
-  const startedAt = Date.now();
-  try {
-    response = await fetch(`${provider.baseUrl}/images`, {
-      method: "POST",
-      headers: openRouterHeaders(provider),
-      body: requestBody,
-    });
-  } catch (error) {
-    logAiCall({ provider, model, operation, startedAt, trace: callTrace, networkError: error });
-    throw providerNetworkError(error, provider);
+  while (resolution) {
+    const request = {
+      model,
+      prompt,
+      n: 1,
+      resolution,
+      aspect_ratio: size === "1536x1024" ? "3:2" : "1:1",
+      input_references: inputReferences,
+    };
+    if (quality && quality !== "auto") request.quality = quality;
+    if (background) request.background = background;
+    const routing = openRouterImageRouting(provider, model, trace?.fallbackFrom);
+    if (routing) request.provider = routing;
+    const requestBody = JSON.stringify(request);
+    const callTrace = routing?.only?.length
+      ? { ...trace, resolution, route: routing.only.join(","), payloadBytes: Buffer.byteLength(requestBody) }
+      : { ...trace, resolution, payloadBytes: Buffer.byteLength(requestBody) };
+
+    let response;
+    const startedAt = Date.now();
+    try {
+      response = await fetch(`${provider.baseUrl}/images`, {
+        method: "POST",
+        headers: openRouterHeaders(provider),
+        body: requestBody,
+      });
+    } catch (error) {
+      logAiCall({ provider, model, operation, startedAt, trace: callTrace, networkError: error });
+      throw providerNetworkError(error, provider);
+    }
+    const result = await response.json().catch(() => ({}));
+    logAiCall({ provider, model, operation, response, result, startedAt, trace: callTrace });
+    if (!response.ok && isImageResolutionTooSmall(result)) {
+      const nextResolution = nextOpenRouterResolution(resolution);
+      if (nextResolution) {
+        console.warn(`[wardrobe:ai] resolution retry | operation=${cleanLogValue(operation)} | model=${cleanLogValue(model)} | rejected=${resolution} | next=${nextResolution}`);
+        resolution = nextResolution;
+        continue;
+      }
+    }
+    if (!response.ok) throw providerResponseError(response, result, { provider, model, operation: "generation" });
+    const encoded = result.data?.[0]?.b64_json;
+    if (!encoded) throw apiError("OpenRouter returned no image data. Try the generation again.", 502, "openrouter_empty_image");
+    return normalizeImage(Buffer.from(encoded, "base64"));
   }
-  const result = await response.json().catch(() => ({}));
-  logAiCall({ provider, model, operation, response, result, startedAt, trace: callTrace });
-  if (!response.ok) throw providerResponseError(response, result, { provider, model, operation: "generation" });
-  const encoded = result.data?.[0]?.b64_json;
-  if (!encoded) throw apiError("OpenRouter returned no image data. Try the generation again.", 502, "openrouter_empty_image");
-  return normalizeImage(Buffer.from(encoded, "base64"));
+  throw apiError("OpenRouter could not choose a compatible image resolution.", 400, "openrouter_image_resolution_unavailable");
 }
 
 export async function editWithSafetyFallback({
@@ -1097,6 +1145,8 @@ export function wardrobeImportApi(options = {}) {
         modeledModel: setting("OPENROUTER_MODELED_MODEL", imageModel || "google/gemini-3.1-flash-lite-image"),
         imageFallbackModels: parseModelList(setting("OPENROUTER_IMAGE_FALLBACK_MODELS", "bytedance-seed/seedream-4.5")),
         imageQuality: setting("OPENROUTER_IMAGE_QUALITY", "auto"),
+        imageResolution: setting("OPENROUTER_IMAGE_RESOLUTION", "1K"),
+        imageFallbackResolution: setting("OPENROUTER_IMAGE_FALLBACK_RESOLUTION", "2K"),
         imageProvider: setting("OPENROUTER_IMAGE_PROVIDER"),
         imageFallbackProvider: setting("OPENROUTER_IMAGE_FALLBACK_PROVIDER", "seed"),
         zdr: booleanSetting("OPENROUTER_ZDR", true),

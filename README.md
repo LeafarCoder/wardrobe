@@ -97,7 +97,7 @@ OPENROUTER_API_KEY=sk-or-v1-your-key
 
 The garment and modeled stages can use different image models because a clean single-product reconstruction is simpler than preserving both a person's identity and a garment in one scene.
 
-When the primary image model returns a content-policy refusal such as `PROHIBITED_CONTENT` or `IMAGE_SAFETY`, Wardrobe automatically retries the same request with the models in `OPENROUTER_IMAGE_FALLBACK_MODELS`. Other failures—authentication, credits, rate limits, networking, and invalid configuration—are not hidden by this fallback. The default is `bytedance-seed/seedream-4.5`, which supports the app's multiple reference images and 3:2 modeled output. Set the value to `none` to disable the fallback.
+When the primary image model returns a content-policy refusal such as `PROHIBITED_CONTENT` or `IMAGE_SAFETY`, Wardrobe automatically retries the same request with the models in `OPENROUTER_IMAGE_FALLBACK_MODELS`. Other failures—authentication, credits, rate limits, networking, and invalid configuration—are not hidden by this fallback. The default is `bytedance-seed/seedream-4.5`, which supports the app's multiple reference images and 3:2 modeled output. It starts at 2K because the current Seed route rejects the smaller concrete dimensions derived from 1K for some reference-image requests. Set the fallback-model value to `none` to disable it.
 
 ### OpenRouter settings
 
@@ -110,6 +110,8 @@ When the primary image model returns a content-policy refusal such as `PROHIBITE
 | `OPENROUTER_MODELED_MODEL` | `google/gemini-3.1-flash-lite-image` |
 | `OPENROUTER_IMAGE_FALLBACK_MODELS` | `bytedance-seed/seedream-4.5` |
 | `OPENROUTER_IMAGE_FALLBACK_PROVIDER` | `seed` |
+| `OPENROUTER_IMAGE_RESOLUTION` | `1K` |
+| `OPENROUTER_IMAGE_FALLBACK_RESOLUTION` | `2K` |
 | `OPENROUTER_IMAGE_QUALITY` | `auto` |
 | `OPENROUTER_ZDR` | `true` |
 | `OPENROUTER_IMAGE_PROVIDER` | Automatic |
@@ -117,7 +119,7 @@ When the primary image model returns a content-policy refusal such as `PROHIBITE
 
 `OPENROUTER_ZDR=true` restricts the analysis request to zero-data-retention routes. With the default Google image models, Wardrobe also pins image requests to `google-vertex/global`, rather than Google AI Studio. The default Seedream fallback is pinned to OpenRouter's current `seed` ZDR endpoint. If you choose another fallback model, review the live [OpenRouter ZDR endpoint list](https://openrouter.ai/api/v1/endpoints/zdr) and update or clear `OPENROUTER_IMAGE_FALLBACK_PROVIDER`.
 
-Wardrobe downsizes provider-bound reference images to a maximum 2048-pixel edge and keeps at most `WARDROBE_AI_CONCURRENCY` image generations in flight. This preserves enough detail for the 1K outputs while avoiding oversized parallel uploads from phone photos.
+Wardrobe downsizes provider-bound reference images to a maximum 2048-pixel edge and keeps at most `WARDROBE_AI_CONCURRENCY` image generations in flight. Primary image calls stay at 1K to control cost; safety fallbacks start at 2K. If OpenRouter reports that a concrete size is below an upstream route's minimum, Wardrobe retries the same model at the next supported resolution tier instead of showing the raw provider error.
 
 ### Direct OpenAI settings
 
