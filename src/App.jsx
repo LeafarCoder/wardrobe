@@ -17,7 +17,35 @@ const TYPES = [
 
 const TYPE_MAP = Object.fromEntries(TYPES.map((type) => [type.id, type]));
 const TYPE_ORDER = Object.fromEntries(TYPES.slice(1).map((type, index) => [type.id, index]));
+const LEGACY_ORIGINAL_FOCUS = {
+  upperbody: [50, 44],
+  wholebody_up: [50, 52],
+  lowerbody: [50, 68],
+  accessories_up: [50, 54],
+  shoes: [50, 78],
+};
 
+function originalPhotoPosition(item) {
+  const center = (box) => box && ["x", "y", "width", "height"].every((key) => Number.isFinite(Number(box[key])))
+    ? {
+        x: (Number(box.x) + (Number(box.width) / 2)) / 10,
+        y: (Number(box.y) + (Number(box.height) / 2)) / 10,
+      }
+    : null;
+  const outfitCenter = center(item.originalFocusBox);
+  const itemCenter = center(item.boundingBox);
+  if (outfitCenter || itemCenter) {
+    const horizontal = Math.max(5, Math.min(95, outfitCenter && itemCenter
+      ? (outfitCenter.x * 0.4) + (itemCenter.x * 0.6)
+      : (outfitCenter || itemCenter).x));
+    const vertical = Math.max(8, Math.min(92, outfitCenter && itemCenter
+      ? (outfitCenter.y * 0.35) + (itemCenter.y * 0.65)
+      : (outfitCenter || itemCenter).y));
+    return `${horizontal.toFixed(1)}% ${vertical.toFixed(1)}%`;
+  }
+  const [horizontal, vertical] = LEGACY_ORIGINAL_FOCUS[item.part] || [50, 52];
+  return `${horizontal}% ${vertical}%`;
+}
 
 function userStorageKey(base, userId) {
   return `${base}:${userId || "default"}`;
@@ -527,6 +555,7 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
                 className="modeled-hero-photo"
                 src={showOriginal ? item.originalImage : item.modeledImage}
                 alt={showOriginal ? `Original photo containing ${draft.name || type}` : `${draft.name || type} worn by a model`}
+                style={showOriginal ? { objectPosition: originalPhotoPosition(item) } : undefined}
                 sizes="(max-width: 860px) 100vw, 520px"
                 breakpoints={[320, 480, 640, 800, 1040, 1280]}
                 quality={82}

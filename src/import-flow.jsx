@@ -338,7 +338,18 @@ export function WardrobeImportFlow({ userId, onGarmentApproved, onModeledApprove
         const updated = await api(`${API}/${job.id}/stages/garment/approve`, { method: "POST" }, userId);
         const garmentPath = `/api/import/library/import-${job.id}-garment.png?user=${encodeURIComponent(userId)}`;
         const originalPath = `/api/import/library/import-${job.id}-original.png?user=${encodeURIComponent(userId)}`;
-        onGarmentApproved?.({ id: `import-${job.id}`, ...metadata, image: garmentPath, thumbnail: garmentPath, modeledImage: null, originalImage: originalPath, palette: [metadata.color, metadata.secondaryColor].filter(Boolean), importJobId: job.id });
+        onGarmentApproved?.({
+          id: `import-${job.id}`,
+          ...metadata,
+          boundingBox: updated.metadata?.boundingBox || job.metadata?.boundingBox || null,
+          originalFocusBox: updated.originalFocusBox || job.originalFocusBox || null,
+          image: garmentPath,
+          thumbnail: garmentPath,
+          modeledImage: null,
+          originalImage: originalPath,
+          palette: [metadata.color, metadata.secondaryColor].filter(Boolean),
+          importJobId: job.id,
+        });
         setJobs((current) => current.map((item) => item.id === job.id ? updated : item));
       } else {
         const updated = await api(`${API}/${job.id}/stages/${stage}/${action}`, { method: "POST", body: action === "regenerate" ? JSON.stringify({ prompt }) : undefined }, userId);

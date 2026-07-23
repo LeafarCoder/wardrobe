@@ -385,6 +385,23 @@ function normalizeBoundingBox(value = {}) {
   return { x, y, width, height };
 }
 
+export function combineBoundingBoxes(values = []) {
+  const boxes = values
+    .filter((value) => value && typeof value === "object" && !Array.isArray(value))
+    .map(normalizeBoundingBox);
+  if (!boxes.length) return null;
+  const left = Math.min(...boxes.map((box) => box.x));
+  const top = Math.min(...boxes.map((box) => box.y));
+  const right = Math.max(...boxes.map((box) => box.x + box.width));
+  const bottom = Math.max(...boxes.map((box) => box.y + box.height));
+  return normalizeBoundingBox({
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+  });
+}
+
 async function normalizeImage(bytes) {
   return sharp(bytes).rotate().toColorspace("srgb").png().toBuffer();
 }
@@ -1221,6 +1238,8 @@ export function wardrobeImportApi(options = {}) {
       secondaryColor: metadata.secondaryColor || null,
       palette: [metadata.color, metadata.secondaryColor].filter(Boolean),
       tags: Array.isArray(metadata.tags) ? metadata.tags : [],
+      boundingBox: metadata.boundingBox || existing?.boundingBox || null,
+      originalFocusBox: job.originalFocusBox || existing?.originalFocusBox || metadata.boundingBox || null,
       image: `${LIBRARY_ASSET_ROOT}/${garmentName}`,
       thumbnail: `${LIBRARY_ASSET_ROOT}/${garmentName}`,
       modeledImage: modeledImage || existing?.modeledImage || null,
@@ -1561,6 +1580,7 @@ export function wardrobeImportApi(options = {}) {
           image: analysisImage.data,
           mime: analysisImage.mime,
         })).map(normalizeMetadata);
+        const originalFocusBox = combineBoundingBoxes(detected.map((metadata) => metadata.boundingBox));
         console.info(`[wardrobe] Detected ${detected.length} wardrobe ${detected.length === 1 ? "item" : "items"}.`);
         const jobs = [];
         for (const metadata of detected) {
@@ -1573,7 +1593,7 @@ export function wardrobeImportApi(options = {}) {
           await writeFile(path.join(dir, cropFile), croppedImage);
           const now = new Date().toISOString();
           const cropStage = { ...stageState(), status: "review", assetUrl: `${ASSET_ROOT}/${id}/${cropFile}`, updatedAt: now };
-          const job = { id, userId: user.id, status: "active", metadata, stages: { crop: cropStage, garment: stageState(), modeled: stageState() }, createdAt: now, updatedAt: now, internal: { originalFile, cropFile, originalMime: "image/png" } };
+          const job = { id, userId: user.id, status: "active", metadata, originalFocusBox, stages: { crop: cropStage, garment: stageState(), modeled: stageState() }, createdAt: now, updatedAt: now, internal: { originalFile, cropFile, originalMime: "image/png" } };
           job.originalAssetUrl = `${ASSET_ROOT}/${id}/${originalFile}`;
           await saveJob(job); jobs.push(publicJob(job));
         }

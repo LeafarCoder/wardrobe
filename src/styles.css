@@ -592,6 +592,7 @@ button { font: inherit; }
   height: 370px;
   object-fit: cover;
   object-position: 51% 43%;
+  transition: object-position 220ms ease;
 }
 
 .modeled-hero-toggle {
