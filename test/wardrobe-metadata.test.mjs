@@ -40,19 +40,19 @@ test("keeps region-specific size fields structured and rejects unsupported value
   assert.deepEqual(normalizeSizeProfile({
     system: "uk",
     fit: "relaxed",
-    tops: "UK 12",
-    bottoms: "W30",
+    tops: ["UK 10", "UK 12"],
+    bottoms: ["UK 12", "W30"],
     shoes: "UK 7",
-    rings: "UK N",
+    rings: ["UK N"],
     ignored: "not persisted",
   }), {
     system: "uk",
     fit: "relaxed",
-    tops: "UK 12",
-    bottoms: "W30",
-    outerwear: "",
-    shoes: "UK 7",
-    rings: "UK N",
+    tops: ["UK 10", "UK 12"],
+    bottoms: ["UK 12", "W30"],
+    outerwear: [],
+    shoes: ["UK 7"],
+    rings: ["UK N"],
   });
 
   assert.equal(normalizeSizeProfile({ system: "unsupported", fit: "unsupported" }).system, "");
@@ -62,8 +62,8 @@ test("keeps region-specific size fields structured and rejects unsupported value
 test("does not invent a sizing region for a legacy profile", () => {
   assert.equal(sizeProfileSummary(), "");
   assert.equal(
-    sizeProfileSummary({ system: "eu", tops: "M", shoes: "EU 42", fit: "regular" }),
-    "sizing system: EU / International; tops: M; shoes: EU 42; preferred fit: Regular",
+    sizeProfileSummary({ system: "eu", tops: ["S", "M"], bottoms: ["EU 42", "W32"], shoes: "EU 42", fit: "regular" }),
+    "sizing system: EU / International; tops: S / M; trousers & bottoms: EU 42 / W32; shoes: EU 42; preferred fit: Regular",
   );
 });
 
@@ -78,12 +78,13 @@ test("normalizes favorite colors and materials as concise unique lists", () => {
 test("includes structured sizing context in modeled-look prompts", () => {
   const prompt = buildModeledPrompt(1, {
     name: "Rafael",
-    sizeProfile: { system: "eu", tops: "M", shoes: "EU 42", fit: "regular" },
+    sizeProfile: { system: "eu", tops: ["S", "M"], bottoms: ["EU 42", "W32"], shoes: ["EU 42"], fit: "regular" },
     preferredMaterials: ["linen", "cotton"],
     favoriteColors: ["olive", "navy"],
   }, { part: "upperbody" });
   assert.match(prompt, /sizing system: EU \/ International/);
-  assert.match(prompt, /tops: M/);
+  assert.match(prompt, /tops: S \/ M/);
+  assert.match(prompt, /trousers & bottoms: EU 42 \/ W32/);
   assert.match(prompt, /shoes: EU 42/);
   assert.match(prompt, /preferred fit: Regular/);
   assert.match(prompt, /Preferred materials: linen, cotton/);

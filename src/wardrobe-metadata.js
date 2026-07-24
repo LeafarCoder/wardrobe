@@ -211,7 +211,7 @@ export function normalizeSizeProfile(value = {}, existing = {}) {
     fit: FIT_OPTION_IDS.has(requestedFit) ? requestedFit : "",
   };
   for (const field of SIZE_FIELDS) {
-    normalized[field.id] = cleanText(input[field.id] ?? previous[field.id], 40);
+    normalized[field.id] = normalizePreferenceList(input[field.id] ?? previous[field.id], 8);
   }
   return normalized;
 }
@@ -220,8 +220,8 @@ export function sizeProfileSummary(value = {}) {
   const profile = normalizeSizeProfile(value);
   const system = SIZE_SYSTEMS.find((candidate) => candidate.id === profile.system);
   const sizes = SIZE_FIELDS
-    .filter((field) => profile[field.id])
-    .map((field) => `${field.label.toLowerCase()}: ${profile[field.id]}`);
+    .filter((field) => profile[field.id].length)
+    .map((field) => `${field.label.toLowerCase()}: ${profile[field.id].join(" / ")}`);
   const fit = FIT_OPTIONS.find((option) => option.id === profile.fit)?.label;
   return [
     profile.system && system ? `sizing system: ${system.label}` : null,

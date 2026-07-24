@@ -373,6 +373,8 @@ function TagEditor({
   placeholder = "Add a detail",
   inputLabel = "Add detail tag",
   addLabel = "Add detail",
+  suggestions = [],
+  suggestionListId,
 }) {
   const [input, setInput] = useState("");
 
@@ -398,6 +400,7 @@ function TagEditor({
       <div className="tag-input-row">
         <input
           value={input}
+          list={suggestions.length ? suggestionListId : undefined}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === ",") {
@@ -408,6 +411,11 @@ function TagEditor({
           placeholder={placeholder}
           aria-label={inputLabel}
         />
+        {!!suggestions.length && (
+          <datalist id={suggestionListId}>
+            {suggestions.map((suggestion) => <option value={suggestion} key={suggestion} />)}
+          </datalist>
+        )}
         <button type="button" onClick={addTag} disabled={!input.trim()} aria-label={addLabel}>
           <Plus size={15} weight="regular" aria-hidden="true" />
         </button>
@@ -1226,21 +1234,18 @@ function ProfileSizeEditor({ value, onChange }) {
         {SIZE_FIELDS.map((field) => {
           const listId = `profile-${normalized.system}-${field.id}-sizes`;
           return (
-            <label key={field.id}>
+            <div className="profile-size-field" key={field.id}>
               <span>{field.label} <small>optional</small></span>
-              <input
-                value={normalized[field.id]}
-                list={system.suggestions[field.id]?.length ? listId : undefined}
-                maxLength="40"
-                onChange={(event) => update(field.id, event.target.value)}
+              <TagEditor
+                tags={normalized[field.id]}
+                onChange={(sizes) => update(field.id, sizes)}
                 placeholder={system.examples[field.id]}
+                inputLabel={`Add ${field.label.toLowerCase()} size`}
+                addLabel={`Add ${field.label.toLowerCase()} size`}
+                suggestions={system.suggestions[field.id]}
+                suggestionListId={listId}
               />
-              {!!system.suggestions[field.id]?.length && (
-                <datalist id={listId}>
-                  {system.suggestions[field.id].map((suggestion) => <option value={suggestion} key={suggestion} />)}
-                </datalist>
-              )}
-            </label>
+            </div>
           );
         })}
       </div>

@@ -460,8 +460,20 @@ button { font: inherit; }
 }
 
 .profile-size-controls label,
-.profile-size-grid label {
+.profile-size-field {
   min-width: 0;
+}
+
+.profile-size-field > span {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.profile-size-field > span small {
+  color: var(--muted);
+  font-weight: 450;
 }
 
 .profile-preference-list {

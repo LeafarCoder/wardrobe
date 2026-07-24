@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowCounterClockwise, Check, Plus, SpinnerGap, Trash, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, Check, Clipboard, FolderOpen, ImageSquare, Plus, SpinnerGap, Trash, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
 import "./import-flow.css";
 
 const API = "/api/import/jobs";
@@ -19,6 +19,15 @@ const fileToDataUrl = (file) => new Promise((resolve, reject) => {
   reader.onerror = () => reject(reader.error || new Error("Could not read that image."));
   reader.readAsDataURL(file);
 });
+
+function clipboardImageFiles(clipboardData) {
+  const itemFiles = [...(clipboardData?.items || [])]
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  if (itemFiles.length) return itemFiles;
+  return [...(clipboardData?.files || [])].filter((file) => file.type.startsWith("image/"));
+}
 
 async function api(path, options, userId) {
   const url = new URL(path, window.location.origin);
@@ -92,6 +101,81 @@ function ImportToast({ toast, onDismiss }) {
         <p>{toast.message}</p>
       </div>
       <button className="import-toast__close" type="button" onClick={onDismiss} aria-label="Dismiss notification"><X size={17} /></button>
+    </div>
+  );
+}
+
+function ImportSourcePicker({ disabled, notice, onChooseFiles, onDropFiles, onReadClipboard }) {
+  const [dropActive, setDropActive] = useState(false);
+  const pasteShortcut = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘V" : "Ctrl+V";
+
+  return (
+    <div
+      className="import-source-picker"
+      aria-label="Choose how to add clothing images"
+    >
+      <div className="import-source-picker__intro">
+        <ImageSquare size={25} weight="light" aria-hidden="true" />
+        <div>
+          <h3>{notice ? "Try another image" : "Choose where your images come from"}</h3>
+          <p>{notice?.detail || "Add one garment photo or a full outfit. You can select several images at once."}</p>
+        </div>
+      </div>
+
+      <div className="import-source-options">
+        <button className="import-source-option" type="button" disabled={disabled} onClick={onChooseFiles}>
+          <span className="import-source-option__icon"><FolderOpen size={23} weight="light" /></span>
+          <span>
+            <strong>Load from computer</strong>
+            <small>Select one or more JPEG, PNG, or WebP images.</small>
+          </span>
+        </button>
+
+        <div
+          className={`import-source-option import-source-option--drop${dropActive ? " is-active" : ""}${disabled ? " is-disabled" : ""}`}
+          role="group"
+          aria-label="Drop clothing images here"
+          onDragEnter={(event) => {
+            if (disabled) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setDropActive(true);
+          }}
+          onDragOver={(event) => {
+            if (disabled) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = "copy";
+            setDropActive(true);
+          }}
+          onDragLeave={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!event.currentTarget.contains(event.relatedTarget)) setDropActive(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setDropActive(false);
+            if (!disabled) onDropFiles(event.dataTransfer.files);
+          }}
+        >
+          <span className="import-source-option__icon"><UploadSimple size={23} weight="light" /></span>
+          <span>
+            <strong>Drag and drop</strong>
+            <small>Drop images here from Finder or File Explorer.</small>
+          </span>
+        </div>
+
+        <button className="import-source-option" type="button" disabled={disabled} onClick={onReadClipboard}>
+          <span className="import-source-option__icon"><Clipboard size={23} weight="light" /></span>
+          <span>
+            <strong>Paste from clipboard</strong>
+            <small>Copy an image, then click here or press {pasteShortcut}.</small>
+          </span>
+        </button>
+      </div>
+      <p className="import-source-picker__privacy">Images are stored in your wardrobe and sent to your configured AI provider for garment extraction.</p>
     </div>
   );
 }
@@ -198,6 +282,7 @@ function CleanupEditor({ job, tolerance, setTolerance, busy, onPreview, onAccept
 
 export function WardrobeImportFlow({ userId, onGarmentApproved }) {
   const inputRef = useRef(null);
+  const sourcePickerRef = useRef(null);
   const notifiedFailures = useRef(new Set());
   const [jobs, setJobs] = useState([]);
   const [drafts, setDrafts] = useState({});
@@ -205,6 +290,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
   const [cleanupTolerances, setCleanupTolerances] = useState({});
   const [dragging, setDragging] = useState(false);
   const [open, setOpen] = useState(false);
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const [selectedReviewId, setSelectedReviewId] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [analysis, setAnalysis] = useState(null);
@@ -276,37 +362,116 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
       showError("Choose a JPEG, PNG, or WebP image.");
       return;
     }
-    setDragging(false); setNotice(null); setOpen(true);
+    setDragging(false); setNotice(null); setSourcePickerOpen(false); setOpen(true);
     for (const [index, file] of images.entries()) {
-      setAnalysis({ current: index + 1, total: images.length, name: file.name });
+      const fallbackExtension = file.type.split("/")[1]?.replace("jpeg", "jpg").replace(/[^a-z0-9]/gi, "") || "png";
+      const fileName = file.name || `clipboard-image-${Date.now()}-${index + 1}.${fallbackExtension}`;
+      setAnalysis({ current: index + 1, total: images.length, name: fileName });
       try {
         const imageDataUrl = await fileToDataUrl(file);
-        const result = await api(API, { method: "POST", body: JSON.stringify({ imageDataUrl, metadata: { name: file.name.replace(/\.[^.]+$/, "") } }) }, userId);
+        const result = await api(API, { method: "POST", body: JSON.stringify({ imageDataUrl, metadata: { name: fileName.replace(/\.[^.]+$/, "") } }) }, userId);
         const createdJobs = result.jobs || [result];
         if (!createdJobs.length && result.noClothingDetected) {
-          setNotice({ tone: "complete", text: "No clothing detected", detail: `We couldn’t find a distinct wearable item in ${file.name}. Try a clearer or more tightly framed image.` });
+          setNotice({ tone: "complete", text: "No clothing detected", detail: `We couldn’t find a distinct wearable item in ${fileName}. Try a clearer or more tightly framed image.` });
           setOpen(true);
           continue;
         }
         setJobs((current) => [...current, ...createdJobs]);
         setDrafts((current) => ({ ...current, ...Object.fromEntries(createdJobs.map((job) => [job.id, defaultDraft(job)])) }));
       } catch (requestError) {
-        showError(requestError, `Could not import ${file.name}`);
+        showError(requestError, `Could not import ${fileName}`);
       }
     }
     setAnalysis(null);
   }, [setup, showError, userId]);
 
+  const showSourcePicker = useCallback(() => {
+    setNotice(null);
+    setSourcePickerOpen(true);
+    setOpen(true);
+  }, []);
+
+  const closeImporter = useCallback(() => {
+    setOpen(false);
+    setSourcePickerOpen(false);
+  }, []);
+
+  const handlePaste = useCallback((event) => {
+    const files = clipboardImageFiles(event.clipboardData);
+    if (!files.length) {
+      showError("There is no image on your clipboard. Copy an image, then try again.", "Could not paste image");
+      return;
+    }
+    event.preventDefault();
+    submitFiles(files);
+  }, [showError, submitFiles]);
+
+  const readClipboard = useCallback(async () => {
+    if (!navigator.clipboard?.read) {
+      const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘V" : "Ctrl+V";
+      showError(`This browser cannot read the clipboard from a button. Copy an image, keep this window open, and press ${shortcut}.`, "Paste with your keyboard");
+      sourcePickerRef.current?.focus();
+      return;
+    }
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      const imageBlobs = [];
+      for (const item of clipboardItems) {
+        const imageType = item.types.find((value) => value.startsWith("image/"));
+        if (imageType) imageBlobs.push(await item.getType(imageType));
+      }
+      if (!imageBlobs.length) {
+        showError("There is no image on your clipboard. Copy an image, then try again.", "Could not paste image");
+        return;
+      }
+      const timestamp = Date.now();
+      const files = imageBlobs.map((blob, index) => {
+        const subtype = blob.type.split("/")[1]?.replace("jpeg", "jpg").replace(/[^a-z0-9.+-]/gi, "") || "png";
+        return new File([blob], `clipboard-${timestamp}-${index + 1}.${subtype}`, { type: blob.type });
+      });
+      submitFiles(files);
+    } catch (error) {
+      if (error?.name === "NotAllowedError") {
+        const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘V" : "Ctrl+V";
+        showError(`Clipboard access was not allowed. Copy the image again, then press ${shortcut} while this window is open.`, "Could not access clipboard");
+      } else {
+        showError(error, "Could not paste image");
+      }
+      sourcePickerRef.current?.focus();
+    }
+  }, [showError, submitFiles]);
+
+  useEffect(() => {
+    if (open && (sourcePickerOpen || (!jobs.length && !analysis && setup?.ready !== false))) {
+      sourcePickerRef.current?.focus();
+    }
+  }, [analysis, jobs.length, open, setup?.ready, sourcePickerOpen]);
+
+  const sourceChooserVisible = open && (sourcePickerOpen || !jobs.length) && setup?.ready !== false;
+
   useEffect(() => {
     let depth = 0;
-    const onDragEnter = (event) => { if (![...event.dataTransfer.types].includes("Files")) return; event.preventDefault(); depth += 1; setDragging(true); };
+    const onDragEnter = (event) => {
+      if (![...event.dataTransfer.types].includes("Files")) return;
+      event.preventDefault();
+      if (sourceChooserVisible) {
+        setDragging(false);
+        return;
+      }
+      depth += 1;
+      setDragging(true);
+    };
     const onDragOver = (event) => { if ([...event.dataTransfer.types].includes("Files")) event.preventDefault(); };
-    const onDragLeave = (event) => { event.preventDefault(); depth = Math.max(0, depth - 1); if (!depth) setDragging(false); };
+    const onDragLeave = (event) => {
+      event.preventDefault();
+      if (sourceChooserVisible) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) setDragging(false);
+    };
     const onDrop = (event) => { event.preventDefault(); depth = 0; setDragging(false); submitFiles(event.dataTransfer.files); };
-    const onPaste = (event) => { const files = [...event.clipboardData.files]; if (files.some((file) => file.type.startsWith("image/"))) { event.preventDefault(); submitFiles(files); } };
-    window.addEventListener("dragenter", onDragEnter); window.addEventListener("dragover", onDragOver); window.addEventListener("dragleave", onDragLeave); window.addEventListener("drop", onDrop); window.addEventListener("paste", onPaste);
-    return () => { window.removeEventListener("dragenter", onDragEnter); window.removeEventListener("dragover", onDragOver); window.removeEventListener("dragleave", onDragLeave); window.removeEventListener("drop", onDrop); window.removeEventListener("paste", onPaste); };
-  }, [submitFiles]);
+    window.addEventListener("dragenter", onDragEnter); window.addEventListener("dragover", onDragOver); window.addEventListener("dragleave", onDragLeave); window.addEventListener("drop", onDrop);
+    return () => { window.removeEventListener("dragenter", onDragEnter); window.removeEventListener("dragover", onDragOver); window.removeEventListener("dragleave", onDragLeave); window.removeEventListener("drop", onDrop); };
+  }, [sourceChooserVisible, submitFiles]);
 
   const perform = async (job, stage, action, prompt = "") => {
     setBusyId(job.id);
@@ -332,7 +497,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
         setJobs(remainingJobs);
         setDrafts((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== job.id)));
         setSelectedReviewId(null);
-        if (!remainingJobs.length) setOpen(false);
+        if (!remainingJobs.length) closeImporter();
       } else {
         const updated = await api(`${API}/${job.id}/stages/${stage}/${action}`, { method: "POST", body: action === "regenerate" ? JSON.stringify({ prompt }) : undefined }, userId);
         const removeFromQueue = action === "reject" || (stage === "modeled" && action === "approve");
@@ -341,7 +506,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
         if (removeFromQueue) {
           setDrafts((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== job.id)));
           setSelectedReviewId(null);
-          if (!remainingJobs.length) setOpen(false);
+          if (!remainingJobs.length) closeImporter();
         }
         if (action === "regenerate") setRegenerationPrompts((current) => ({ ...current, [`${job.id}:${stage}`]: "" }));
       }
@@ -369,7 +534,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
       setJobs(remaining);
       setDrafts((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== job.id)));
       if (selectedReviewId === job.id) setSelectedReviewId(null);
-      if (!remaining.length) setOpen(false);
+      if (!remaining.length) closeImporter();
     } catch (requestError) { showError(requestError); }
     finally { setBusyId(null); }
   };
@@ -399,18 +564,18 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
       <input ref={inputRef} type="file" accept="image/*" multiple hidden disabled={!setup?.ready || Boolean(analysis)} onChange={(event) => { submitFiles(event.target.files); event.target.value = ""; }} />
       <div className="import-drop-overlay" data-active={dragging && !setupRequired} aria-hidden={!dragging || setupRequired}><div className="import-drop-target is-over"><UploadSimple size={34} weight="light" /><h2>Drop clothing images</h2><p>A single garment or a photo of a full outfit works. Your wardrobe stays exactly where you left it.</p></div></div>
       <aside className={`import-tray${hasImportActivity ? " is-expanded" : ""}`} aria-label="Wardrobe imports">
-        <button className="import-tray__button" type="button" onClick={() => setupRequired || hasImportActivity ? setOpen(true) : inputRef.current?.click()} aria-label={setupRequired ? "Open setup instructions" : hasImportActivity ? "Open import progress" : "Add clothes"}>{activeStatus?.tone === "processing" ? <SpinnerGap size={19} className="import-spinner" /> : activeStatus?.tone === "error" ? <WarningCircle size={19} /> : readyCount ? <span>{readyCount}</span> : notice ? <X size={18} /> : <Plus size={19} />}</button>
-        <div className="import-tray__actions">{active && <img className="import-tray__preview" src={active.stages?.garment?.assetUrl || active.stages?.garment?.failedAssetUrl || active.stages?.crop?.assetUrl || active.originalAssetUrl} alt="" />}<span className="import-tray__label">{activeStatus?.text || "Add clothes"}</span>{!setupRequired && <button className="import-icon-button" type="button" disabled={Boolean(analysis)} onClick={() => inputRef.current?.click()} aria-label="Choose images"><UploadSimple size={17} /></button>}</div>
+        <button className="import-tray__button" type="button" onClick={() => setupRequired || hasImportActivity ? setOpen(true) : showSourcePicker()} aria-label={setupRequired ? "Open setup instructions" : hasImportActivity ? "Open import progress" : "Add clothes"}>{activeStatus?.tone === "processing" ? <SpinnerGap size={19} className="import-spinner" /> : activeStatus?.tone === "error" ? <WarningCircle size={19} /> : readyCount ? <span>{readyCount}</span> : notice ? <X size={18} /> : <Plus size={19} />}</button>
+        <div className="import-tray__actions">{active && <img className="import-tray__preview" src={active.stages?.garment?.assetUrl || active.stages?.garment?.failedAssetUrl || active.stages?.crop?.assetUrl || active.originalAssetUrl} alt="" />}<span className="import-tray__label">{activeStatus?.text || "Add clothes"}</span>{!setupRequired && <button className="import-icon-button" type="button" disabled={Boolean(analysis)} onClick={showSourcePicker} aria-label="Add more clothes"><UploadSimple size={17} /></button>}</div>
       </aside>
-      <div className="import-popover-backdrop" data-open={open} onMouseDown={(event) => event.target === event.currentTarget && setOpen(false)}>
-        <section className="import-popover" role="dialog" aria-modal="true" aria-labelledby="import-title">
-          <header className="import-popover__header"><div><p className="import-popover__eyebrow">Wardrobe import</p><h2 className="import-popover__title" id="import-title">{analysis ? "Analyzing your image" : readyCount ? `${readyCount} ready for review` : activeStatus?.tone === "error" ? "Import needs attention" : jobs.length ? "Preparing new pieces" : notice?.text || "Add to your wardrobe"}</h2></div><button className="import-icon-button" type="button" onClick={() => setOpen(false)} aria-label="Close import progress"><X size={20} /></button></header>
-          {!jobs.length ? analysis ? <div className="import-analysis" role="status" aria-live="polite"><SpinnerGap size={32} className="import-spinner" /><h2>Analyzing your image</h2><p>Finding each garment in <strong>{analysis.name}</strong>. This can take a little while.</p><span>{analysis.current} of {analysis.total}</span></div> : setupRequired ? <div className="import-drop-target import-setup-warning"><WarningCircle size={30} /><h2>Setup required</h2><p>{setupError(setup)}</p></div> : <div className="import-drop-target"><UploadSimple size={28} /><h2>{notice ? "Try another image" : "Choose or paste an image"}</h2><p>{notice?.detail || "We’ll isolate each clothing item, suggest its details, and hold everything for your approval."}</p><button className="import-button import-button--primary" disabled={!setup?.ready} onClick={() => { setNotice(null); inputRef.current?.click(); }}>Choose images</button></div> : (
+      <div className="import-popover-backdrop" data-open={open} onMouseDown={(event) => event.target === event.currentTarget && closeImporter()}>
+        <section className="import-popover" ref={sourcePickerRef} role="dialog" aria-modal="true" aria-labelledby="import-title" tabIndex={-1} onPaste={(event) => (sourcePickerOpen || !jobs.length) && handlePaste(event)}>
+          <header className="import-popover__header"><div><p className="import-popover__eyebrow">Wardrobe import</p><h2 className="import-popover__title" id="import-title">{analysis ? "Analyzing your image" : !setupRequired && (sourcePickerOpen || !jobs.length) ? "Add clothes" : readyCount ? `${readyCount} ready for review` : activeStatus?.tone === "error" ? "Import needs attention" : jobs.length ? "Preparing new pieces" : notice?.text || "Add to your wardrobe"}</h2></div><button className="import-icon-button" type="button" onClick={closeImporter} aria-label="Close import"><X size={20} /></button></header>
+          {analysis ? <div className="import-analysis" role="status" aria-live="polite"><SpinnerGap size={32} className="import-spinner" /><h2>Analyzing your image</h2><p>Finding each garment in <strong>{analysis.name}</strong>. This can take a little while.</p><span>{analysis.current} of {analysis.total}</span></div> : setupRequired ? <div className="import-drop-target import-setup-warning"><WarningCircle size={30} /><h2>Setup required</h2><p>{setupError(setup)}</p></div> : sourcePickerOpen || !jobs.length ? <ImportSourcePicker disabled={!setup?.ready} notice={notice} onChooseFiles={() => inputRef.current?.click()} onDropFiles={submitFiles} onReadClipboard={readClipboard} /> : (
             <>
               <div className={`import-progress${activeStatus?.tone !== "processing" ? " is-reviewing" : progress < 100 ? " is-indeterminate" : ""}`}><div className="import-progress__meta"><span>{activeStatus?.text}</span><span>{jobs.length} {jobs.length === 1 ? "item" : "items"}</span></div>{activeStatus?.tone === "processing" && <div className="import-progress__track"><div className="import-progress__bar" style={{ "--import-progress": `${progress}%` }} /></div>}</div>
               {reviewJob && reviewStage ? <ReviewEditor job={reviewJob} stage={reviewStage} draft={drafts[reviewJob.id] || defaultDraft(reviewJob)} setDraft={(draft) => setDrafts((current) => ({ ...current, [reviewJob.id]: draft }))} regenPrompt={regenerationPrompts[`${reviewJob.id}:${reviewStage}`] || ""} setRegenPrompt={(prompt) => setRegenerationPrompts((current) => ({ ...current, [`${reviewJob.id}:${reviewStage}`]: prompt }))} busy={busyId === reviewJob.id} onAction={(action, prompt) => perform(reviewJob, reviewStage, action, prompt)} /> : reviewJob && hasCleanupFailure(reviewJob) ? <CleanupEditor job={reviewJob} tolerance={cleanupTolerances[reviewJob.id] ?? reviewJob.stages.garment.cleanupTolerance ?? 46} setTolerance={(tolerance) => setCleanupTolerances((current) => ({ ...current, [reviewJob.id]: tolerance }))} busy={busyId === reviewJob.id} onPreview={(tolerance) => performCleanup(reviewJob, "preview", tolerance)} onAccept={() => performCleanup(reviewJob, "accept")} /> : null}
               <div className="import-card-list">{jobs.map((job) => { const status = deriveStatus(job); const itemName = drafts[job.id]?.name || job.metadata?.name || "New piece"; const failedStage = job.stages?.garment?.status === "failed" ? "garment" : null; return <article className={`import-card is-${status.tone}${reviewJob?.id === job.id ? " is-selected" : ""}`} key={job.id}><img className="import-card__image" src={job.stages?.garment?.assetUrl || job.stages?.garment?.failedAssetUrl || job.stages?.crop?.assetUrl || job.originalAssetUrl} alt="" /><div className="import-card__body"><h3 className="import-card__title">{itemName}</h3><p className="import-card__detail import-card__detail--status" data-tone={status.tone}>{status.tone === "error" ? status.detail : status.text}</p></div><div className="import-card__actions">{status.tone === "ready" && <button className="import-icon-button" onClick={() => { setSelectedReviewId(job.id); setOpen(true); }} aria-label={`Review ${itemName}`}><Check size={17} /></button>}{failedStage && <button className="import-button import-card__retry" disabled={busyId === job.id} onClick={() => perform(job, failedStage, "regenerate", "")}><ArrowCounterClockwise size={14} /> Retry</button>}<button className="import-icon-button import-card__delete" disabled={busyId === job.id} onClick={() => deleteJob(job)} aria-label={`Delete ${itemName} from import queue`}><Trash size={16} /></button></div></article>; })}</div>
-              <div className="import-actions"><button className="import-button" disabled={Boolean(analysis)} onClick={() => inputRef.current?.click()}><Plus size={14} /> Add another</button></div>
+              <div className="import-actions"><button className="import-button" disabled={Boolean(analysis)} onClick={showSourcePicker}><Plus size={14} /> Add another</button></div>
             </>
           )}
         </section>

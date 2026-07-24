@@ -65,7 +65,7 @@ Use the wardrobe switcher in the top-right corner to add a person, edit the curr
 - a name and optional age
 - one to three identity-reference photos
 - fashion style and free-form preferences
-- a regional sizing system with separate tops, bottoms, outerwear, shoes, and ring sizes
+- a regional sizing system with multiple saved size labels for tops, bottoms, outerwear, shoes, and rings
 - a preferred fit plus optional brand-specific sizing notes
 - a preferred currency shared by every garment price
 - preferred materials and favorite colors for styling context
