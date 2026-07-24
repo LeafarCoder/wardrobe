@@ -5,6 +5,7 @@ import {
   modeledLooksForRecord,
   recordWithModeledLooks,
   recordWithoutModeledLook,
+  wardrobePlanAssets,
 } from "../scripts/import-job-api.mjs";
 
 test("migrates a legacy modeled image into a look collection", () => {
@@ -87,5 +88,27 @@ test("collects originals and optimized derivatives for authorization and deletio
     "/original-preview.webp",
     "/modeled.png",
     "/modeled-preview.webp",
+  ]);
+});
+
+test("collects saved planner outfit images for private access and deletion", () => {
+  const assets = wardrobePlanAssets([{
+    id: "plan-one",
+    input: { kind: "trip" },
+    result: {
+      outfitIdeas: [{
+        name: "City walk",
+        modeledLook: {
+          id: "look-one",
+          image: "/api/import/library/plan-look.png",
+          preview: "/api/import/library/plan-look-preview.webp",
+        },
+      }],
+    },
+  }]);
+
+  assert.deepEqual(assets, [
+    "/api/import/library/plan-look.png",
+    "/api/import/library/plan-look-preview.webp",
   ]);
 });

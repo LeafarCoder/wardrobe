@@ -1,0 +1,193 @@
+.month-year-picker {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+
+.month-year-picker.is-open {
+  z-index: 120;
+}
+
+.month-year-picker__trigger {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 9px 10px;
+  background: rgba(255, 255, 255, .18);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.month-year-picker__trigger .is-placeholder {
+  color: var(--muted);
+  letter-spacing: .025em;
+}
+
+.month-year-picker__trigger > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.month-year-picker__trigger:hover,
+.month-year-picker__trigger:focus-visible,
+.month-year-picker.is-open .month-year-picker__trigger {
+  border-color: var(--ink);
+  background: rgba(255, 255, 255, .42);
+  outline: none;
+}
+
+.month-year-picker__popover {
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 100;
+  isolation: isolate;
+  min-width: 250px;
+  overflow: hidden;
+  border: 1px solid rgba(25, 25, 25, .42);
+  border-radius: 12px;
+  background-color: #faf7f1;
+  color-scheme: light;
+  opacity: 1;
+  box-shadow: 0 20px 54px rgba(31, 29, 25, .22);
+  animation: month-year-picker-in 140ms ease-out both;
+}
+
+.month-year-picker__popover.is-down { top: calc(100% + 7px); }
+.month-year-picker__popover.is-up { bottom: calc(100% + 7px); }
+
+.month-year-picker__header {
+  position: relative;
+  z-index: 1;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 42px 1fr 42px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding: 4px;
+  background-color: #faf7f1;
+}
+
+.month-year-picker__header button,
+.month-year-picker__months button,
+.month-year-picker__years button,
+.month-year-picker__footer button {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.month-year-picker__header > button:not(.month-year-picker__year-toggle) {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+
+.month-year-picker__year-toggle {
+  min-height: 38px;
+  border-radius: 8px !important;
+  font-size: 13px !important;
+  font-weight: 620 !important;
+}
+
+.month-year-picker__header button:hover,
+.month-year-picker__header button:focus-visible,
+.month-year-picker__months button:hover,
+.month-year-picker__months button:focus-visible,
+.month-year-picker__years button:hover,
+.month-year-picker__years button:focus-visible {
+  background: #ece5d9;
+  outline: none;
+}
+
+.month-year-picker__header button:disabled {
+  cursor: default;
+  opacity: .25;
+}
+
+.month-year-picker__months,
+.month-year-picker__years {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  padding: 12px;
+  background-color: #faf7f1;
+}
+
+.month-year-picker__months button,
+.month-year-picker__years button {
+  min-height: 38px;
+  border-radius: 9px;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.month-year-picker__months button[data-selected="true"],
+.month-year-picker__years button[data-selected="true"] {
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 620;
+}
+
+.month-year-picker__footer {
+  position: relative;
+  z-index: 1;
+  min-height: 45px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding: 5px 8px;
+  background-color: #faf7f1;
+}
+
+.month-year-picker__footer button {
+  border-radius: 7px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.month-year-picker__footer button:hover,
+.month-year-picker__footer button:focus-visible {
+  background: #ece5d9;
+  color: var(--ink);
+  outline: none;
+}
+
+@keyframes month-year-picker-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (max-width: 520px) {
+  .month-year-picker__popover {
+    right: auto;
+    width: min(290px, calc(100vw - 44px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .month-year-picker__trigger,
+  .month-year-picker__popover {
+    animation: none;
+    transition: none;
+  }
+}

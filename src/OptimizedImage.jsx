@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useState } from "react";
+import { forwardRef, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { Image } from "@unpic/react";
 
 const IPX_OPTIONS = { ipx: { baseURL: "/_ipx" } };
@@ -7,6 +7,11 @@ const DEFAULT_BREAKPOINTS = [160, 240, 320, 480, 640, 800, 960, 1280];
 function sourcePath(src) {
   if (!src || typeof src !== "string") return src;
   return src.split(/[?#]/, 1)[0];
+}
+
+function updateRef(ref, value) {
+  if (typeof ref === "function") ref(value);
+  else if (ref) ref.current = value;
 }
 
 export const OptimizedImage = forwardRef(function OptimizedImage({
@@ -24,25 +29,34 @@ export const OptimizedImage = forwardRef(function OptimizedImage({
   ...props
 }, ref) {
   const normalizedSource = sourcePath(src);
-  const [loaded, setLoaded] = useState(false);
+  const imageRef = useRef(null);
+  const [loadedSource, setLoadedSource] = useState(null);
+  const loaded = loadedSource === src;
   const imageClassName = [
     className,
     reveal ? "optimized-image-reveal" : "",
     reveal && loaded ? "is-loaded" : "",
   ].filter(Boolean).join(" ");
+  const setImageRef = useCallback((node) => {
+    imageRef.current = node;
+    updateRef(ref, node);
+  }, [ref]);
   const handleLoad = (event) => {
-    setLoaded(true);
+    setLoadedSource(src);
     onLoad?.(event);
   };
 
-  useEffect(() => {
-    setLoaded(false);
+  useLayoutEffect(() => {
+    const image = imageRef.current;
+    if (image?.complete && image.naturalWidth > 0) {
+      setLoadedSource(src);
+    }
   }, [src]);
 
   if (!normalizedSource || normalizedSource.startsWith("data:") || normalizedSource.startsWith("blob:") || normalizedSource.startsWith("/api/")) {
     return (
       <img
-        ref={ref}
+        ref={setImageRef}
         src={src}
         alt={alt}
         className={imageClassName}
@@ -57,7 +71,7 @@ export const OptimizedImage = forwardRef(function OptimizedImage({
 
   return (
     <Image
-      ref={ref}
+      ref={setImageRef}
       src={normalizedSource}
       alt={alt}
       className={imageClassName}

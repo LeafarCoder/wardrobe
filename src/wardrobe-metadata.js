@@ -21,14 +21,14 @@ export const BRAND_OPTIONS = [
 ];
 
 export const CURRENCY_OPTIONS = [
-  { id: "EUR", label: "EUR €" },
-  { id: "USD", label: "USD $" },
-  { id: "GBP", label: "GBP £" },
-  { id: "CHF", label: "CHF" },
-  { id: "CAD", label: "CAD $" },
-  { id: "AUD", label: "AUD $" },
-  { id: "BRL", label: "BRL R$" },
-  { id: "JPY", label: "JPY ¥" },
+  { id: "EUR", label: "EUR €", symbol: "€" },
+  { id: "USD", label: "USD $", symbol: "$" },
+  { id: "GBP", label: "GBP £", symbol: "£" },
+  { id: "CHF", label: "CHF", symbol: "Fr." },
+  { id: "CAD", label: "CAD $", symbol: "$" },
+  { id: "AUD", label: "AUD $", symbol: "$" },
+  { id: "BRL", label: "BRL R$", symbol: "R$" },
+  { id: "JPY", label: "JPY ¥", symbol: "¥" },
 ];
 
 export const CURRENCY_IDS = new Set(CURRENCY_OPTIONS.map((currency) => currency.id));

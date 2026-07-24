@@ -53,10 +53,16 @@ If you are setting up Wardrobe for a user, ask how they want to import their clo
 - Extracts clean product cutouts with reference-image editing
 - Generates and saves multiple modeled editorial looks only when requested from an item's detail panel
 - Supports multiple local users with separate clothes, references, active imports, sizing, style, and preferences
+- Searches names, brands, and tags with color, size, fit, material, and season facets
+- Saves reusable filter, sorting, and grid-density combinations per profile
+- Switches between a clean garments-only gallery and configurable product details, with optional white or softly colored image tiles
+- Plans trips and events from seasonal destination conditions, personal preferences, and the clothes already available
 - Keeps originals, jobs, generated images, and the JSON database local in `data/`
 - Supports drag, drop, paste, editing, review, regeneration, and approval
-- Lets modeled items rotate through saved looks, toggle to the original source, and delete individual generated images from storage
+- Lets modeled items rotate through saved looks, open the complete original source, and delete individual generated images from storage
+- Previews four suggested or any custom garment color instantly in the browser, with separate primary/secondary targeting for multicolor pieces
 - Stores optional garment brands, purchase months, and prices, with an oldest-purchase-first organization mode
+- Shows local brand marks beside garments, brand suggestions, and brand filters, with monogram fallbacks for custom labels
 
 ## User profiles
 
@@ -69,9 +75,17 @@ Use the wardrobe switcher in the top-right corner to add a person, edit the curr
 - a preferred fit plus optional brand-specific sizing notes
 - a preferred currency shared by every garment price
 - preferred materials and favorite colors for styling context
+- a saved interface and AI-response language: US English or European Portuguese
+- separate preferred AI models for analysis, garment reconstruction, one-reference and multi-reference modeled looks, and trip planning
+- a private per-person AI cost summary recorded from provider responses
+- saved wardrobe views and weather-aware trip/event plans
 - its own visible clothes and in-progress imports
 
 The original single-user wardrobe is assigned to the initial `My wardrobe` profile automatically. Existing local browser edits and deletions are also preserved for that profile. New garments and jobs are tagged with their owner, so switching profiles cannot mix wardrobes. Profile references and preferences are included only in that user's future modeled-image requests.
+
+### Languages
+
+Choose **Edit profile → Personal → Language** to use Wardrobe in US English or European Portuguese. The choice belongs to that person, follows them when wardrobes are switched, and is included in personal-data exports. It localizes the complete interface, validation and provider errors, import workflow, planner, filters, dialogs, accessibility labels, and browser title. New AI garment metadata and trip plans are also requested in the selected language; existing user-entered names and tags are never rewritten automatically.
 
 ## Configuration
 
@@ -80,8 +94,10 @@ The checked-in `.env.example` uses a low-cost OpenRouter mix:
 | Stage | Model |
 | --- | --- |
 | Garment detection and metadata | `google/gemini-3.1-flash-lite` |
+| Trip and event planning | `google/gemini-3.1-flash-lite` |
 | Clean garment reconstruction | `black-forest-labs/flux.2-klein-4b` |
-| Modeled editorial image | `google/gemini-3.1-flash-lite-image` |
+| Modeled editorial image, one identity reference | `google/gemini-3.1-flash-lite-image` |
+| Modeled editorial image, two or three identity references | `google/gemini-3.1-flash-image` |
 
 Add your key and start the app:
 
@@ -92,20 +108,28 @@ OPENROUTER_API_KEY=sk-or-v1-your-key
 
 `WARDROBE_AI_PROVIDER` is optional: Wardrobe automatically selects OpenRouter when `OPENROUTER_API_KEY` is present, otherwise it falls back to direct OpenAI.
 
+Wardrobe identifies every OpenRouter request with `HTTP-Referer` and
+`X-OpenRouter-Title`, so usage appears as **Wardrobe** instead of **Unknown** in
+OpenRouter's Apps analytics. Railway deployments use
+`RAILWAY_PUBLIC_DOMAIN` automatically. Set `OPENROUTER_APP_URL` when you want a
+custom domain to be the canonical identifier, and optionally change
+`OPENROUTER_APP_TITLE`.
+
 ### Model presets
 
-| Preset | `OPENROUTER_GARMENT_MODEL` | `OPENROUTER_MODELED_MODEL` |
-| --- | --- | --- |
-| Cheapest (default) | `black-forest-labs/flux.2-klein-4b` | `google/gemini-3.1-flash-lite-image` |
-| Private | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-lite-image` |
-| Balanced | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-image` |
-| Highest fidelity | `google/gemini-3.1-flash-image` | `google/gemini-3-pro-image` |
+| Preset | `OPENROUTER_GARMENT_MODEL` | One reference | Two or three references |
+| --- | --- | --- | --- |
+| Adaptive economy (default) | `black-forest-labs/flux.2-klein-4b` | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-image` |
+| Private | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-image` |
+| Highest fidelity | `google/gemini-3.1-flash-image` | `google/gemini-3.1-flash-image` | `google/gemini-3-pro-image` |
 
-The garment and modeled stages can use different image models because a clean single-product reconstruction is simpler than preserving both a person's identity and a garment in one scene.
+The garment and modeled stages can use different image models because a clean single-product reconstruction is simpler than preserving both a person's identity and a garment in one scene. Wardrobe also selects the modeled-look model by profile: one identity reference uses `OPENROUTER_MODELED_MODEL`, while two or three references use `OPENROUTER_MODELED_MULTI_REFERENCE_MODEL`. The values below remain the server defaults; each person can override the five AI tasks from **Edit profile → AI & costs**.
 
 The default Klein garment route is cheaper, but it is not currently available under OpenRouter Zero Data Retention. `OPENROUTER_ALLOW_NON_ZDR_GARMENT=true` is therefore an explicit, garment-only privacy exception. Wardrobe keeps `OPENROUTER_ZDR=true` for clothing analysis and modeled looks, and refuses to send garment source images to Klein unless that exception is present. Use the Private preset if provider retention is not acceptable.
 
 When the primary image model returns a content-policy refusal such as `PROHIBITED_CONTENT` or `IMAGE_SAFETY`, Wardrobe automatically retries the same request with the models in `OPENROUTER_IMAGE_FALLBACK_MODELS`. Other failures—authentication, credits, rate limits, networking, and invalid configuration—are not hidden by this fallback. The default is `bytedance-seed/seedream-4.5`, which supports the app's multiple reference images and 3:2 modeled output. It starts at 2K because the current Seed route rejects the smaller concrete dimensions derived from 1K for some reference-image requests. Set the fallback-model value to `none` to disable it.
+
+The planner asks OpenRouter for a JSON object and validates the returned structure locally. This avoids provider-specific failures caused by sending a large, deeply nested strict schema to Gemini while retaining predictable saved plan data. When the selected planner route is unavailable or returns malformed JSON, Wardrobe retries the models in `OPENROUTER_PLANNER_FALLBACK_MODELS` in order. The default fallback is the inexpensive, ZDR-compatible `google/gemini-2.5-flash-lite`; set the variable to `none` to disable planner fallback.
 
 ### OpenRouter settings
 
@@ -113,9 +137,14 @@ When the primary image model returns a content-policy refusal such as `PROHIBITE
 | --- | --- |
 | `OPENROUTER_API_KEY` | Required when using OpenRouter |
 | `OPENROUTER_API_BASE_URL` | `https://openrouter.ai/api/v1` |
+| `OPENROUTER_APP_URL` | Railway public domain, or the local app URL outside Railway |
+| `OPENROUTER_APP_TITLE` | `Wardrobe` |
 | `OPENROUTER_VISION_MODEL` | `google/gemini-3.1-flash-lite` |
+| `OPENROUTER_PLANNER_MODEL` | `OPENROUTER_VISION_MODEL` |
+| `OPENROUTER_PLANNER_FALLBACK_MODELS` | `google/gemini-2.5-flash-lite` |
 | `OPENROUTER_GARMENT_MODEL` | `black-forest-labs/flux.2-klein-4b` in `.env.example` |
 | `OPENROUTER_MODELED_MODEL` | `google/gemini-3.1-flash-lite-image` |
+| `OPENROUTER_MODELED_MULTI_REFERENCE_MODEL` | `google/gemini-3.1-flash-image` |
 | `OPENROUTER_IMAGE_FALLBACK_MODELS` | `bytedance-seed/seedream-4.5` |
 | `OPENROUTER_ALLOW_NON_ZDR_GARMENT` | `true` in `.env.example` |
 | `OPENROUTER_GARMENT_PROVIDER` | `black-forest-labs` in `.env.example` |
@@ -143,12 +172,13 @@ Existing OpenAI configuration remains supported:
 | `OPENAI_API_KEY` | Required when using OpenAI |
 | `OPENAI_API_BASE_URL` | `https://api.openai.com/v1` |
 | `OPENAI_VISION_MODEL` | `gpt-5.4-mini` |
+| `OPENAI_PLANNER_MODEL` | `OPENAI_VISION_MODEL` |
 | `OPENAI_IMAGE_MODEL` | `gpt-image-2` |
 | `OPENAI_IMAGE_QUALITY` | `high` |
 
 ### Local-first boundary
 
-Your database, user profiles, import jobs, originals, and generated assets stay in the local `data/` directory. AI processing is not fully local: the imported photo and garment crop are sent to OpenRouter or OpenAI. The current user's reference photos and profile styling context are sent only when that user explicitly requests a modeled look. API keys stay on the local Vite server and are never exposed to the browser bundle.
+Your database, user profiles, import jobs, originals, and generated assets stay in the local `data/` directory. AI processing is not fully local: the imported photo and garment crop are sent to OpenRouter or OpenAI. The current user's reference photos are sent only when that user explicitly requests a modeled look. Requesting a trip/event plan sends the destination, dates, trip notes, relevant profile preferences, and clothing metadata—but no wardrobe or reference images—to the configured provider. API keys stay on the local Vite server and are never exposed to the browser bundle.
 
 Wardrobe keeps every original garment and modeled image intact and automatically creates lightweight WebP derivatives beside it: 320-pixel garment thumbnails for the gallery, 1040-pixel previews for the item panel, and 192-pixel profile avatars. Existing libraries and profile references are backfilled once at startup, while new garments, modeled looks, and avatars are optimized as they are saved. Only the derivatives receive long-lived private browser caching; originals remain uncached and are still included in personal-data exports.
 
@@ -171,6 +201,22 @@ WARDROBE_MODEL_REFERENCES=data/model-front.jpg,data/model-three-quarter.jpg,data
 
 Wardrobe sends the selected user's references first and the garment last, with an explicit prompt describing each image's role. Only three person references are stored per profile.
 
+### Search, saved views, and planner
+
+The wardrobe filter rail searches names, brands, and tags and combines facets with AND logic across categories and OR logic within a category. Garments can store their own size labels, fit, materials, and seasons in the item panel. Older garments remain searchable by material or fit when those values already exist as tags.
+
+Saved views belong to the current profile and include the search, category, selected facets, sorting mode, and grid density. They are stored in `users.json` and included in personal-data exports.
+
+Each profile also stores its wardrobe showcase preference. Use the top **Garments / Details** toggle for a quick switch, then open **Edit profile → Wardrobe** to choose which fields appear in Details mode and whether garment images use no background or a white, beige, light-blue, soft-grey, or blush tile. These settings travel with personal-data exports.
+
+The trip/event planner uses the configured planner model as a low-cost structured text model. It combines the destination, dates, plans, profile preferences, sizing, and wardrobe metadata; it does not upload clothing or reference images. Weather guidance is based on expected seasonal climate rather than a live forecast, and every plan says to check a current forecast near departure. Generated plans and missing-item suggestions are saved with the current profile and included in exports.
+
+OpenRouter includes exact cost and token usage in each non-streaming response. Wardrobe records those values in `data/ai-usage.json`, attributed to the active person, task, and model. The **AI & costs** profile tab summarizes them without exposing the API key or calling an account-wide billing endpoint. Tracking starts after this feature is installed, so older calls are not reconstructed; failed calls and direct-provider responses without a reported price are counted as unpriced requests.
+
+Color previews are browser-only canvas transformations. They preserve the cutout's lightness, shadows, texture, and transparency while changing pixels that match the selected primary or secondary color. They do not call an AI provider, create another stored image, or modify the garment's saved color metadata.
+
+The Adidas, Nike, Zara, H&M, and Uniqlo vector paths are bundled from the CC0-licensed [Simple Icons](https://github.com/simple-icons/simple-icons) project. Other built-in retailers use compact local wordmark badges, and custom brands receive an automatically generated monogram. Brand names and marks remain trademarks of their respective owners.
+
 ## Download and restore your data
 
 Open the wardrobe switcher and choose **Download all data**. Wardrobe creates an authenticated `.tar.gz` backup containing:
@@ -178,6 +224,7 @@ Open the wardrobe switcher and choose **Download all data**. Wardrobe creates an
 - every user profile and its 1–3 reference photos
 - all clothing metadata, cutouts, original uploads, and modeled images
 - unfinished import jobs, including their review state
+- the local per-person AI usage and cost ledger
 
 The archive does **not** contain `.env`, the shared access password, or OpenRouter/OpenAI keys. Item edits are stored in the portable server database; before downloading, Wardrobe automatically migrates older browser-only edits and deletions for every configured user.
 

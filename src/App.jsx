@@ -1,8 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { CaretDown, CaretLeft, CaretRight, Check, DownloadSimple, LockKey, PencilSimple, Plus, Sparkle, SpinnerGap, Trash, UploadSimple, UserCircle, X } from "@phosphor-icons/react";
+import { ArrowsDownUp, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, FunnelSimple, Handbag, ImageSquare, Info, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
+import { BrandIcon } from "./BrandIcon.jsx";
+import { CITY_SUGGESTIONS } from "./city-suggestions.js";
+import { GarmentColorPreview } from "./GarmentColorPreview.jsx";
+import { formatDate, getLocale, LANGUAGE_OPTIONS, setLocale, tr, useLocale } from "./i18n.js";
+import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
+import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
-import { colorGroup } from "./color-organization.js";
+import { AI_TASKS, formatAiCost, normalizeAiPreferences } from "./ai-preferences.js";
+import { garmentVariationColors, normalizeHexColor } from "./garment-recolor.js";
+import {
+  preferredStoreOptions,
+  STORE_OPTIONS,
+  storeSearchUrl,
+} from "./store-search.js";
 import {
   BRAND_OPTIONS,
   CURRENCY_OPTIONS,
@@ -16,27 +28,55 @@ import {
   SIZE_FIELDS,
   SIZE_SYSTEMS,
 } from "./wardrobe-metadata.js";
+import {
+  activeFilterCount,
+  collectFacetOptions,
+  DEFAULT_WARDROBE_FILTERS,
+  GARMENT_FIT_SUGGESTIONS,
+  GRID_DENSITIES,
+  groupWardrobeItems,
+  itemFacetValues,
+  MATERIAL_SUGGESTIONS,
+  normalizeWardrobeDisplayPreferences,
+  normalizeGarmentFacetList,
+  normalizeGarmentSeasons,
+  normalizeSavedViews,
+  normalizeWardrobeFilters,
+  SEASON_OPTIONS,
+  WARDROBE_BACKGROUND_STYLES,
+  WARDROBE_DETAIL_FIELDS,
+  WARDROBE_SHOWCASE_MODES,
+  wardrobeItemMatches,
+} from "./wardrobe-discovery.js";
 
 const STORAGE_KEY = "open-wardrobe-edits-v1";
 const DELETED_STORAGE_KEY = "open-wardrobe-deleted-v1";
 
 const TYPES = [
   { id: "all", label: "All" },
-  { id: "upperbody", label: "Tops", singular: "Top" },
-  { id: "wholebody_up", label: "Jackets", singular: "Jacket" },
-  { id: "lowerbody", label: "Bottoms", singular: "Bottom" },
-  { id: "accessories_up", label: "Accessories", singular: "Accessory" },
-  { id: "shoes", label: "Shoes", singular: "Shoes" },
+  { id: "upperbody", label: "Tops", singular: "Top", icon: TShirt },
+  { id: "wholebody_up", label: "Outerwear", singular: "Outerwear item", icon: CoatHanger },
+  { id: "lowerbody", label: "Bottoms", singular: "Bottom", icon: Pants },
+  { id: "wholebody", label: "Dresses & one-pieces", singular: "Dress or one-piece", icon: Dress },
+  { id: "shoes", label: "Shoes", singular: "Shoes", icon: Sneaker },
+  { id: "accessories_up", label: "Accessories", singular: "Accessory", icon: Handbag },
 ];
 
 const TYPE_MAP = Object.fromEntries(TYPES.map((type) => [type.id, type]));
-const ORGANIZATION_MODES = [
-  { id: "custom", label: "My order" },
-  { id: "updated", label: "Last updated" },
-  { id: "purchase-oldest", label: "Oldest first" },
-  { id: "color", label: "Colors" },
+const SORT_MODES = [
+  { id: "custom", label: "My order", icon: ListNumbers },
+  { id: "updated", label: "Last updated", icon: ClockCounterClockwise },
+  { id: "purchase-oldest", label: "Oldest first", icon: CalendarBlank },
 ];
-const ORGANIZATION_MODE_IDS = new Set(ORGANIZATION_MODES.map((mode) => mode.id));
+const GROUP_MODES = [
+  { id: "none", label: "No grouping", icon: Rows },
+  { id: "color", label: "Colors", icon: Palette },
+  { id: "type", label: "Garment type", icon: TShirt },
+  { id: "brand", label: "Brand", icon: Tag },
+  { id: "purchase-year", label: "Purchase year", icon: CalendarBlank },
+];
+const SORT_MODE_IDS = new Set(SORT_MODES.map((mode) => mode.id));
+const GROUP_MODE_IDS = new Set(GROUP_MODES.map((mode) => mode.id));
 const COLOR_GROUPS = [
   { id: "light-neutrals", label: "Light neutrals", tones: ["#f7f4ed", "#d8cfbd", "#aaa8a3"] },
   { id: "greens", label: "Greens & teals", tones: ["#afbd80", "#487b52", "#1e6666"] },
@@ -48,11 +88,11 @@ const COLOR_GROUPS = [
   { id: "dark-neutrals", label: "Dark neutrals", tones: ["#686763", "#393a3a", "#171818"] },
   { id: "other", label: "Other colors", tones: ["#aaa19a", "#77716c", "#4b4845"] },
 ];
-const COLOR_GROUP_INDEX = Object.fromEntries(COLOR_GROUPS.map((group, index) => [group.id, index]));
 const LEGACY_ORIGINAL_FOCUS = {
   upperbody: [50, 44],
   wholebody_up: [50, 52],
   lowerbody: [50, 68],
+  wholebody: [50, 58],
   accessories_up: [50, 54],
   shoes: [50, 78],
 };
@@ -73,6 +113,10 @@ function editableItem(item) {
     purchaseMonth: normalizePurchaseMonth(item.purchaseMonth) || "",
     purchasePrice: normalizePurchasePrice(item.purchasePrice) ?? "",
     tags: [...(item.tags || [])],
+    sizes: normalizeGarmentFacetList(item.sizes),
+    fits: normalizeGarmentFacetList(item.fits),
+    materials: normalizeGarmentFacetList(item.materials),
+    seasons: normalizeGarmentSeasons(item.seasons),
   };
 }
 
@@ -86,6 +130,18 @@ function itemModeledLooks(item) {
     model: item.modeledModel || null,
     fallbackUsed: Boolean(item.modeledFallbackUsed),
     generatedAt: item.modeledGeneratedAt || null,
+  }] : [];
+}
+
+function itemSourcePhotos(item) {
+  const source = Array.isArray(item.sourcePhotos) ? item.sourcePhotos.filter((photo) => photo?.image) : [];
+  if (source.length) return source;
+  return item.originalImage ? [{
+    id: "original",
+    image: item.originalImage,
+    preview: item.originalPreview || null,
+    boundingBox: item.boundingBox || null,
+    focusBox: item.originalFocusBox || null,
   }] : [];
 }
 
@@ -169,6 +225,10 @@ function persistEdit(item, userId) {
     purchaseMonth: normalizePurchaseMonth(item.purchaseMonth),
     purchasePrice: normalizePurchasePrice(item.purchasePrice),
     tags: item.tags || [],
+    sizes: normalizeGarmentFacetList(item.sizes),
+    fits: normalizeGarmentFacetList(item.fits),
+    materials: normalizeGarmentFacetList(item.materials),
+    seasons: normalizeGarmentSeasons(item.seasons),
   };
   localStorage.setItem(userStorageKey(STORAGE_KEY, userId), JSON.stringify(edits));
 }
@@ -205,19 +265,19 @@ function removePersistedDeletedItem(id, userId) {
 const fileToDataUrl = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => resolve(reader.result);
-  reader.onerror = () => reject(reader.error || new Error("Could not read that photo."));
+  reader.onerror = () => reject(reader.error || new Error(tr("Could not read that photo.")));
   reader.readAsDataURL(file);
 });
 
 async function profileApi(path, options) {
   const response = await fetch(path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
+    headers: { "Content-Type": "application/json", "Accept-Language": getLocale(), ...(options?.headers || {}) },
   });
   const value = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401) window.dispatchEvent(new Event("wardrobe:unauthorized"));
-    const error = new Error(value.error || "The profile could not be saved.");
+    const error = new Error(tr(value.error || "The profile could not be saved."));
     error.status = response.status;
     error.code = value.code;
     throw error;
@@ -284,17 +344,19 @@ function extractPalette(image) {
 
 function buildSamplingCanvas(image) {
   const canvas = document.createElement("canvas");
-  canvas.width = image.naturalWidth;
-  canvas.height = image.naturalHeight;
+  canvas.width = image.naturalWidth || image.width;
+  canvas.height = image.naturalHeight || image.height;
   canvas.getContext("2d", { willReadFrequently: true }).drawImage(image, 0, 0);
   return canvas;
 }
 
 function sampleImageColor(image, canvas, event) {
   const bounds = image.getBoundingClientRect();
-  const scale = Math.min(bounds.width / image.naturalWidth, bounds.height / image.naturalHeight);
-  const renderedWidth = image.naturalWidth * scale;
-  const renderedHeight = image.naturalHeight * scale;
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  const scale = Math.min(bounds.width / sourceWidth, bounds.height / sourceHeight);
+  const renderedWidth = sourceWidth * scale;
+  const renderedHeight = sourceHeight * scale;
   const offsetX = (bounds.width - renderedWidth) / 2;
   const offsetY = (bounds.height - renderedHeight) / 2;
   const imageX = Math.floor((event.clientX - bounds.left - offsetX) / scale);
@@ -319,6 +381,7 @@ function sampleImageColor(image, canvas, event) {
 
 function GalleryItem({
   item,
+  display,
   selected,
   onOpen,
   draggable = false,
@@ -330,7 +393,20 @@ function GalleryItem({
   onDrop,
   onDragEnd,
 }) {
-  const type = TYPE_MAP[item.part]?.singular || "wardrobe item";
+  const type = tr(TYPE_MAP[item.part]?.singular || "wardrobe item");
+  const displayPreferences = normalizeWardrobeDisplayPreferences(display);
+  const detailsVisible = displayPreferences.mode === "details";
+  const backgroundStyle = WARDROBE_BACKGROUND_STYLES.find(
+    (style) => style.id === displayPreferences.backgroundStyle,
+  ) || WARDROBE_BACKGROUND_STYLES[0];
+  const hasTileBackground = backgroundStyle.id !== "none";
+  const visibleFields = new Set(displayPreferences.detailFields);
+  const detailRows = [
+    ["materials", tr("Material"), itemFacetValues(item, "materials")],
+    ["sizes", tr("Size"), item.sizes],
+    ["fits", tr("Fit"), itemFacetValues(item, "fits")],
+    ["seasons", tr("Season"), item.seasons?.map((value) => tr(SEASON_OPTIONS.find((season) => season.id === value)?.label || value))],
+  ].filter(([field, , values]) => visibleFields.has(field) && values?.length);
   const prefetchedHero = useRef(false);
   const warmHero = () => {
     if (prefetchedHero.current) return;
@@ -340,7 +416,7 @@ function GalleryItem({
 
   return (
     <button
-      className={`gallery-item${selected ? " selected" : ""}${dragging ? " is-dragging" : ""}${dropTarget ? " is-drop-target" : ""}`}
+      className={`gallery-item${detailsVisible ? " has-details" : ""}${hasTileBackground ? " has-tile-background" : ""}${selected ? " selected" : ""}${dragging ? " is-dragging" : ""}${dropTarget ? " is-drop-target" : ""}`}
       type="button"
       draggable={draggable}
       onClick={() => onOpen(item.id)}
@@ -350,19 +426,53 @@ function GalleryItem({
       onDragOver={(event) => onDragOver?.(event, item.id)}
       onDrop={(event) => onDrop?.(event, item.id)}
       onDragEnd={onDragEnd}
-      aria-label={`View ${item.name || type}${draggable ? ". Drag to change its position" : ""}`}
+      aria-label={tr(draggable ? "View {name}. Drag to change its position" : "View {name}", { name: item.name || type })}
       aria-pressed={selected}
       data-testid={`wardrobe-item-${item.id}`}
     >
-      <OptimizedImage
-        src={item.thumbnail || item.image}
-        alt=""
-        sizes="(max-width: 520px) calc(50vw - 16px), (max-width: 860px) calc(33vw - 18px), 180px"
-        breakpoints={[120, 180, 240, 320, 480]}
-        priority={priority}
-        fetchPriority={priority ? "high" : "auto"}
-        reveal
-      />
+      <span
+        className="gallery-item__media"
+        style={hasTileBackground ? { "--gallery-tile-background": backgroundStyle.color } : undefined}
+      >
+        <OptimizedImage
+          src={item.thumbnail || item.image}
+          alt=""
+          sizes="(max-width: 520px) calc(50vw - 16px), (max-width: 860px) calc(33vw - 18px), 180px"
+          breakpoints={[120, 180, 240, 320, 480]}
+          priority={priority}
+          fetchPriority={priority ? "high" : "auto"}
+          reveal
+        />
+        {detailsVisible && (
+          <span className="gallery-item__swatches" aria-hidden="true">
+            {[item.color, item.secondaryColor].filter(Boolean).map((color) => (
+              <i key={color} style={{ backgroundColor: color }} />
+            ))}
+          </span>
+        )}
+      </span>
+      {detailsVisible && (
+        <span className="gallery-item__details">
+          {visibleFields.has("name") && <strong>{item.name || type}</strong>}
+          {visibleFields.has("brand") && item.brand && (
+            <span className="gallery-item__brand">
+              <BrandIcon brand={item.brand} size={15} />
+              <span>{item.brand}</span>
+            </span>
+          )}
+          {visibleFields.has("tags") && !!item.tags?.length && (
+            <span className="gallery-item__tags">
+              {item.tags.slice(0, 4).map((tag) => <i key={tag}>{tag}</i>)}
+            </span>
+          )}
+          {detailRows.map(([field, label, values]) => (
+            <span className="gallery-item__detail-row" key={field}>
+              <small>{label}</small>
+              <span>{values.join(", ")}</span>
+            </span>
+          ))}
+        </span>
+      )}
     </button>
   );
 }
@@ -370,16 +480,16 @@ function GalleryItem({
 function TagEditor({
   tags,
   onChange,
-  placeholder = "Add a detail",
-  inputLabel = "Add detail tag",
-  addLabel = "Add detail",
+  placeholder = tr("Add a detail"),
+  inputLabel = tr("Add detail tag"),
+  addLabel = tr("Add detail"),
   suggestions = [],
-  suggestionListId,
+  emptyLabel = "",
 }) {
   const [input, setInput] = useState("");
 
-  const addTag = () => {
-    const nextTag = input.trim().replace(/^#/, "");
+  const addTag = (candidate = input) => {
+    const nextTag = candidate.trim().replace(/^#/, "");
     if (!nextTag || tags.some((tag) => tag.toLowerCase() === nextTag.toLowerCase())) return;
     onChange([...tags, nextTag]);
     setInput("");
@@ -388,34 +498,26 @@ function TagEditor({
   return (
     <div className="tag-editor">
       <div className="editable-tags">
+        {!tags.length && emptyLabel && <span className="tag-editor__empty">{emptyLabel}</span>}
         {tags.map((tag) => (
           <span className="editable-tag" key={tag}>
             {tag}
-            <button type="button" onClick={() => onChange(tags.filter((existing) => existing !== tag))} aria-label={`Remove ${tag}`}>
+            <button type="button" onClick={() => onChange(tags.filter((existing) => existing !== tag))} aria-label={tr("Remove {tag}", { tag })}>
               <X size={12} weight="regular" aria-hidden="true" />
             </button>
           </span>
         ))}
       </div>
       <div className="tag-input-row">
-        <input
+        <LightTypeahead
           value={input}
-          list={suggestions.length ? suggestionListId : undefined}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === ",") {
-              event.preventDefault();
-              addTag();
-            }
-          }}
+          onChange={setInput}
+          options={suggestions.map((suggestion) => ({ value: tr(suggestion), label: tr(suggestion) }))}
+          onSelect={(suggestion) => addTag(suggestion)}
+          onCommit={() => addTag()}
           placeholder={placeholder}
-          aria-label={inputLabel}
+          ariaLabel={inputLabel}
         />
-        {!!suggestions.length && (
-          <datalist id={suggestionListId}>
-            {suggestions.map((suggestion) => <option value={suggestion} key={suggestion} />)}
-          </datalist>
-        )}
         <button type="button" onClick={addTag} disabled={!input.trim()} aria-label={addLabel}>
           <Plus size={15} weight="regular" aria-hidden="true" />
         </button>
@@ -424,43 +526,87 @@ function TagEditor({
   );
 }
 
-function ColorControl({ label, field, value, palette, onChange, sampling, setSampling, optional = false, onClear, onAdd }) {
-  if (optional && !value) {
-    return (
-      <div className="color-slot empty-color-slot">
-        <div className="color-slot-heading">
-          <span>{label}</span>
-          <small>Optional</small>
-        </div>
-        <p>No distinct secondary color detected.</p>
-        <button className="add-secondary-button" type="button" onClick={onAdd}>Add secondary color</button>
-      </div>
-    );
-  }
+function CompactSavedColors({ primaryColor, secondaryColor, onEdit }) {
+  const editableSwatch = (color, field) => (
+    <button
+      className={`compact-saved-colors__swatch${color ? "" : " is-empty"}`}
+      type="button"
+      onClick={onEdit}
+      style={color ? { "--saved-color": color } : undefined}
+      aria-label={tr(field === "primary" ? "Edit primary color" : "Edit secondary color")}
+      title={tr(field === "primary" ? "Edit primary color" : "Edit secondary color")}
+    >
+      <span aria-hidden="true">
+        <PencilSimple size={12} weight="bold" />
+      </span>
+    </button>
+  );
 
   return (
-    <div className="color-slot">
-      <div className="color-slot-heading">
-        <span>{label}</span>
-        {optional && <button type="button" onClick={onClear}>Remove</button>}
+    <div className="compact-saved-colors">
+      <div className="compact-saved-colors__value">
+        <span>{tr("Primary color")}</span>
+        <div>
+          {editableSwatch(primaryColor, "primary")}
+          <strong>{primaryColor}</strong>
+        </div>
       </div>
-      <label className="selected-color-control">
+      <div className="compact-saved-colors__value">
+        <span>{tr("Secondary color")} <small>{tr("optional")}</small></span>
+        <div>
+          {editableSwatch(secondaryColor, "secondary")}
+          {secondaryColor ? <strong>{secondaryColor}</strong> : <p>{tr("Not selected")}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ColorStudioPane({
+  label,
+  field,
+  value,
+  palette,
+  sampling,
+  setSampling,
+  onChange,
+  optional = false,
+  onClear,
+}) {
+  const fallbackColor = normalizeHexColor(value) || normalizeHexColor(palette[0]) || "#9a9286";
+  return (
+    <section className="color-studio__pane">
+      <div className="color-studio__pane-heading">
+        <div>
+          <h3>{label}</h3>
+          {optional && <span>{tr("Optional")}</span>}
+        </div>
+        {optional && value && (
+          <button type="button" onClick={onClear}>{tr("Remove")}</button>
+        )}
+      </div>
+
+      <label className={`color-studio__selected${value ? "" : " is-empty"}`}>
         <input
           type="color"
-          value={value || "#9a9286"}
+          value={fallbackColor}
           onChange={(event) => onChange(event.target.value)}
-          aria-label={`Choose ${label.toLowerCase()}`}
+          aria-label={tr("Choose {label}", { label: label.toLocaleLowerCase(getLocale()) })}
         />
-        <span className="selected-color-copy">
-          <small>Selected</small>
-          <strong>{value || "Custom"}</strong>
+        <i style={value ? { backgroundColor: value } : undefined} aria-hidden="true">
+          {!value && <Plus size={18} weight="regular" />}
+        </i>
+        <span>
+          <small>{value ? tr("Selected color") : tr("Choose any color")}</small>
+          <strong>{value || tr("Not selected")}</strong>
         </span>
       </label>
-      <div className="suggestion-heading">
-        <span>Image suggestions</span>
-        <small>Click to apply</small>
+
+      <div className="color-studio__suggestion-heading">
+        <span>{tr("Image suggestions")}</span>
+        <small>{tr("Click to apply")}</small>
       </div>
-      <div className="palette" aria-label={`${label} suggestions from image`}>
+      <div className="color-studio__palette" aria-label={tr("{label} suggestions from image", { label })}>
         {palette.map((color) => (
           <button
             type="button"
@@ -468,26 +614,127 @@ function ColorControl({ label, field, value, palette, onChange, sampling, setSam
             className={value?.toLowerCase() === color.toLowerCase() ? "active" : ""}
             style={{ backgroundColor: color }}
             onClick={() => onChange(color)}
-            aria-label={`Use ${color} as ${label.toLowerCase()}`}
+            aria-label={tr("Use {color} as {label}", { color, label: label.toLocaleLowerCase(getLocale()) })}
             title={color}
           />
         ))}
       </div>
       <button
-        className={`sample-button${sampling === field ? " active" : ""}`}
+        className={`color-studio__sample${sampling === field ? " active" : ""}`}
         type="button"
         onClick={() => setSampling((current) => current === field ? null : field)}
       >
-        {sampling === field ? "Cancel picking" : `Pick ${label.toLowerCase()} from image`}
+        <ImageSquare size={16} weight="regular" aria-hidden="true" />
+        {sampling === field
+          ? tr("Cancel picking")
+          : tr("Pick {label} from garment", { label: label.toLocaleLowerCase(getLocale()) })}
       </button>
+    </section>
+  );
+}
+
+function GarmentColorStudio({
+  name,
+  image,
+  primaryColor,
+  secondaryColor,
+  palette,
+  sampling,
+  setSampling,
+  sampleStatus,
+  onPrimaryChange,
+  onSecondaryChange,
+  onSecondaryClear,
+  onImageLoad,
+  onImageClick,
+  onClose,
+  closeButtonRef,
+  onKeyDown,
+}) {
+  return (
+    <div
+      className="color-studio-overlay"
+      role="presentation"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <section
+        className="color-studio"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="color-studio-title"
+        onKeyDown={onKeyDown}
+      >
+        <header className="color-studio__header">
+          <div>
+            <p>{tr("Garment colors")}</p>
+            <h2 id="color-studio-title">{tr("Edit garment colors")}</h2>
+            <span>{tr("Choose the saved colors for this garment.")}</span>
+          </div>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={onClose}
+            aria-label={tr("Close color editor")}
+          >
+            <X size={23} weight="light" aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="color-studio__body">
+          <ColorStudioPane
+            label={tr("Primary color")}
+            field="primary"
+            value={primaryColor}
+            palette={palette}
+            sampling={sampling}
+            setSampling={setSampling}
+            onChange={onPrimaryChange}
+          />
+          <div className={`color-studio__garment${sampling ? " is-sampling" : ""}`}>
+            <p>{name}</p>
+            <div>
+              <img
+                src={image}
+                alt={tr("Garment used to sample colors")}
+                onLoad={(event) => onImageLoad(event.currentTarget)}
+                onClick={onImageClick}
+              />
+              {sampling && (
+                <span>{tr("Click the garment to sample the {color} color.", { color: tr(sampling) })}</span>
+              )}
+            </div>
+          </div>
+          <ColorStudioPane
+            label={tr("Secondary color")}
+            field="secondary"
+            value={secondaryColor}
+            palette={palette}
+            sampling={sampling}
+            setSampling={setSampling}
+            onChange={onSecondaryChange}
+            optional
+            onClear={onSecondaryClear}
+          />
+        </div>
+
+        <footer className="color-studio__footer">
+          <p aria-live="polite">{sampleStatus || tr("Click a selected color to open the full color picker.")}</p>
+          <button className="primary-button" type="button" onClick={onClose}>
+            <Check size={15} weight="bold" aria-hidden="true" />
+            {tr("Done")}
+          </button>
+        </footer>
+      </section>
     </div>
   );
 }
 
-function BrandField({ value, onChange }) {
-  const fieldRef = useRef(null);
+function CompactBrandPicker({ value, onChange }) {
+  const pickerRef = useRef(null);
+  const searchRef = useRef(null);
   const [open, setOpen] = useState(false);
-  const normalizedQuery = value.trim().toLowerCase();
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
   const suggestions = useMemo(() => (
     [...BRAND_OPTIONS].sort((first, second) => {
       const firstStarts = first.toLowerCase().startsWith(normalizedQuery);
@@ -499,143 +746,367 @@ function BrandField({ value, onChange }) {
   useEffect(() => {
     if (!open) return undefined;
     const closeOnOutsideClick = (event) => {
-      if (!fieldRef.current?.contains(event.target)) setOpen(false);
+      if (!pickerRef.current?.contains(event.target)) setOpen(false);
     };
     document.addEventListener("pointerdown", closeOnOutsideClick);
+    requestAnimationFrame(() => searchRef.current?.focus({ preventScroll: true }));
     return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
   }, [open]);
 
   return (
-    <div className="field brand-field" ref={fieldRef}>
-      <label className="field-heading" htmlFor="wardrobe-brand-input">Brand <small>optional</small></label>
-      <input
-        id="wardrobe-brand-input"
-        value={value}
-        maxLength="80"
-        role="combobox"
-        aria-autocomplete="list"
+    <div className="compact-brand-picker" ref={pickerRef}>
+      <button
+        className={`compact-brand-trigger${value.trim() ? " has-brand" : ""}`}
+        type="button"
+        aria-haspopup="listbox"
         aria-expanded={open}
-        aria-controls="wardrobe-brand-suggestions"
-        onFocus={() => setOpen(true)}
-        onChange={(event) => {
-          onChange(event.target.value);
-          setOpen(true);
+        aria-controls="viewer-brand-options"
+        aria-label={value.trim() ? tr("Change brand, currently {brand}", { brand: value }) : tr("Choose a brand")}
+        title={value.trim() ? value : tr("Choose brand")}
+        onClick={() => {
+          setQuery("");
+          setOpen((current) => !current);
         }}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") setOpen(false);
-        }}
-        placeholder="Search or type a brand"
-      />
+      >
+        {value.trim() ? <BrandIcon brand={value} size={22} /> : <Plus size={15} aria-hidden="true" />}
+        <span>{value.trim() || tr("Brand")}</span>
+        <CaretDown size={12} aria-hidden="true" />
+      </button>
       {open && (
-        <div className="brand-suggestions" id="wardrobe-brand-suggestions" role="listbox" aria-label="Brand suggestions">
-          {suggestions.length ? suggestions.map((brand) => (
+        <div className="compact-brand-popover" id="viewer-brand-options">
+          <label>
+            <MagnifyingGlass size={14} aria-hidden="true" />
+            <input
+              ref={searchRef}
+              value={query}
+              maxLength="80"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-controls="viewer-brand-list"
+              aria-expanded="true"
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  setOpen(false);
+                }
+              }}
+              placeholder={tr("Search brands")}
+            />
+          </label>
+          <div className="compact-brand-list" id="viewer-brand-list" role="listbox" aria-label={tr("Brands")}>
             <button
               type="button"
               role="option"
-              aria-selected={brand.toLowerCase() === value.trim().toLowerCase()}
-              key={brand}
+              aria-selected={!value.trim()}
               onClick={() => {
-                onChange(brand);
+                onChange("");
                 setOpen(false);
               }}
             >
-              {brand}
+              <span className="compact-brand-empty"><X size={13} aria-hidden="true" /></span>
+              <span>{tr("No brand")}</span>
             </button>
-          )) : <p>Keep typing to use “{value.trim()}” as a custom brand.</p>}
+            {suggestions.map((brand) => (
+              <button
+                type="button"
+                role="option"
+                aria-selected={brand.toLowerCase() === value.trim().toLowerCase()}
+                key={brand}
+                onClick={() => {
+                  onChange(brand);
+                  setOpen(false);
+                }}
+              >
+                <BrandIcon brand={brand} size={19} />
+                <span>{brand}</span>
+              </button>
+            ))}
+            {query.trim() && !BRAND_OPTIONS.some((brand) => brand.toLowerCase() === query.trim().toLowerCase()) && (
+              <button
+                type="button"
+                role="option"
+                aria-selected={query.trim().toLowerCase() === value.trim().toLowerCase()}
+                onClick={() => {
+                  onChange(query.trim());
+                  setOpen(false);
+                }}
+              >
+                <BrandIcon brand={query.trim()} size={19} />
+                <span>{tr("Use “{brand}”", { brand: query.trim() })}</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleStatus, currency }) {
-  const suggestedSecondary = palette.find((color) => color.toLowerCase() !== draft.color?.toLowerCase()) || "#9a9286";
-  const currencyOption = CURRENCY_OPTIONS.find((option) => option.id === currency) || CURRENCY_OPTIONS[0];
+function GarmentEditorSection({ title, summary, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
 
   return (
-    <div className="item-editor">
-      <label className="field">
-        <span>Name</span>
-        <input
-          value={draft.name}
-          onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
-          placeholder={TYPE_MAP[draft.part]?.singular || "Wardrobe item"}
-        />
-      </label>
+    <section className={`garment-editor-section${open ? " is-open" : ""}`}>
+      <button
+        className="garment-editor-section__trigger"
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>
+          <strong>{title}</strong>
+          {summary && <small>{summary}</small>}
+        </span>
+        <CaretDown size={16} aria-hidden="true" />
+      </button>
+      {open && <div className="garment-editor-section__body">{children}</div>}
+    </section>
+  );
+}
 
-      <label className="field">
-        <span>Category</span>
-        <select value={draft.part} onChange={(event) => setDraft((current) => ({ ...current, part: event.target.value }))}>
-          {TYPES.slice(1).map((type) => <option value={type.id} key={type.id}>{type.label}</option>)}
-        </select>
-      </label>
+function ViewerToast({ toast, onDismiss }) {
+  if (!toast) return null;
 
-      <BrandField
-        value={draft.brand}
-        onChange={(brand) => setDraft((current) => ({ ...current, brand }))}
-      />
-
-      <label className="field">
-        <span>Purchased <small>optional</small></span>
-        <input
-          type="month"
-          value={draft.purchaseMonth}
-          onChange={(event) => setDraft((current) => ({ ...current, purchaseMonth: event.target.value }))}
-          aria-label="Purchase month and year"
-        />
-      </label>
-
-      <fieldset className="field purchase-price-field">
-        <legend>Purchase price <small>optional</small></legend>
-        <div>
-          <input
-            type="number"
-            min="0"
-            max="1000000"
-            step="0.01"
-            inputMode="decimal"
-            value={draft.purchasePrice}
-            onChange={(event) => setDraft((current) => ({ ...current, purchasePrice: event.target.value }))}
-            placeholder="79.90"
-            aria-label="Purchase price"
-          />
-          <span className="purchase-price-currency">{currencyOption.label}</span>
-        </div>
-      </fieldset>
-
-      <fieldset className="color-field">
-        <legend>Colors</legend>
-        <div className="colors-editor">
-          <ColorControl
-            label="Primary color"
-            field="primary"
-            value={draft.color}
-            palette={palette}
-            onChange={(color) => setDraft((current) => ({ ...current, color }))}
-            sampling={sampling}
-            setSampling={setSampling}
-          />
-          <ColorControl
-            label="Secondary color"
-            field="secondary"
-            value={draft.secondaryColor}
-            palette={palette}
-            onChange={(secondaryColor) => setDraft((current) => ({ ...current, secondaryColor }))}
-            sampling={sampling}
-            setSampling={setSampling}
-            optional
-            onClear={() => setDraft((current) => ({ ...current, secondaryColor: null }))}
-            onAdd={() => setDraft((current) => ({ ...current, secondaryColor: suggestedSecondary }))}
-          />
-        </div>
-        <p className="color-help" aria-live="polite">{sampling ? `Click anywhere on the garment to sample the ${sampling} color.` : sampleStatus || "Primary colors come from the image. A secondary is suggested only when a distinct color has meaningful coverage."}</p>
-      </fieldset>
-
-      <div className="field details-field">
-        <span>Details</span>
-        <TagEditor tags={draft.tags} onChange={(tags) => setDraft((current) => ({ ...current, tags }))} />
+  return (
+    <div className="viewer-toast" role="alert" aria-live="assertive">
+      <WarningCircle size={21} weight="fill" aria-hidden="true" />
+      <div>
+        <strong>{toast.title}</strong>
+        <p>{toast.message}</p>
       </div>
+      <button type="button" onClick={onDismiss} aria-label={tr("Dismiss notification")}>
+        <X size={16} aria-hidden="true" />
+      </button>
     </div>
+  );
+}
+
+function ItemEditor({
+  draft,
+  setDraft,
+  onEditColors,
+  currency,
+  colorPreview,
+}) {
+  const currencyOption = CURRENCY_OPTIONS.find((option) => option.id === currency) || CURRENCY_OPTIONS[0];
+  const purchaseSummary = [
+    formatMonthYear(draft.purchaseMonth),
+    draft.purchasePrice !== "" ? `${currencyOption.symbol}${draft.purchasePrice}` : "",
+  ].filter(Boolean).join(" · ") || tr("Date and price");
+  const detailsCount = [
+    ...draft.tags,
+    ...draft.sizes,
+    ...draft.fits,
+    ...draft.materials,
+    ...draft.seasons,
+  ].length;
+
+  return (
+    <div className="item-editor item-editor--sections">
+      <GarmentEditorSection
+        title={tr("Colors")}
+        summary={(
+          <span className="garment-section-swatches" aria-label={tr("Saved garment colors")}>
+            <i style={{ backgroundColor: draft.color }} />
+            {draft.secondaryColor && <i style={{ backgroundColor: draft.secondaryColor }} />}
+            <span>{tr("Saved colors and preview")}</span>
+          </span>
+        )}
+        defaultOpen
+      >
+        {colorPreview}
+        <fieldset className="color-field">
+          <legend className="sr-only">{tr("Saved colors")}</legend>
+          <CompactSavedColors
+            primaryColor={draft.color}
+            secondaryColor={draft.secondaryColor}
+            onEdit={onEditColors}
+          />
+        </fieldset>
+      </GarmentEditorSection>
+
+      <GarmentEditorSection title={tr("Purchase")} summary={purchaseSummary}>
+        <div className="garment-purchase-grid">
+          <label className="field">
+            <span>{tr("Purchase date")} <small>{tr("optional")}</small></span>
+            <MonthYearPicker
+              value={draft.purchaseMonth}
+              onChange={(purchaseMonth) => setDraft((current) => ({ ...current, purchaseMonth }))}
+              aria-label={tr("Purchase month and year")}
+            />
+          </label>
+          <fieldset className="field purchase-price-field">
+            <legend>{tr("Purchase price")} <small>{tr("optional")}</small></legend>
+            <div>
+              <input
+                type="number"
+                min="0"
+                max="1000000"
+                step="0.01"
+                inputMode="decimal"
+                value={draft.purchasePrice}
+                onChange={(event) => setDraft((current) => ({ ...current, purchasePrice: event.target.value }))}
+                aria-label={tr("Purchase price")}
+              />
+              <span className="purchase-price-currency" title={currencyOption.label}>{currencyOption.symbol}</span>
+            </div>
+          </fieldset>
+        </div>
+      </GarmentEditorSection>
+
+      <GarmentEditorSection title={tr("Details")} summary={detailsCount ? tr("{count} saved", { count: detailsCount }) : tr("Size, fit, materials and season")}>
+        <div className="garment-details-grid">
+          <div className="field details-field">
+            <span>{tr("Tags")}</span>
+            <TagEditor tags={draft.tags} onChange={(tags) => setDraft((current) => ({ ...current, tags }))} />
+          </div>
+          <div className="field item-facet-field">
+            <span>{tr("Garment sizes")} <small>{tr("optional")}</small></span>
+            <TagEditor
+              tags={draft.sizes}
+              onChange={(sizes) => setDraft((current) => ({ ...current, sizes }))}
+              placeholder="M, EU 40, W32…"
+              inputLabel={tr("Add garment size")}
+              addLabel={tr("Add garment size")}
+            />
+          </div>
+          <div className="field item-facet-field">
+            <span>{tr("Fit")} <small>{tr("optional")}</small></span>
+            <TagEditor
+              tags={draft.fits}
+              onChange={(fits) => setDraft((current) => ({ ...current, fits }))}
+              placeholder={tr("Regular, relaxed…")}
+              inputLabel={tr("Add garment fit")}
+              addLabel={tr("Add garment fit")}
+              suggestions={GARMENT_FIT_SUGGESTIONS}
+              suggestionListId="wardrobe-garment-fit-suggestions"
+            />
+          </div>
+          <div className="field item-facet-field">
+            <span>{tr("Materials")} <small>{tr("optional")}</small></span>
+            <TagEditor
+              tags={draft.materials}
+              onChange={(materials) => setDraft((current) => ({ ...current, materials }))}
+              placeholder={tr("Cotton, linen…")}
+              inputLabel={tr("Add garment material")}
+              addLabel={tr("Add garment material")}
+              suggestions={MATERIAL_SUGGESTIONS}
+              suggestionListId="wardrobe-material-suggestions"
+            />
+          </div>
+          <fieldset className="field item-season-field">
+            <legend>{tr("Season")} <small>{tr("optional")}</small></legend>
+            <div>
+              {SEASON_OPTIONS.map((season) => (
+                <label key={season.id}>
+                  <input
+                    type="checkbox"
+                    checked={draft.seasons.includes(season.id)}
+                    onChange={() => setDraft((current) => ({
+                      ...current,
+                      seasons: current.seasons.includes(season.id)
+                        ? current.seasons.filter((value) => value !== season.id)
+                        : [...current.seasons, season.id],
+                    }))}
+                  />
+                  <span>{tr(season.label)}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        </div>
+      </GarmentEditorSection>
+    </div>
+  );
+}
+
+function ColorVariationControls({
+  garment,
+  primaryColor,
+  secondaryColor,
+  channel,
+  onChannelChange,
+  targetColor,
+  onTargetChange,
+  busy,
+  error,
+}) {
+  const sourceColor = channel === "secondary" ? secondaryColor : primaryColor;
+  const alternateColor = channel === "secondary" ? primaryColor : secondaryColor;
+  const variations = useMemo(
+    () => garmentVariationColors(sourceColor, alternateColor, 5, garment),
+    [alternateColor, garment, sourceColor],
+  );
+  const customColor = normalizeHexColor(targetColor) || normalizeHexColor(sourceColor) || "#6b655d";
+
+  return (
+    <section className="color-variation" aria-label={tr("Local color preview")}>
+      <div className="color-variation__heading">
+        <div>
+          <strong>{tr("Color preview")}</strong>
+          <p>{tr("Local preview only—your saved garment stays unchanged.")}</p>
+        </div>
+        {busy && <span>{tr("Rendering…")}</span>}
+      </div>
+      {secondaryColor && (
+        <div className="color-variation__channels" role="group" aria-label={tr("Garment color to preview")}>
+          {[
+            { id: "primary", label: "Primary", color: primaryColor },
+            { id: "secondary", label: "Secondary", color: secondaryColor },
+          ].map((option) => (
+            <button
+              type="button"
+              className={channel === option.id ? "active" : ""}
+              onClick={() => {
+                onChannelChange(option.id);
+                onTargetChange(null);
+              }}
+              aria-pressed={channel === option.id}
+              key={option.id}
+            >
+              <i style={{ backgroundColor: option.color }} aria-hidden="true" />
+              {tr(option.label)}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="color-variation__swatches">
+        <button
+          className={!targetColor ? "active original" : "original"}
+          type="button"
+          onClick={() => onTargetChange(null)}
+          aria-pressed={!targetColor}
+          aria-label={tr("Show original garment color")}
+          title={tr("Original")}
+        >
+          <i style={{ backgroundColor: sourceColor }} aria-hidden="true" />
+        </button>
+        {variations.map((variation) => (
+          <button
+            className={normalizeHexColor(targetColor) === variation.color ? "active" : ""}
+            type="button"
+            onClick={() => onTargetChange(variation.color)}
+            aria-pressed={normalizeHexColor(targetColor) === variation.color}
+            aria-label={tr("Preview {color}", { color: tr(variation.label) })}
+            title={tr(variation.label)}
+            key={variation.color}
+          >
+            <i style={{ backgroundColor: variation.color }} aria-hidden="true" />
+          </button>
+        ))}
+        <label className={targetColor && !variations.some((variation) => variation.color === normalizeHexColor(targetColor)) ? "active" : ""} title={tr("Choose another preview color")}>
+          <input
+            type="color"
+            value={customColor}
+            onChange={(event) => onTargetChange(event.target.value)}
+            aria-label={tr("Choose a custom preview color")}
+          />
+          <span>+</span>
+        </label>
+      </div>
+      {error && <p className="color-variation__error" role="alert">{error}</p>}
+    </section>
   );
 }
 
@@ -652,7 +1123,17 @@ function ItemViewer({
 }) {
   const deleteLookButtonRef = useRef(null);
   const deleteCancelButtonRef = useRef(null);
-  const imageRef = useRef(null);
+  const deleteGarmentButtonRef = useRef(null);
+  const deleteGarmentCancelButtonRef = useRef(null);
+  const sourcePhotoButtonRef = useRef(null);
+  const sourcePhotoCloseButtonRef = useRef(null);
+  const sourcePhotoViewportRef = useRef(null);
+  const sourcePhotoImageRef = useRef(null);
+  const garmentArtworkButtonRef = useRef(null);
+  const modeledPhotoButtonRef = useRef(null);
+  const mediaPreviewCloseButtonRef = useRef(null);
+  const colorEditorCloseButtonRef = useRef(null);
+  const nameInputRef = useRef(null);
   const samplingCanvasRef = useRef(null);
   const shakeTimerRef = useRef(null);
   const activeItemIdRef = useRef(item.id);
@@ -663,24 +1144,74 @@ function ItemViewer({
   const [draft, setDraft] = useState(() => editableItem(item));
   const [shaking, setShaking] = useState(false);
   const [closeBlocked, setCloseBlocked] = useState(false);
-  const [showOriginal, setShowOriginal] = useState(false);
+  const [sourcePhotoOpen, setSourcePhotoOpen] = useState(false);
+  const [mediaPreviewOpen, setMediaPreviewOpen] = useState(null);
+  const [sourceCropVisible, setSourceCropVisible] = useState(false);
+  const [sourceImageFrame, setSourceImageFrame] = useState(null);
+  const [colorEditorOpen, setColorEditorOpen] = useState(false);
+  const [sourcePhotoIndex, setSourcePhotoIndex] = useState(0);
   const [generatingModeledFor, setGeneratingModeledFor] = useState(null);
   const [deletingModeled, setDeletingModeled] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState(null);
-  const [generationError, setGenerationError] = useState("");
-  const type = TYPE_MAP[item.part]?.singular || "Wardrobe item";
+  const [garmentDeleteOpen, setGarmentDeleteOpen] = useState(false);
+  const [deletingGarment, setDeletingGarment] = useState(false);
+  const [nameEditing, setNameEditing] = useState(false);
+  const [viewerToast, setViewerToast] = useState(null);
+  const [variationChannel, setVariationChannel] = useState("primary");
+  const [variationColor, setVariationColor] = useState(null);
+  const [variationRendering, setVariationRendering] = useState(false);
+  const [variationError, setVariationError] = useState("");
+  const type = tr(TYPE_MAP[item.part]?.singular || "Wardrobe item");
   const modeledLooks = useMemo(() => itemModeledLooks(item), [item]);
+  const sourcePhotos = useMemo(() => itemSourcePhotos(item), [item]);
   const [modeledIndex, setModeledIndex] = useState(Math.max(0, modeledLooks.length - 1));
   const activeModeledIndex = modeledLooks.length ? Math.min(modeledIndex, modeledLooks.length - 1) : 0;
   const activeModeledLook = modeledLooks[activeModeledIndex] || null;
   const generatingModeled = generatingModeledFor === item.id;
   const hasModeledImage = Boolean(activeModeledLook);
-  const hasOriginalImage = Boolean(item.originalImage);
+  const activeSourcePhoto = sourcePhotos[Math.min(sourcePhotoIndex, Math.max(0, sourcePhotos.length - 1))] || null;
+  const activeSourceCrop = activeSourcePhoto?.boundingBox || item.boundingBox || null;
+  const hasOriginalImage = Boolean(activeSourcePhoto);
   const hasHeroImage = hasModeledImage || hasOriginalImage;
   const pieceRotation = useMemo(() => {
     const hash = [...item.id].reduce((total, character) => total + character.charCodeAt(0), 0);
     return `${(hash % 9) - 4}deg`;
   }, [item.id]);
+
+  const measureSourcePhoto = useCallback(() => {
+    const viewport = sourcePhotoViewportRef.current;
+    const image = sourcePhotoImageRef.current;
+    if (!viewport || !image?.naturalWidth || !image?.naturalHeight) {
+      setSourceImageFrame(null);
+      return;
+    }
+    const availableWidth = viewport.clientWidth;
+    const availableHeight = viewport.clientHeight;
+    const scale = Math.min(
+      availableWidth / image.naturalWidth,
+      availableHeight / image.naturalHeight,
+    );
+    const width = image.naturalWidth * scale;
+    const height = image.naturalHeight * scale;
+    setSourceImageFrame({
+      left: (availableWidth - width) / 2,
+      top: (availableHeight - height) / 2,
+      width,
+      height,
+    });
+  }, []);
+
+  const sourceCropStyle = useMemo(() => {
+    if (!sourceCropVisible || !sourceImageFrame || !activeSourceCrop) return null;
+    const number = (key) => Number(activeSourceCrop[key]);
+    if (!["x", "y", "width", "height"].every((key) => Number.isFinite(number(key)))) return null;
+    return {
+      left: sourceImageFrame.left + ((number("x") / 1000) * sourceImageFrame.width),
+      top: sourceImageFrame.top + ((number("y") / 1000) * sourceImageFrame.height),
+      width: (number("width") / 1000) * sourceImageFrame.width,
+      height: (number("height") / 1000) * sourceImageFrame.height,
+    };
+  }, [activeSourceCrop, sourceCropVisible, sourceImageFrame]);
 
   const isDirty = useMemo(() => {
     const normalizedTags = (tags) => tags.map((tag) => tag.trim()).filter(Boolean);
@@ -695,6 +1226,10 @@ function ItemViewer({
       purchaseMonth: normalizePurchaseMonth(draft.purchaseMonth),
       purchasePrice: draftPrice,
       tags: normalizedTags(draft.tags),
+      sizes: normalizedTags(draft.sizes),
+      fits: normalizedTags(draft.fits),
+      materials: normalizedTags(draft.materials),
+      seasons: normalizedTags(draft.seasons),
     }) !== JSON.stringify({
       name: (item.name || "").trim(),
       part: item.part,
@@ -704,11 +1239,21 @@ function ItemViewer({
       purchaseMonth: normalizePurchaseMonth(item.purchaseMonth),
       purchasePrice: itemPrice,
       tags: normalizedTags(item.tags || []),
+      sizes: normalizedTags(item.sizes || []),
+      fits: normalizedTags(item.fits || []),
+      materials: normalizedTags(item.materials || []),
+      seasons: normalizedTags(item.seasons || []),
     });
   }, [draft, item]);
 
-  const nudgeUnsaved = useCallback(() => {
+  const nudgeUnsaved = useCallback((showToast = true) => {
     setCloseBlocked(true);
+    if (showToast) {
+      setViewerToast({
+        title: tr("Unsaved changes"),
+        message: tr("Save or cancel changes before leaving this item."),
+      });
+    }
     setShaking(false);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => setShaking(true));
@@ -725,11 +1270,29 @@ function ItemViewer({
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === "Escape") {
-        if (deleteCandidate) {
+        if (colorEditorOpen) {
+          setColorEditorOpen(false);
+          setSampling(null);
+        } else if (garmentDeleteOpen) {
+          if (!deletingGarment) {
+            setGarmentDeleteOpen(false);
+            requestAnimationFrame(() => deleteGarmentButtonRef.current?.focus({ preventScroll: true }));
+          }
+        } else if (deleteCandidate) {
           if (!deletingModeled) {
             setDeleteCandidate(null);
             requestAnimationFrame(() => deleteLookButtonRef.current?.focus({ preventScroll: true }));
           }
+        } else if (mediaPreviewOpen) {
+          setMediaPreviewOpen(null);
+          requestAnimationFrame(() => (
+            mediaPreviewOpen === "modeled"
+              ? modeledPhotoButtonRef.current
+              : garmentArtworkButtonRef.current
+          )?.focus({ preventScroll: true }));
+        } else if (sourcePhotoOpen) {
+          setSourcePhotoOpen(false);
+          requestAnimationFrame(() => sourcePhotoButtonRef.current?.focus({ preventScroll: true }));
         } else if (sampling) setSampling(null);
         else requestClose();
       }
@@ -740,11 +1303,38 @@ function ItemViewer({
       document.removeEventListener("keydown", onKeyDown);
       clearTimeout(shakeTimerRef.current);
     };
-  }, [deleteCandidate, deletingModeled, requestClose, sampling]);
+  }, [colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, mediaPreviewOpen, requestClose, sampling, sourcePhotoOpen]);
 
   useEffect(() => {
     if (deleteCandidate) deleteCancelButtonRef.current?.focus({ preventScroll: true });
   }, [deleteCandidate]);
+
+  useEffect(() => {
+    if (garmentDeleteOpen) deleteGarmentCancelButtonRef.current?.focus({ preventScroll: true });
+  }, [garmentDeleteOpen]);
+
+  useEffect(() => {
+    if (sourcePhotoOpen) sourcePhotoCloseButtonRef.current?.focus({ preventScroll: true });
+  }, [sourcePhotoOpen]);
+
+  useEffect(() => {
+    if (mediaPreviewOpen) mediaPreviewCloseButtonRef.current?.focus({ preventScroll: true });
+  }, [mediaPreviewOpen]);
+
+  useEffect(() => {
+    if (colorEditorOpen) colorEditorCloseButtonRef.current?.focus({ preventScroll: true });
+  }, [colorEditorOpen]);
+
+  useEffect(() => {
+    if (!sourcePhotoOpen && !colorEditorOpen && !mediaPreviewOpen) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [colorEditorOpen, mediaPreviewOpen, sourcePhotoOpen]);
 
   useEffect(() => {
     if (!isDirty) setCloseBlocked(false);
@@ -752,8 +1342,24 @@ function ItemViewer({
   }, [isDirty, onDirtyChange]);
 
   useEffect(() => {
-    if (blockedSwitchSignal) nudgeUnsaved();
+    if (sampling && variationColor) setVariationColor(null);
+  }, [sampling, variationColor]);
+
+  useEffect(() => {
+    if (blockedSwitchSignal) nudgeUnsaved(true);
   }, [blockedSwitchSignal, nudgeUnsaved]);
+
+  useEffect(() => {
+    if (!nameEditing) return;
+    nameInputRef.current?.focus({ preventScroll: true });
+    nameInputRef.current?.select();
+  }, [nameEditing]);
+
+  useEffect(() => {
+    if (!viewerToast) return undefined;
+    const timeout = setTimeout(() => setViewerToast(null), 9000);
+    return () => clearTimeout(timeout);
+  }, [viewerToast]);
 
   useLayoutEffect(() => {
     setSampling(null);
@@ -761,21 +1367,49 @@ function ItemViewer({
     setSampleStatus("");
     setPalette(item.palette || []);
     setDraft(editableItem(item));
-    setShowOriginal(false);
+    setSourcePhotoOpen(false);
+    setMediaPreviewOpen(null);
+    setSourceCropVisible(false);
+    setSourceImageFrame(null);
+    setColorEditorOpen(false);
+    setSourcePhotoIndex(0);
     setModeledIndex(Math.max(0, itemModeledLooks(item).length - 1));
     setDeleteCandidate(null);
+    setGarmentDeleteOpen(false);
+    setDeletingGarment(false);
     setCloseBlocked(false);
-    setGenerationError("");
+    setNameEditing(false);
+    setViewerToast(null);
+    setVariationChannel("primary");
+    setVariationColor(null);
+    setVariationRendering(false);
+    setVariationError("");
   }, [item]);
 
+  useLayoutEffect(() => {
+    if (!sourcePhotoOpen) return undefined;
+    const viewport = sourcePhotoViewportRef.current;
+    const frame = requestAnimationFrame(measureSourcePhoto);
+    const observer = typeof ResizeObserver === "function" && viewport
+      ? new ResizeObserver(measureSourcePhoto)
+      : null;
+    observer?.observe(viewport);
+    window.addEventListener("resize", measureSourcePhoto);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", measureSourcePhoto);
+    };
+  }, [activeSourcePhoto?.id, measureSourcePhoto, sourcePhotoOpen]);
+
   useEffect(() => {
-    preloadImage(item.originalPreview || item.originalImage);
+    sourcePhotos.slice(0, 4).forEach((photo) => preloadImage(photo.preview || photo.image));
     if (modeledLooks.length < 2) return;
     const previous = (activeModeledIndex - 1 + modeledLooks.length) % modeledLooks.length;
     const next = (activeModeledIndex + 1) % modeledLooks.length;
     preloadImage(modeledLookSource(modeledLooks[previous]));
     preloadImage(modeledLookSource(modeledLooks[next]));
-  }, [activeModeledIndex, item.originalImage, item.originalPreview, modeledLooks]);
+  }, [activeModeledIndex, modeledLooks, sourcePhotos]);
 
   const cancelEditing = () => {
     setDraft(editableItem(item));
@@ -794,46 +1428,56 @@ function ItemViewer({
       purchaseMonth: normalizePurchaseMonth(draft.purchaseMonth),
       purchasePrice,
       tags: draft.tags.map((tag) => tag.trim()).filter(Boolean),
+      sizes: draft.sizes.map((value) => value.trim()).filter(Boolean),
+      fits: draft.fits.map((value) => value.trim()).filter(Boolean),
+      materials: draft.materials.map((value) => value.trim()).filter(Boolean),
+      seasons: normalizeGarmentSeasons(draft.seasons),
     });
     setSampling(null);
-    setSampleStatus("Changes saved.");
+    setSampleStatus(tr("Changes saved."));
   };
 
-  const handleImageLoad = (event) => {
-    samplingCanvasRef.current = buildSamplingCanvas(event.currentTarget);
-    const extracted = extractPalette(event.currentTarget);
+  const handleGarmentSourceReady = useCallback((source) => {
+    samplingCanvasRef.current = buildSamplingCanvas(source);
+    const extracted = extractPalette(source);
     setPalette([...new Set([...(item.palette || []), ...extracted])].slice(0, 5));
-  };
+  }, [item.palette]);
 
   const handleImageClick = (event) => {
     if (!sampling || !samplingCanvasRef.current) return;
     const color = sampleImageColor(event.currentTarget, samplingCanvasRef.current, event);
     if (!color) {
-      setSampleStatus("That spot is transparent—try directly on the garment.");
+      setSampleStatus(tr("That spot is transparent—try directly on the garment."));
       return;
     }
     const targetField = sampling === "secondary" ? "secondaryColor" : "color";
     setDraft((current) => ({ ...current, [targetField]: color }));
     setPalette((current) => [color, ...current.filter((existing) => existing.toLowerCase() !== color.toLowerCase())].slice(0, 5));
-    setSampleStatus(`Sampled ${color} as the ${sampling} color.`);
+    setSampleStatus(tr("Sampled {color} as the {channel} color.", { color, channel: tr(sampling) }));
     setSampling(null);
   };
 
   const generateModeledLook = async () => {
     if (deletingModeled) return;
     if (isDirty) {
-      setGenerationError("Save your item changes before generating the modeled look.");
-      nudgeUnsaved();
+      setViewerToast({
+        title: tr("Save this garment first"),
+        message: tr("Save your changes before creating a new style look."),
+      });
+      nudgeUnsaved(false);
       return;
     }
     const targetItemId = item.id;
     setGeneratingModeledFor(targetItemId);
-    setGenerationError("");
+    setViewerToast(null);
     try {
       await onGenerateModeled(targetItemId);
     } catch (requestError) {
       if (activeItemIdRef.current === targetItemId) {
-        setGenerationError(readableError(requestError));
+        setViewerToast({
+          title: tr("Could not create the style look"),
+          message: readableError(requestError),
+        });
       }
     } finally {
       setGeneratingModeledFor((current) => current === targetItemId ? null : current);
@@ -842,7 +1486,6 @@ function ItemViewer({
 
   const rotateModeledLook = (direction) => {
     if (modeledLooks.length < 2) return;
-    setShowOriginal(false);
     setModeledIndex((current) => {
       const safeCurrent = Math.min(current, modeledLooks.length - 1);
       return (safeCurrent + direction + modeledLooks.length) % modeledLooks.length;
@@ -852,8 +1495,11 @@ function ItemViewer({
   const requestDeleteModeledLook = () => {
     if (!activeModeledLook || deletingModeled || generatingModeled) return;
     if (isDirty) {
-      setGenerationError("Save your item changes before deleting a modeled look.");
-      nudgeUnsaved();
+      setViewerToast({
+        title: tr("Save this garment first"),
+        message: tr("Save your changes before deleting a style look."),
+      });
+      nudgeUnsaved(false);
       return;
     }
     setDeleteCandidate({
@@ -887,17 +1533,125 @@ function ItemViewer({
   const deleteModeledLook = async () => {
     if (!deleteCandidate || deletingModeled) return;
     setDeletingModeled(true);
-    setGenerationError("");
+    setViewerToast(null);
     try {
       await onDeleteModeled(item.id, deleteCandidate.look.id);
       setModeledIndex(Math.max(0, deleteCandidate.index - (deleteCandidate.index === deleteCandidate.total - 1 ? 1 : 0)));
-      setShowOriginal(false);
       setDeleteCandidate(null);
     } catch (requestError) {
-      setGenerationError(readableError(requestError));
+      setViewerToast({
+        title: tr("Could not delete the style look"),
+        message: readableError(requestError),
+      });
       setDeleteCandidate(null);
     } finally {
       setDeletingModeled(false);
+    }
+  };
+
+  const requestDeleteGarment = () => {
+    if (deletingGarment || deletingModeled || generatingModeled) return;
+    setGarmentDeleteOpen(true);
+    setViewerToast(null);
+  };
+
+  const closeGarmentDeleteConfirmation = () => {
+    if (deletingGarment) return;
+    setGarmentDeleteOpen(false);
+    requestAnimationFrame(() => deleteGarmentButtonRef.current?.focus({ preventScroll: true }));
+  };
+
+  const deleteGarment = async () => {
+    if (!garmentDeleteOpen || deletingGarment) return;
+    setDeletingGarment(true);
+    setViewerToast(null);
+    try {
+      await onDelete(item.id);
+    } catch (requestError) {
+      setGarmentDeleteOpen(false);
+      setViewerToast({
+        title: tr("Could not delete the garment"),
+        message: readableError(requestError),
+      });
+      setDeletingGarment(false);
+    }
+  };
+
+  const closeSourcePhoto = () => {
+    setSourcePhotoOpen(false);
+    setSourceCropVisible(false);
+    setSourceImageFrame(null);
+    requestAnimationFrame(() => sourcePhotoButtonRef.current?.focus({ preventScroll: true }));
+  };
+
+  const moveSourcePhoto = (direction) => {
+    if (sourcePhotos.length < 2) return;
+    setSourcePhotoIndex((current) => (
+      (current + direction + sourcePhotos.length) % sourcePhotos.length
+    ));
+    setSourceImageFrame(null);
+  };
+
+  const openMediaPreview = (kind) => {
+    if (kind === "modeled" && !activeModeledLook) return;
+    setMediaPreviewOpen(kind);
+  };
+
+  const closeMediaPreview = () => {
+    const trigger = mediaPreviewOpen === "modeled"
+      ? modeledPhotoButtonRef.current
+      : garmentArtworkButtonRef.current;
+    setMediaPreviewOpen(null);
+    requestAnimationFrame(() => trigger?.focus({ preventScroll: true }));
+  };
+
+  const keepMediaPreviewFocus = (event) => {
+    if (mediaPreviewOpen === "modeled" && modeledLooks.length > 1 && event.key === "ArrowLeft") {
+      event.preventDefault();
+      rotateModeledLook(-1);
+      return;
+    }
+    if (mediaPreviewOpen === "modeled" && modeledLooks.length > 1 && event.key === "ArrowRight") {
+      event.preventDefault();
+      rotateModeledLook(1);
+      return;
+    }
+    keepDeleteDialogFocus(event);
+  };
+
+  const closeColorEditor = () => {
+    setColorEditorOpen(false);
+    setSampling(null);
+  };
+
+  const openColorEditor = () => {
+    setSampleStatus("");
+    setVariationColor(null);
+    setColorEditorOpen(true);
+  };
+
+  const keepSourcePhotoFocus = (event) => {
+    if (sourcePhotoOpen && sourcePhotos.length > 1 && event.key === "ArrowLeft") {
+      event.preventDefault();
+      moveSourcePhoto(-1);
+      return;
+    }
+    if (sourcePhotoOpen && sourcePhotos.length > 1 && event.key === "ArrowRight") {
+      event.preventDefault();
+      moveSourcePhoto(1);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const buttons = [...event.currentTarget.querySelectorAll("button:not(:disabled)")];
+    if (!buttons.length) return;
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
     }
   };
 
@@ -905,156 +1659,520 @@ function ItemViewer({
     <div
       className={`viewer-art${hasHeroImage ? " viewer-art-floating" : ""}${sampling ? " sampling" : ""}`}
       style={hasHeroImage ? { "--piece-rotation": pieceRotation } : undefined}
+      ref={garmentArtworkButtonRef}
+      role={!sampling ? "button" : undefined}
+      tabIndex={!sampling ? 0 : -1}
+      aria-label={!sampling ? tr("Open enlarged garment image") : undefined}
+      onKeyDown={(event) => {
+        if (!sampling && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          openMediaPreview("garment");
+        }
+      }}
     >
-      <OptimizedImage
-        ref={imageRef}
+      <GarmentColorPreview
         src={item.imagePreview || item.image}
-        alt={`Selected ${type.toLowerCase()}`}
-        sizes="(max-width: 520px) 40vw, 300px"
-        breakpoints={[160, 240, 320, 480, 640]}
-        priority
-        reveal
-        onLoad={handleImageLoad}
-        onClick={handleImageClick}
+        alt={tr("Selected {type}", { type: type.toLocaleLowerCase(getLocale()) })}
+        sourceColor={variationChannel === "secondary" ? draft.secondaryColor : draft.color}
+        alternateColor={variationChannel === "secondary" ? draft.color : draft.secondaryColor}
+        targetColor={variationColor}
+        context={{
+          name: draft.name || type,
+          part: draft.part || item.part,
+          tags: draft.tags || item.tags,
+          materials: draft.materials || item.materials,
+          channel: variationChannel,
+        }}
+        onSourceReady={handleGarmentSourceReady}
+        onRenderingChange={setVariationRendering}
+        onError={setVariationError}
+        onClick={(event) => {
+          if (sampling) handleImageClick(event);
+          else openMediaPreview("garment");
+        }}
       />
-      {sampling && <span className="sample-hint">Click garment to sample</span>}
+      {sampling && <span className="sample-hint">{tr("Click garment to sample")}</span>}
     </div>
   );
 
+  const garmentIdentityHeader = (
+    <div className={`viewer-heading${hasHeroImage ? " modeled-heading" : ""}`}>
+      <div className="viewer-identity">
+        {nameEditing ? (
+          <input
+            ref={nameInputRef}
+            className="viewer-name-input"
+            value={draft.name}
+            maxLength="120"
+            onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+            onBlur={() => setNameEditing(false)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                setDraft((current) => ({ ...current, name: item.name || "" }));
+                setNameEditing(false);
+              }
+            }}
+            aria-label={tr("Garment name")}
+          />
+        ) : (
+          <button
+            className="viewer-name-button"
+            type="button"
+            onClick={() => setNameEditing(true)}
+            title={tr("Edit garment name")}
+          >
+            <span>{draft.name || tr(TYPE_MAP[draft.part]?.singular)}</span>
+            <PencilSimple size={14} aria-hidden="true" />
+          </button>
+        )}
+        <div className="viewer-identity__meta">
+          <label className="viewer-category">
+            <span className="sr-only">{tr("Category")}</span>
+          <LightSelect
+            value={draft.part}
+            onChange={(part) => setDraft((current) => ({ ...current, part }))}
+            options={TYPES.slice(1).map((category) => {
+              const CategoryIcon = category.icon;
+              return {
+                value: category.id,
+                label: tr(category.label),
+                icon: <CategoryIcon size={17} weight="regular" />,
+              };
+            })}
+            ariaLabel={tr("Garment category")}
+            className="viewer-category-select"
+          />
+          </label>
+          <CompactBrandPicker
+            value={draft.brand}
+            onChange={(brand) => setDraft((current) => ({ ...current, brand }))}
+          />
+          {hasOriginalImage && (
+            <span className="source-photo-control">
+              <button
+                ref={sourcePhotoButtonRef}
+                className="source-photo-trigger"
+                type="button"
+                onClick={() => setSourcePhotoOpen(true)}
+                aria-label={tr("View original photos and garment crops")}
+              >
+                <ImageSquare size={18} weight="regular" aria-hidden="true" />
+                {sourcePhotos.length > 1 && <span aria-hidden="true">{sourcePhotos.length}</span>}
+              </button>
+              <span role="tooltip">{tr("View the original photos and where this garment was found.")}</span>
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const modeledGenerationAction = item.id.startsWith("import-") ? (
+    <button
+      className={`modeled-generate-action${generatingModeled ? " is-busy" : ""}`}
+      type="button"
+      disabled={generatingModeled || deletingModeled}
+      onClick={generateModeledLook}
+      aria-label={tr(hasModeledImage ? "Create another style look" : "Create a style look")}
+      title={tr(hasModeledImage ? "Create another style look" : "Create a style look")}
+    >
+      {generatingModeled ? <SpinnerGap className="modeled-generate-action__spinner" size={17} /> : <Sparkle size={17} weight="fill" />}
+      <span>{tr(generatingModeled ? "Creating style look…" : hasModeledImage ? "Create another style look" : "Create a style look")}</span>
+    </button>
+  ) : null;
+
   return (
     <>
-    <div className="viewer-entry" aria-hidden={deleteCandidate ? "true" : undefined}>
-    <aside className={`viewer editing${hasHeroImage ? " has-hero-image" : ""}${shaking ? " shake" : ""}`} aria-label="Selected wardrobe item">
-      <button className="viewer-icon-close" type="button" onClick={requestClose} aria-label="Close viewer">
+    <div className="viewer-entry" aria-hidden={deleteCandidate || garmentDeleteOpen || sourcePhotoOpen || mediaPreviewOpen || colorEditorOpen ? "true" : undefined}>
+    <aside className={`viewer editing${hasHeroImage ? " has-hero-image" : ""}${shaking ? " shake" : ""}`} aria-label={tr("Selected wardrobe item")}>
+      <button className="viewer-icon-close" type="button" onClick={requestClose} aria-label={tr("Close viewer")}>
         <X size={24} weight="light" aria-hidden="true" />
       </button>
 
       {hasHeroImage ? (
         <>
-          <div className="viewer-heading modeled-heading">
-            <div>
-              <h2>{draft.name || TYPE_MAP[draft.part]?.singular}</h2>
-            </div>
-          </div>
+          {garmentIdentityHeader}
           <div className="modeled-hero">
-            {hasModeledImage && hasOriginalImage ? (
-              <button
-                className="modeled-hero-toggle"
-                type="button"
-                aria-pressed={showOriginal}
-                onClick={() => setShowOriginal((current) => !current)}
-              >
-                <OptimizedImage
-                  key={showOriginal ? "original" : activeModeledLook.id}
-                  className="modeled-hero-photo"
-                  src={showOriginal ? item.originalPreview || item.originalImage : modeledLookSource(activeModeledLook)}
-                  alt={showOriginal ? `Original photo containing ${draft.name || type}` : `${draft.name || type} modeled look ${activeModeledIndex + 1} of ${modeledLooks.length}`}
-                  style={showOriginal ? { objectPosition: originalPhotoPosition(item) } : undefined}
-                  sizes="(max-width: 860px) 100vw, 520px"
-                  breakpoints={[320, 480, 640, 800, 1040, 1280]}
-                  quality={82}
-                  priority
-                  reveal
-                />
-              </button>
-            ) : (
-              <OptimizedImage
-                key={hasModeledImage ? activeModeledLook.id : "original"}
-                className="modeled-hero-photo"
-                src={hasModeledImage ? modeledLookSource(activeModeledLook) : item.originalPreview || item.originalImage}
-                alt={hasModeledImage ? `${draft.name || type} modeled look ${activeModeledIndex + 1} of ${modeledLooks.length}` : `Original photo containing ${draft.name || type}`}
-                style={!hasModeledImage ? { objectPosition: originalPhotoPosition(item) } : undefined}
-                sizes="(max-width: 860px) 100vw, 520px"
-                breakpoints={[320, 480, 640, 800, 1040, 1280]}
-                quality={82}
-                priority
-                reveal
-              />
-            )}
-            {hasModeledImage && hasOriginalImage && (
-              <span className="modeled-toggle-hint">
-                {showOriginal ? "Click photo to see modeled look" : "Click photo to see original"}
-              </span>
-            )}
+            <OptimizedImage
+              key={hasModeledImage ? activeModeledLook.id : "original"}
+              ref={hasModeledImage ? modeledPhotoButtonRef : undefined}
+              className={`modeled-hero-photo${hasModeledImage ? " is-enlargeable" : ""}`}
+              src={hasModeledImage ? modeledLookSource(activeModeledLook) : item.originalPreview || item.originalImage}
+              alt={hasModeledImage ? tr("{name} modeled look {current} of {total}", { name: draft.name || type, current: activeModeledIndex + 1, total: modeledLooks.length }) : tr("Original photo containing {name}", { name: draft.name || type })}
+              style={!hasModeledImage ? { objectPosition: originalPhotoPosition(item) } : undefined}
+              role={hasModeledImage ? "button" : undefined}
+              tabIndex={hasModeledImage ? 0 : undefined}
+              aria-label={hasModeledImage ? tr("Open enlarged modeled look") : undefined}
+              onClick={hasModeledImage ? () => openMediaPreview("modeled") : undefined}
+              onKeyDown={hasModeledImage ? (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openMediaPreview("modeled");
+                }
+              } : undefined}
+              sizes="(max-width: 860px) 100vw, 520px"
+              breakpoints={[320, 480, 640, 800, 1040, 1280]}
+              quality={82}
+              priority
+              reveal
+            />
             {garmentArtwork}
-          </div>
-          {hasModeledImage && (
-            <div className={`modeled-look-toolbar${modeledLooks.length > 1 ? "" : " single"}`} aria-label="Modeled look controls">
-              {modeledLooks.length > 1 && (
-                <div className="modeled-look-pagination">
-                  <button type="button" onClick={() => rotateModeledLook(-1)} aria-label="Previous modeled look">
-                    <CaretLeft size={18} aria-hidden="true" />
-                  </button>
-                  <span aria-live="polite">{activeModeledIndex + 1} of {modeledLooks.length}</span>
-                  <button type="button" onClick={() => rotateModeledLook(1)} aria-label="Next modeled look">
-                    <CaretRight size={18} aria-hidden="true" />
-                  </button>
-                </div>
-              )}
+            {modeledGenerationAction}
+            {modeledLooks.length > 1 && (
+              <div className="modeled-look-pagination" aria-label={tr("Modeled look controls")}>
+                <button type="button" onClick={() => rotateModeledLook(-1)} aria-label={tr("Previous modeled look")}>
+                  <CaretLeft size={20} aria-hidden="true" />
+                </button>
+                <span aria-live="polite">{tr("{current} of {total}", { current: activeModeledIndex + 1, total: modeledLooks.length })}</span>
+                <button type="button" onClick={() => rotateModeledLook(1)} aria-label={tr("Next modeled look")}>
+                  <CaretRight size={20} aria-hidden="true" />
+                </button>
+              </div>
+            )}
+            {hasModeledImage && (
               <button
                 ref={deleteLookButtonRef}
                 className="modeled-look-delete"
                 type="button"
                 disabled={deletingModeled || generatingModeled}
                 onClick={requestDeleteModeledLook}
+                aria-label={tr(deletingModeled ? "Deleting…" : "Delete look")}
+                title={tr(deletingModeled ? "Deleting…" : "Delete look")}
               >
-                <Trash size={14} aria-hidden="true" />
-                {deletingModeled ? "Deleting…" : "Delete look"}
+                <Trash size={15} aria-hidden="true" />
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </>
       ) : (
         <>
-          <div className="viewer-heading">
-            <div>
-              <h2>{draft.name || TYPE_MAP[draft.part]?.singular}</h2>
-            </div>
+          {garmentIdentityHeader}
+          <div className="viewer-art-stage">
+            {garmentArtwork}
+            {modeledGenerationAction}
           </div>
-          {garmentArtwork}
         </>
       )}
 
       <div className="viewer-details editing">
-        {item.id.startsWith("import-") && (
-          <section className="modeled-request" aria-label="Modeled look">
-            <div>
-              <strong>{hasModeledImage ? "Create another styled look" : "See this piece styled on you"}</strong>
-              <p>{hasModeledImage ? "Adds a new image without replacing your existing looks." : "Generates and saves one AI image only when you request it."}</p>
-            </div>
-            <button className="modeled-request__button" type="button" disabled={generatingModeled || deletingModeled} onClick={generateModeledLook}>
-              {generatingModeled ? <SpinnerGap className="modeled-request__spinner" size={16} /> : <Sparkle size={16} weight="fill" />}
-              {generatingModeled ? "Generating look…" : hasModeledImage ? "Generate another" : "Generate modeled look"}
-            </button>
-            {generationError && <p className="modeled-request__error" role="alert">{generationError}</p>}
-          </section>
-        )}
-
         <ItemEditor
+          key={item.id}
           draft={draft}
           setDraft={setDraft}
-          palette={palette}
-          sampling={sampling}
-          setSampling={setSampling}
-          sampleStatus={sampleStatus}
+          onEditColors={openColorEditor}
           currency={currency}
+          colorPreview={(
+            <ColorVariationControls
+              garment={{
+                name: draft.name,
+                part: item.part,
+                tags: draft.tags,
+                materials: draft.materials,
+              }}
+              primaryColor={draft.color}
+              secondaryColor={draft.secondaryColor}
+              channel={variationChannel}
+              onChannelChange={setVariationChannel}
+              targetColor={variationColor}
+              onTargetChange={(color) => {
+                setSampling(null);
+                setVariationError("");
+                setVariationColor(color);
+              }}
+              busy={variationRendering}
+              error={variationError}
+            />
+          )}
         />
 
-        {closeBlocked && <p className="unsaved-notice" role="status">Save or cancel changes before leaving this item.</p>}
+        {closeBlocked && <p className="unsaved-notice" role="status">{tr("Save or cancel changes before leaving this item.")}</p>}
 
         <div className="viewer-actions">
-          <button className="delete-button" type="button" onClick={() => onDelete(item.id)}>
-            <Trash size={15} weight="regular" aria-hidden="true" /> Delete
+          <button
+            ref={deleteGarmentButtonRef}
+            className="delete-button"
+            type="button"
+            onClick={requestDeleteGarment}
+          >
+            <Trash size={15} weight="regular" aria-hidden="true" /> {tr("Delete")}
           </button>
           <span className="action-spacer" />
-          <button className="secondary-button" type="button" onClick={cancelEditing}>Cancel</button>
+          <button className="secondary-button" type="button" onClick={cancelEditing}>{tr("Cancel")}</button>
           <button className="primary-button" type="button" onClick={saveEditing}>
-            <Check size={15} weight="bold" aria-hidden="true" /> Save
+            <Check size={15} weight="bold" aria-hidden="true" /> {tr("Save")}
           </button>
         </div>
       </div>
     </aside>
     </div>
+    <ViewerToast toast={viewerToast} onDismiss={() => setViewerToast(null)} />
+    {colorEditorOpen && (
+      <GarmentColorStudio
+        name={draft.name || type}
+        image={item.imagePreview || item.image}
+        primaryColor={draft.color}
+        secondaryColor={draft.secondaryColor}
+        palette={[...new Set([draft.color, draft.secondaryColor, ...palette].filter(Boolean))].slice(0, 5)}
+        sampling={sampling}
+        setSampling={setSampling}
+        sampleStatus={sampleStatus}
+        onPrimaryChange={(color) => {
+          setDraft((current) => ({ ...current, color }));
+          setSampling(null);
+          setSampleStatus("");
+        }}
+        onSecondaryChange={(secondaryColor) => {
+          setDraft((current) => ({ ...current, secondaryColor }));
+          setSampling(null);
+          setSampleStatus("");
+        }}
+        onSecondaryClear={() => {
+          setDraft((current) => ({ ...current, secondaryColor: null }));
+          setSampling((current) => current === "secondary" ? null : current);
+          setSampleStatus("");
+        }}
+        onImageLoad={handleGarmentSourceReady}
+        onImageClick={handleImageClick}
+        onClose={closeColorEditor}
+        closeButtonRef={colorEditorCloseButtonRef}
+        onKeyDown={keepSourcePhotoFocus}
+      />
+    )}
+    {mediaPreviewOpen && (
+      <div
+        className="source-photo-overlay media-preview-overlay"
+        role="presentation"
+        onMouseDown={(event) => event.target === event.currentTarget && closeMediaPreview()}
+      >
+        <section
+          className="source-photo-dialog media-preview-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="media-preview-title"
+          onKeyDown={keepMediaPreviewFocus}
+        >
+          <header className="source-photo-dialog__header">
+            <div>
+              <p>{tr(mediaPreviewOpen === "modeled" ? "Modeled looks" : "Garment image")}</p>
+              <h2 id="media-preview-title">{draft.name || type}</h2>
+            </div>
+            <button
+              ref={mediaPreviewCloseButtonRef}
+              className="source-photo-dialog__close"
+              type="button"
+              onClick={closeMediaPreview}
+              aria-label={tr("Close enlarged image")}
+            >
+              <X size={23} weight="light" aria-hidden="true" />
+            </button>
+          </header>
+          <div className={`media-preview-dialog__body${mediaPreviewOpen === "modeled" && modeledLooks.length > 1 ? " has-carousel" : ""}`}>
+            <div className="media-preview-dialog__viewport">
+              {mediaPreviewOpen === "modeled" ? (
+                <OptimizedImage
+                  key={activeModeledLook.id}
+                  className="media-preview-dialog__image"
+                  src={modeledLookSource(activeModeledLook)}
+                  alt={tr("{name} modeled look {current} of {total}", { name: draft.name || type, current: activeModeledIndex + 1, total: modeledLooks.length })}
+                  sizes="(max-width: 700px) 100vw, 960px"
+                  breakpoints={[480, 640, 800, 1040, 1280, 1600]}
+                  quality={90}
+                  priority
+                  reveal
+                />
+              ) : (
+                <GarmentColorPreview
+                  className="media-preview-dialog__image"
+                  src={item.image || item.imagePreview}
+                  alt={tr("Enlarged garment image for {name}", { name: draft.name || type })}
+                  sourceColor={variationChannel === "secondary" ? draft.secondaryColor : draft.color}
+                  alternateColor={variationChannel === "secondary" ? draft.color : draft.secondaryColor}
+                  targetColor={variationColor}
+                  context={{
+                    name: draft.name || type,
+                    part: draft.part || item.part,
+                    tags: draft.tags || item.tags,
+                    materials: draft.materials || item.materials,
+                    channel: variationChannel,
+                  }}
+                  onError={setVariationError}
+                />
+              )}
+              {mediaPreviewOpen === "modeled" && modeledLooks.length > 1 && (
+                <>
+                  <button
+                    className="source-photo-dialog__nav is-previous"
+                    type="button"
+                    onClick={() => rotateModeledLook(-1)}
+                    aria-label={tr("Previous modeled look")}
+                  >
+                    <CaretLeft size={24} aria-hidden="true" />
+                  </button>
+                  <button
+                    className="source-photo-dialog__nav is-next"
+                    type="button"
+                    onClick={() => rotateModeledLook(1)}
+                    aria-label={tr("Next modeled look")}
+                  >
+                    <CaretRight size={24} aria-hidden="true" />
+                  </button>
+                  <span className="source-photo-dialog__counter" aria-live="polite">
+                    {tr("{current} of {total}", { current: activeModeledIndex + 1, total: modeledLooks.length })}
+                  </span>
+                </>
+              )}
+            </div>
+            {mediaPreviewOpen === "modeled" && modeledLooks.length > 1 && (
+              <aside className="media-preview-dialog__gallery" aria-label={tr("Modeled look gallery")}>
+                {modeledLooks.map((look, index) => (
+                  <button
+                    type="button"
+                    className={index === activeModeledIndex ? "active" : ""}
+                    onClick={() => setModeledIndex(index)}
+                    aria-label={tr("View modeled look {number}", { number: index + 1 })}
+                    aria-pressed={index === activeModeledIndex}
+                    key={look.id}
+                  >
+                    <OptimizedImage
+                      src={modeledLookSource(look)}
+                      alt=""
+                      sizes="80px"
+                      breakpoints={[80, 120, 180]}
+                      quality={72}
+                      reveal
+                    />
+                    <span>{index + 1}</span>
+                  </button>
+                ))}
+              </aside>
+            )}
+          </div>
+        </section>
+      </div>
+    )}
+    {sourcePhotoOpen && hasOriginalImage && (
+      <div
+        className="source-photo-overlay"
+        role="presentation"
+        onMouseDown={(event) => event.target === event.currentTarget && closeSourcePhoto()}
+      >
+        <section
+          className="source-photo-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="source-photo-title"
+          onKeyDown={keepSourcePhotoFocus}
+        >
+          <header className="source-photo-dialog__header">
+            <div>
+              <p>{tr("Original photo")}</p>
+              <h2 id="source-photo-title">{draft.name || type}</h2>
+            </div>
+            <div className="source-photo-dialog__header-actions">
+              {activeSourceCrop && (
+                <button
+                  className="source-photo-dialog__crop-toggle"
+                  type="button"
+                  aria-pressed={sourceCropVisible}
+                  onClick={() => setSourceCropVisible((visible) => !visible)}
+                >
+                  <Crop size={16} aria-hidden="true" />
+                  <span>{tr(sourceCropVisible ? "Hide crop" : "Show crop")}</span>
+                </button>
+              )}
+              <button
+                ref={sourcePhotoCloseButtonRef}
+                className="source-photo-dialog__close"
+                type="button"
+                onClick={closeSourcePhoto}
+                aria-label={tr("Close original photo")}
+              >
+                <X size={23} weight="light" aria-hidden="true" />
+              </button>
+            </div>
+          </header>
+          <div className={`source-photo-dialog__body${sourcePhotos.length > 1 ? " has-gallery" : ""}`}>
+            <div className="source-photo-dialog__image">
+              <div className="source-photo-dialog__viewport" ref={sourcePhotoViewportRef}>
+                <OptimizedImage
+                  key={activeSourcePhoto.id}
+                  ref={sourcePhotoImageRef}
+                  className="source-photo-dialog__full-image"
+                  src={activeSourcePhoto.image}
+                  alt={tr("Original photo where {name} was found", { name: draft.name || type })}
+                  sizes="(max-width: 700px) 100vw, 900px"
+                  breakpoints={[480, 640, 800, 1040, 1280]}
+                  quality={88}
+                  priority
+                  reveal
+                  onLoad={measureSourcePhoto}
+                />
+                {sourceCropStyle && (
+                  <div
+                    className="source-photo-dialog__crop"
+                    style={sourceCropStyle}
+                    aria-label={tr("Garment crop")}
+                  >
+                    <span><Crop size={13} aria-hidden="true" /> {tr("Garment crop")}</span>
+                  </div>
+                )}
+                {sourcePhotos.length > 1 && (
+                  <>
+                    <button
+                      className="source-photo-dialog__nav is-previous"
+                      type="button"
+                      onClick={() => moveSourcePhoto(-1)}
+                      aria-label={tr("Previous source photo")}
+                    >
+                      <CaretLeft size={23} aria-hidden="true" />
+                    </button>
+                    <button
+                      className="source-photo-dialog__nav is-next"
+                      type="button"
+                      onClick={() => moveSourcePhoto(1)}
+                      aria-label={tr("Next source photo")}
+                    >
+                      <CaretRight size={23} aria-hidden="true" />
+                    </button>
+                    <span className="source-photo-dialog__counter" aria-live="polite">
+                      {tr("{current} of {total}", { current: sourcePhotoIndex + 1, total: sourcePhotos.length })}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+            {sourcePhotos.length > 1 && (
+              <aside className="source-photo-dialog__gallery" aria-label={tr("Photos where this garment appeared")}>
+                <div>
+                  {sourcePhotos.map((photo, index) => (
+                    <button
+                      type="button"
+                      key={photo.id}
+                      className={index === sourcePhotoIndex ? "active" : ""}
+                      onClick={() => setSourcePhotoIndex(index)}
+                      aria-label={tr("View source photo {number}", { number: index + 1 })}
+                      aria-pressed={index === sourcePhotoIndex}
+                    >
+                      <OptimizedImage
+                        src={photo.preview || photo.image}
+                        alt=""
+                        sizes="96px"
+                        breakpoints={[96, 160, 240]}
+                        quality={76}
+                        reveal
+                      />
+                      <span>{index + 1}</span>
+                    </button>
+                  ))}
+                </div>
+              </aside>
+            )}
+          </div>
+        </section>
+      </div>
+    )}
     {deleteCandidate && (
       <div
         className="look-delete-overlay"
@@ -1073,14 +2191,14 @@ function ItemViewer({
             type="button"
             onClick={closeDeleteConfirmation}
             disabled={deletingModeled}
-            aria-label="Cancel deleting this look"
+            aria-label={tr("Cancel deleting this look")}
           >
             <X size={22} weight="light" aria-hidden="true" />
           </button>
           <div className="look-delete-dialog__image">
             <OptimizedImage
               src={modeledLookSource(deleteCandidate.look)}
-              alt={`${draft.name || type} modeled look to delete`}
+              alt={tr("{name} modeled look to delete", { name: draft.name || type })}
               sizes="(max-width: 520px) calc(100vw - 64px), 400px"
               breakpoints={[320, 480, 640, 800]}
               quality={82}
@@ -1089,8 +2207,8 @@ function ItemViewer({
             />
           </div>
           <div className="look-delete-dialog__body">
-            <p className="look-delete-dialog__eyebrow">Delete look</p>
-            <h2 id="look-delete-title">Are you sure you want to delete this look?</h2>
+            <p className="look-delete-dialog__eyebrow">{tr("Delete look")}</p>
+            <h2 id="look-delete-title">{tr("Are you sure you want to delete this look?")}</h2>
           </div>
           <div className="look-delete-dialog__actions">
             <button
@@ -1100,11 +2218,66 @@ function ItemViewer({
               onClick={closeDeleteConfirmation}
               disabled={deletingModeled}
             >
-              Cancel
+              {tr("Cancel")}
             </button>
             <button className="look-delete-dialog__confirm" type="button" onClick={deleteModeledLook} disabled={deletingModeled}>
               <Trash size={15} aria-hidden="true" />
-              {deletingModeled ? "Deleting…" : "Delete look"}
+              {tr(deletingModeled ? "Deleting…" : "Delete look")}
+            </button>
+          </div>
+        </section>
+      </div>
+    )}
+    {garmentDeleteOpen && (
+      <div
+        className="look-delete-overlay"
+        role="presentation"
+        onMouseDown={(event) => event.target === event.currentTarget && closeGarmentDeleteConfirmation()}
+      >
+        <section
+          className="look-delete-dialog garment-delete-dialog"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="garment-delete-title"
+          onKeyDown={keepDeleteDialogFocus}
+        >
+          <button
+            className="look-delete-dialog__close"
+            type="button"
+            onClick={closeGarmentDeleteConfirmation}
+            disabled={deletingGarment}
+            aria-label={tr("Cancel deleting this garment")}
+          >
+            <X size={22} weight="light" aria-hidden="true" />
+          </button>
+          <div className="look-delete-dialog__image garment-delete-dialog__image">
+            <OptimizedImage
+              src={item.imagePreview || item.image}
+              alt={tr("{name} garment to delete", { name: draft.name || type })}
+              sizes="(max-width: 520px) calc(100vw - 64px), 400px"
+              breakpoints={[320, 480, 640, 800]}
+              quality={82}
+              priority
+              reveal
+            />
+          </div>
+          <div className="look-delete-dialog__body">
+            <p className="look-delete-dialog__eyebrow">{tr("Delete garment")}</p>
+            <h2 id="garment-delete-title">{tr("Are you sure you want to delete this garment?")}</h2>
+          </div>
+          <div className="look-delete-dialog__actions">
+            <button
+              ref={deleteGarmentCancelButtonRef}
+              className="secondary-button"
+              type="button"
+              onClick={closeGarmentDeleteConfirmation}
+              disabled={deletingGarment}
+            >
+              {tr("Cancel")}
+            </button>
+            <button className="look-delete-dialog__confirm" type="button" onClick={deleteGarment} disabled={deletingGarment}>
+              <Trash size={15} aria-hidden="true" />
+              {tr(deletingGarment ? "Deleting…" : "Delete garment")}
             </button>
           </div>
         </section>
@@ -1140,16 +2313,25 @@ function PasswordGate({ error: statusError, onAuthenticated }) {
   return (
     <main className="password-gate">
       <form onSubmit={submit}>
+        <label className="password-gate__language">
+          <span>{tr("Language")}</span>
+          <LightSelect
+            value={getLocale()}
+            onChange={setLocale}
+            options={LANGUAGE_OPTIONS.map((language) => ({ value: language.id, label: tr(language.label) }))}
+            ariaLabel={tr("Language")}
+          />
+        </label>
         <span className="password-gate__mark"><LockKey size={26} weight="light" aria-hidden="true" /></span>
-        <p>Private wardrobe</p>
-        <h1>Enter the shared password</h1>
+        <p>{tr("Private wardrobe")}</p>
+        <h1>{tr("Enter the shared password")}</h1>
         <label>
-          <span>Password</span>
+          <span>{tr("Password")}</span>
           <input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} autoFocus />
         </label>
         {error && <p className="password-gate__error" role="alert">{error}</p>}
-        <button type="submit" disabled={busy || !password}>{busy ? "Unlocking…" : "Open wardrobe"}</button>
-        <small>Access is shared with anyone who knows this password.</small>
+        <button type="submit" disabled={busy || !password}>{tr(busy ? "Unlocking…" : "Open wardrobe")}</button>
+        <small>{tr("Access is shared with anyone who knows this password.")}</small>
       </form>
     </main>
   );
@@ -1164,228 +2346,1466 @@ function ProfileAvatar({ user, size = "medium" }) {
   );
 }
 
+function InfoTooltip({ label, children, className = "" }) {
+  return (
+    <span className={`info-tooltip${className ? ` ${className}` : ""}`} tabIndex={0} aria-label={label}>
+      <Info size={15} aria-hidden="true" />
+      <span role="tooltip">{children}</span>
+    </span>
+  );
+}
+
 function ProfileMenu({ users, currentUser, onSelect, onAdd, onEdit, onExport, onLogout }) {
   const detailsRef = useRef(null);
   const closeMenu = () => { if (detailsRef.current) detailsRef.current.open = false; };
 
+  useEffect(() => {
+    const closeFromOutside = (event) => {
+      if (detailsRef.current?.open && !detailsRef.current.contains(event.target)) closeMenu();
+    };
+    const closeFromKeyboard = (event) => {
+      if (event.key === "Escape" && detailsRef.current?.open) {
+        closeMenu();
+        detailsRef.current.querySelector("summary")?.focus({ preventScroll: true });
+      }
+    };
+    document.addEventListener("pointerdown", closeFromOutside);
+    document.addEventListener("keydown", closeFromKeyboard);
+    return () => {
+      document.removeEventListener("pointerdown", closeFromOutside);
+      document.removeEventListener("keydown", closeFromKeyboard);
+    };
+  }, []);
+
   return (
     <details className="profile-menu" ref={detailsRef}>
-      <summary>
+      <summary aria-label={tr("Open profile menu")} title={currentUser?.name || tr("Profile")}>
         <ProfileAvatar user={currentUser} />
-        <span className="profile-menu__current">
-          <small>Wardrobe</small>
-          <strong>{currentUser?.name || "Choose user"}</strong>
-        </span>
-        <CaretDown size={14} aria-hidden="true" />
       </summary>
       <div className="profile-menu__popover">
-        <p className="profile-menu__label">Switch wardrobe</p>
-        <div className="profile-menu__users">
-          {users.map((user) => (
-            <button
-              className={user.id === currentUser?.id ? "is-current" : ""}
-              type="button"
-              key={user.id}
-              onClick={() => { onSelect(user.id); closeMenu(); }}
-            >
-              <ProfileAvatar user={user} />
-              <span><strong>{user.name}</strong><small>{user.fashionStyle || `${user.referenceImages?.length || 0} reference photo${user.referenceImages?.length === 1 ? "" : "s"}`}</small></span>
-              {user.id === currentUser?.id && <Check size={14} weight="bold" aria-hidden="true" />}
-            </button>
-          ))}
-        </div>
-        <div className="profile-menu__actions">
-          <button type="button" onClick={() => { onEdit(); closeMenu(); }}><PencilSimple size={14} /> Edit profile</button>
-          <button type="button" onClick={() => { onAdd(); closeMenu(); }}><Plus size={14} /> Add person</button>
-          <button className="profile-menu__export" type="button" onClick={() => { onExport(); closeMenu(); }} title="Includes every person's wardrobe and photos">
-            <DownloadSimple size={14} /> Download all data
+        <div className="profile-menu__identity">
+          <ProfileAvatar user={currentUser} />
+          <span><small>{tr("Current wardrobe")}</small><strong>{currentUser?.name || tr("Choose user")}</strong></span>
+          <button
+            className="profile-menu__edit"
+            type="button"
+            onClick={() => { onEdit(); closeMenu(); }}
+            aria-label={tr("Edit profile")}
+            title={tr("Edit profile")}
+          >
+            <PencilSimple size={15} aria-hidden="true" />
           </button>
-          {onLogout && <button className="profile-menu__logout" type="button" onClick={() => { onLogout(); closeMenu(); }}><LockKey size={14} /> Lock wardrobe</button>}
+        </div>
+        <div className="profile-menu__people-heading">
+          <span>{tr("People")}</span>
+          <button type="button" onClick={() => { onAdd(); closeMenu(); }}>
+            <Plus size={13} aria-hidden="true" />
+            {tr("Add person")}
+          </button>
+        </div>
+        {users.length > 1 && (
+          <div className="profile-menu__users">
+            {users.map((user) => (
+              <button
+                className={user.id === currentUser?.id ? "is-current" : ""}
+                type="button"
+                key={user.id}
+                onClick={() => { onSelect(user.id); closeMenu(); }}
+              >
+                <ProfileAvatar user={user} />
+                <span><strong>{user.name}</strong><small>{user.fashionStyle || tr(user.referenceImages?.length === 1 ? "{count} reference photo" : "{count} reference photos", { count: user.referenceImages?.length || 0 })}</small></span>
+                {user.id === currentUser?.id && <Check size={14} weight="bold" aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="profile-menu__actions">
+          <button className="profile-menu__export" type="button" onClick={() => { onExport(); closeMenu(); }} title={tr("Includes every person's wardrobe and photos")}>
+            <DownloadSimple size={14} /> {tr("Download data")}
+          </button>
+          {onLogout && <button className="profile-menu__logout" type="button" onClick={() => { onLogout(); closeMenu(); }}><LockKey size={14} /> {tr("Log out")}</button>}
         </div>
       </div>
     </details>
   );
 }
 
-function ProfileSizeEditor({ value, onChange }) {
+function ProfileSizeEditor({ value, notes, onChange, onNotesChange }) {
   const normalized = normalizeSizeProfile(value);
   const system = SIZE_SYSTEMS.find((candidate) => candidate.id === normalized.system) || SIZE_SYSTEMS[0];
   const update = (field, nextValue) => onChange({ ...normalized, [field]: nextValue });
 
   return (
-    <fieldset className="profile-size-editor profile-field-wide">
-      <legend>Sizes and fit</legend>
-      <p>Choose the sizing system printed on most of your clothes. You can still type any brand-specific size.</p>
+    <div className="profile-size-editor profile-field-wide">
       <div className="profile-size-controls">
         <label>
-          <span>Sizing system</span>
-          <select value={normalized.system} onChange={(event) => update("system", event.target.value)}>
-            {SIZE_SYSTEMS.map((candidate) => <option value={candidate.id} key={candidate.id}>{candidate.label}</option>)}
-          </select>
+          <span>{tr("Sizing system")}</span>
+          <LightSelect
+            value={normalized.system}
+            onChange={(systemId) => update("system", systemId)}
+            options={SIZE_SYSTEMS.map((candidate) => ({ value: candidate.id, label: tr(candidate.label) }))}
+            ariaLabel={tr("Sizing system")}
+          />
         </label>
         <label>
-          <span>Preferred fit</span>
-          <select value={normalized.fit} onChange={(event) => update("fit", event.target.value)}>
-            {FIT_OPTIONS.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}
-          </select>
+          <span>{tr("Preferred fit")}</span>
+          <LightSelect
+            value={normalized.fit}
+            onChange={(fit) => update("fit", fit)}
+            options={FIT_OPTIONS.map((option) => ({ value: option.id, label: tr(option.label) }))}
+            ariaLabel={tr("Preferred fit")}
+          />
         </label>
       </div>
       <div className="profile-size-grid">
         {SIZE_FIELDS.map((field) => {
-          const listId = `profile-${normalized.system}-${field.id}-sizes`;
           return (
             <div className="profile-size-field" key={field.id}>
-              <span>{field.label} <small>optional</small></span>
+              <span>{tr(field.label)} <small>{tr("optional")}</small></span>
               <TagEditor
                 tags={normalized[field.id]}
                 onChange={(sizes) => update(field.id, sizes)}
                 placeholder={system.examples[field.id]}
-                inputLabel={`Add ${field.label.toLowerCase()} size`}
-                addLabel={`Add ${field.label.toLowerCase()} size`}
+                inputLabel={tr("Add {category} size", { category: tr(field.label).toLocaleLowerCase(getLocale()) })}
+                addLabel={tr("Add {category} size", { category: tr(field.label).toLocaleLowerCase(getLocale()) })}
                 suggestions={system.suggestions[field.id]}
-                suggestionListId={listId}
+                emptyLabel={tr("No size selected yet.")}
               />
             </div>
           );
         })}
       </div>
-    </fieldset>
+      <label className="profile-size-notes">
+        <span>{tr("Additional sizing notes")} <small>{tr("optional")}</small></span>
+        <input
+          maxLength="240"
+          value={notes}
+          onChange={(event) => onNotesChange(event.target.value)}
+          placeholder={tr("This brand runs small; prefer extra room at the shoulders")}
+        />
+      </label>
+    </div>
   );
 }
 
-function ProfilePreferenceList({ label, help, values, onChange, placeholder }) {
+function ProfilePreferenceList({ label, help, values, onChange, placeholder, suggestions = [] }) {
   return (
     <fieldset className="profile-preference-list profile-field-wide">
-      <legend>{label} <small>optional</small></legend>
+      <legend>{label} <small>{tr("optional")}</small></legend>
       <p>{help}</p>
       <TagEditor
         tags={values}
         onChange={(nextValues) => onChange(normalizePreferenceList(nextValues))}
         placeholder={placeholder}
-        inputLabel={`Add ${label.toLowerCase()}`}
-        addLabel={`Add ${label.toLowerCase()}`}
+        inputLabel={tr("Add {label}", { label: label.toLocaleLowerCase(getLocale()) })}
+        addLabel={tr("Add {label}", { label: label.toLocaleLowerCase(getLocale()) })}
+        emptyLabel={tr("No {label} selected yet.", { label: label.toLocaleLowerCase(getLocale()) })}
+        suggestions={suggestions}
       />
     </fieldset>
   );
 }
 
+function ProfileWardrobeDisplayEditor({ value, onChange }) {
+  const display = normalizeWardrobeDisplayPreferences(value);
+  const update = (next) => onChange(normalizeWardrobeDisplayPreferences({ ...display, ...next }));
+  const toggleField = (field) => update({
+    detailFields: display.detailFields.includes(field)
+      ? display.detailFields.filter((existing) => existing !== field)
+      : [...display.detailFields, field],
+  });
+
+  return (
+    <>
+      <div className="profile-display-section">
+        <div className="profile-display-section__heading">
+          <strong>{tr("Default wardrobe view")}</strong>
+          <small>{tr("Choose a clean garment grid or show your selected product details.")}</small>
+        </div>
+        <div className="profile-display-modes" role="group" aria-label={tr("Default wardrobe view")}>
+          {WARDROBE_SHOWCASE_MODES.map((mode) => (
+            <button
+              type="button"
+              className={display.mode === mode.id ? "active" : ""}
+              aria-pressed={display.mode === mode.id}
+              onClick={() => update({ mode: mode.id })}
+              key={mode.id}
+            >
+              {tr(mode.label)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="profile-display-section">
+        <div className="profile-display-section__heading">
+          <strong>{tr("Image style background")}</strong>
+          <small>{tr("Choose no tile or a quiet color behind each garment.")}</small>
+        </div>
+        <div className="profile-background-options" role="radiogroup" aria-label={tr("Image style background")}>
+          {WARDROBE_BACKGROUND_STYLES.map((style) => (
+            <button
+              className={`${display.backgroundStyle === style.id ? "active" : ""}${style.id === "none" ? " is-none" : ""}`}
+              type="button"
+              role="radio"
+              aria-checked={display.backgroundStyle === style.id}
+              aria-label={tr(style.label)}
+              title={tr(style.label)}
+              onClick={() => update({ backgroundStyle: style.id })}
+              key={style.id}
+            >
+              <span style={style.color ? { backgroundColor: style.color } : undefined} />
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="profile-display-section">
+        <div className="profile-display-section__heading">
+          <strong>{tr("Garment size")}</strong>
+          <small>{tr("Choose how large garments appear in your wardrobe grid.")}</small>
+        </div>
+        <div className="profile-display-modes" role="group" aria-label={tr("Garment size")}>
+          {GRID_DENSITIES.map((density) => (
+            <button
+              type="button"
+              className={display.density === density.id ? "active" : ""}
+              aria-pressed={display.density === density.id}
+              onClick={() => update({ density: density.id })}
+              key={density.id}
+            >
+              {tr(density.label)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="profile-display-section profile-display-fields">
+        <div className="profile-display-section__heading">
+          <strong>{tr("Details to show")}</strong>
+          <small>{tr("Used only when the Details view is selected.")}</small>
+        </div>
+        <div>
+          {WARDROBE_DETAIL_FIELDS.map((field) => (
+            <label key={field.id}>
+              <input
+                type="checkbox"
+                checked={display.detailFields.includes(field.id)}
+                onChange={() => toggleField(field.id)}
+              />
+              <span>{tr(field.label)}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+const PROFILE_TABS = [
+  { id: "basics", label: "Personal" },
+  { id: "sizes", label: "Sizes & fit" },
+  { id: "style", label: "Style" },
+  { id: "display", label: "Wardrobe" },
+  { id: "ai", label: "AI & costs" },
+];
+
+function ProfileAiUsage({ user }) {
+  const [usage, setUsage] = useState(null);
+  const [status, setStatus] = useState(user ? "loading" : "new");
+  const [reloadKey, setReloadKey] = useState(0);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let active = true;
+    setStatus("loading");
+    profileApi(`/api/users/${user.id}/ai-usage`)
+      .then((result) => {
+        if (!active) return;
+        setUsage(result);
+        setStatus("ready");
+      })
+      .catch((requestError) => {
+        if (!active) return;
+        setUsage({ error: readableError(requestError) });
+        setStatus("error");
+      });
+    return () => { active = false; };
+  }, [user?.id, reloadKey]);
+
+  if (!user) {
+    return (
+      <section className="profile-ai-usage profile-ai-usage--empty">
+        <h3>{tr("AI spending")}</h3>
+        <p>{tr("Save this person first. Their AI calls and costs will then be tracked separately.")}</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="profile-ai-usage" aria-busy={status === "loading"}>
+      <header>
+        <div>
+          <h3>{tr("AI spending")}</h3>
+          <p>{tr("Exact OpenRouter cost returned with each call, stored privately with this wardrobe.")}</p>
+        </div>
+        <button type="button" onClick={() => setReloadKey((value) => value + 1)} disabled={status === "loading"}>
+          {tr(status === "loading" ? "Loading…" : "Refresh")}
+        </button>
+      </header>
+      {status === "error" ? (
+        <p className="profile-ai-usage__error" role="alert">{usage?.error || tr("The spending summary could not be loaded.")}</p>
+      ) : status === "ready" ? (
+        <>
+          <div className="profile-ai-metrics">
+            <article><span>{tr("Recorded spend")}</span><strong>{formatAiCost(usage.totalCost)}</strong><small>USD</small></article>
+            <article><span>{tr("AI requests")}</span><strong>{usage.requestCount}</strong><small>{tr("for this person")}</small></article>
+            <article><span>{tr("Without a price")}</span><strong>{usage.unpricedRequestCount}</strong><small>{tr("failed or direct-provider calls")}</small></article>
+          </div>
+          <div className="profile-ai-averages">
+            <article>
+              <span>{tr("Average per uploaded image")}</span>
+              <strong>{formatAiCost(usage.averageCostPerUpload)}</strong>
+              <small>{tr("{count} linked uploads", { count: usage.uploadCount || 0 })}</small>
+            </article>
+            <article>
+              <span>{tr("Average per accepted garment")}</span>
+              <strong>{formatAiCost(usage.averageCostPerGarment)}</strong>
+              <small>{tr("{count} garments added or merged", { count: usage.acceptedGarmentCount || 0 })}</small>
+            </article>
+          </div>
+          {!usage.requestCount ? (
+            <p className="profile-ai-usage__empty">{tr("No AI calls have been recorded for this person yet. Tracking begins after this update.")}</p>
+          ) : (
+            <>
+              <div className="profile-ai-breakdown">
+                <div>
+                  <h4>{tr("By task")}</h4>
+                  {usage.byOperation.map((group) => (
+                    <p key={group.id}>
+                      <span>{tr(group.label)}<small>{tr(group.requests === 1 ? "{count} call" : "{count} calls", { count: group.requests })}</small></span>
+                      <strong>{formatAiCost(group.cost)}</strong>
+                    </p>
+                  ))}
+                </div>
+                <div>
+                  <h4>{tr("By model")}</h4>
+                  {usage.byModel.slice(0, 6).map((group) => (
+                    <p key={group.id}>
+                      <span title={group.label}>{group.label.split("/").at(-1)}<small>{tr(group.requests === 1 ? "{count} call" : "{count} calls", { count: group.requests })}</small></span>
+                      <strong>{formatAiCost(group.cost)}</strong>
+                    </p>
+                  ))}
+                </div>
+              </div>
+              <button
+                className={`profile-ai-details-toggle${detailsOpen ? " is-open" : ""}`}
+                type="button"
+                aria-expanded={detailsOpen}
+                onClick={() => setDetailsOpen((value) => !value)}
+              >
+                <span>
+                  <strong>{tr("Request details")}</strong>
+                  <small>{tr("See costs, models, and garment outcomes for every uploaded image.")}</small>
+                </span>
+                <CaretDown size={17} />
+              </button>
+              {detailsOpen && (
+                <div className="profile-ai-drilldown">
+                  {!usage.uploads?.length ? (
+                    <p className="profile-ai-drilldown__note">
+                      {tr("Past requests were recorded before upload details were linked. New imports will appear here with their filename and garment outcomes.")}
+                    </p>
+                  ) : (
+                    usage.uploads.map((upload, uploadIndex) => (
+                      <details className="profile-ai-upload" key={upload.id} open={uploadIndex === 0}>
+                        <summary>
+                          <span>
+                            <ImageSquare size={18} weight="light" />
+                            <span>
+                              <strong>{upload.fileName}</strong>
+                              <small>{formatDate(upload.createdAt, { dateStyle: "medium", timeStyle: "short" })}</small>
+                            </span>
+                          </span>
+                          <span>
+                            <small>{tr(upload.detectedCount === 1 ? "{count} detected garment" : "{count} detected garments", { count: upload.detectedCount })}</small>
+                            <strong>{formatAiCost(upload.totalCost)}</strong>
+                            <CaretDown size={15} />
+                          </span>
+                        </summary>
+                        <div className="profile-ai-upload__body">
+                          <div className="profile-ai-upload__metrics">
+                            <span><strong>{upload.requestCount}</strong>{tr("AI calls")}</span>
+                            <span><strong>{upload.createdGarmentCount}</strong>{tr("New garments")}</span>
+                            <span><strong>{upload.duplicateCount}</strong>{tr("Possible duplicates")}</span>
+                            <span><strong>{upload.mergedCount}</strong>{tr("Merged")}</span>
+                            <span><strong>{upload.unselectedCount}</strong>{tr("Not selected")}</span>
+                          </div>
+                          {!!upload.items?.length && (
+                            <div className="profile-ai-outcomes">
+                              <h5>{tr("Garment outcomes")}</h5>
+                              {upload.items.map((item) => (
+                                <p key={item.jobId}>
+                                  <span>{item.name}</span>
+                                  <strong>{tr({
+                                    added: "Added",
+                                    merged: "Merged",
+                                    unselected: "Not selected",
+                                    deleted: "Removed from import",
+                                    failed: "Needs attention",
+                                    generating: "Generating",
+                                    modeling: "Creating modeled look",
+                                    "duplicate-review": "Possible duplicate",
+                                    identified: "Identified",
+                                  }[item.outcome] || "In progress")}</strong>
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                          <div className="profile-ai-requests">
+                            <h5>{tr("AI calls for this image")}</h5>
+                            {upload.requests?.length ? upload.requests.map((request) => (
+                              <article key={request.id}>
+                                <span className={`profile-ai-request-status${request.completed ? " is-complete" : " is-failed"}`} aria-hidden="true" />
+                                <span>
+                                  <strong>{tr(request.label)}</strong>
+                                  <small>{request.itemName || upload.fileName}</small>
+                                </span>
+                                <span title={request.model}>{request.model?.split("/").at(-1) || tr("Unknown model")}</span>
+                                <time>{formatDate(request.createdAt, { dateStyle: "short", timeStyle: "short" })}</time>
+                                <strong>{formatAiCost(request.cost)}</strong>
+                              </article>
+                            )) : (
+                              <p className="profile-ai-drilldown__note">{tr("No priced AI request is linked to this upload yet.")}</p>
+                            )}
+                          </div>
+                        </div>
+                      </details>
+                    ))
+                  )}
+                  {!!usage.unlinkedRequests?.length && (
+                    <details className="profile-ai-upload profile-ai-upload--unlinked">
+                      <summary>
+                        <span>
+                          <Sparkle size={18} weight="light" />
+                          <span>
+                            <strong>{tr("Other and earlier requests")}</strong>
+                            <small>{tr("Planner calls and requests recorded before upload linking")}</small>
+                          </span>
+                        </span>
+                        <span>
+                          <small>{tr(usage.unlinkedRequests.length === 1 ? "{count} call" : "{count} calls", { count: usage.unlinkedRequests.length })}</small>
+                          <CaretDown size={15} />
+                        </span>
+                      </summary>
+                      <div className="profile-ai-upload__body">
+                        <div className="profile-ai-requests">
+                          {usage.unlinkedRequests.map((request) => (
+                            <article key={request.id}>
+                              <span className={`profile-ai-request-status${request.completed ? " is-complete" : " is-failed"}`} aria-hidden="true" />
+                              <span>
+                                <strong>{tr(request.label)}</strong>
+                                <small>{request.itemName || tr("Not linked to an uploaded image")}</small>
+                              </span>
+                              <span title={request.model}>{request.model?.split("/").at(-1) || tr("Unknown model")}</span>
+                              <time>{formatDate(request.createdAt, { dateStyle: "short", timeStyle: "short" })}</time>
+                              <strong>{formatAiCost(request.cost)}</strong>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    </details>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </>
+      ) : (
+        <div className="profile-ai-usage__skeleton" aria-hidden="true" />
+      )}
+    </section>
+  );
+}
+
+function ProfileAiEditor({ value, user, onChange }) {
+  const preferences = normalizeAiPreferences(value);
+  const update = (taskId, model) => onChange(normalizeAiPreferences({ ...preferences, [taskId]: model }));
+
+  return (
+    <div className="profile-ai-editor">
+      <div className="profile-tab-intro">
+        <div>
+          <h3>{tr("Choose a model for each job")}</h3>
+          <p>{tr("Choose the balance of quality, privacy, and price you prefer. Leave a task on Recommended to use the app’s current choice.")}</p>
+        </div>
+        <span><Sparkle size={15} weight="fill" /> {tr("{count} AI tasks", { count: AI_TASKS.length })}</span>
+      </div>
+      <div className="profile-ai-task-list">
+        {AI_TASKS.map((task) => {
+          const selectedOption = task.options.find((option) => option.id === preferences[task.id]);
+          return (
+            <article className="profile-ai-task" key={task.id}>
+              <div>
+                <h3>{tr(task.label)}</h3>
+                <p>{tr(task.description)}</p>
+              </div>
+              <div className="profile-ai-model-field">
+                <span>{tr("Preferred model")}</span>
+                <LightSelect
+                  value={preferences[task.id]}
+                  onChange={(model) => update(task.id, model)}
+                  options={[
+                    { value: "", label: tr("Recommended") },
+                    ...task.options.map((option) => ({ value: option.id, label: `${option.label} · ${tr(option.badge)}` })),
+                  ]}
+                  ariaLabel={`${tr(task.label)} · ${tr("Preferred model")}`}
+                />
+              </div>
+              <aside className={selectedOption ? "" : "is-default"}>
+                <strong>{tr(selectedOption?.badge || "Recommended")}</strong>
+                <span>{tr(selectedOption?.note || "Uses the app’s current recommended choice for this task.")}</span>
+                {selectedOption?.zeroDataRetention === false && (
+                  <InfoTooltip className="profile-zdr-help" label={tr("What zero data retention means")}>
+                    {tr("Zero data retention means the AI provider processes your request without storing the prompt or images after it is completed. Without this protection, the provider may keep your images or request data according to its own policy.")}
+                  </InfoTooltip>
+                )}
+              </aside>
+            </article>
+          );
+        })}
+      </div>
+      <p className="profile-ai-local-note">
+        {tr("Sorting, filters, color previews, thumbnails, and image compression happen locally and do not call an AI model. Most AI choices are set not to retain your data; the cheapest clean-garment option is clearly marked because it does not offer that protection.")}
+      </p>
+      <ProfileAiUsage user={user} />
+    </div>
+  );
+}
+
 function ProfileEditor({ user, busy, error, onClose, onSave }) {
   const isNew = !user;
+  const originalLanguageRef = useRef(user?.language || getLocale());
+  const [activeTab, setActiveTab] = useState("basics");
   const [draft, setDraft] = useState({
     name: user?.name || "",
     age: user?.age || "",
+    city: user?.city || "",
+    language: user?.language || getLocale(),
     fashionStyle: user?.fashionStyle || "",
     sizeProfile: normalizeSizeProfile(user?.sizeProfile),
     sizes: user?.sizes || "",
     preferredCurrency: normalizePurchaseCurrency(user?.preferredCurrency),
     preferredMaterials: normalizePreferenceList(user?.preferredMaterials),
     favoriteColors: normalizePreferenceList(user?.favoriteColors),
+    preferredStores: Array.isArray(user?.preferredStores) ? user.preferredStores : [],
     preferences: user?.preferences || "",
+    wardrobeDisplay: normalizeWardrobeDisplayPreferences(user?.wardrobeDisplay),
+    aiPreferences: normalizeAiPreferences(user?.aiPreferences),
   });
   const [files, setFiles] = useState([]);
+  const [retainedReferenceIds, setRetainedReferenceIds] = useState(
+    () => (user?.referenceImages || []).map((reference) => reference.id),
+  );
   const [fileError, setFileError] = useState("");
-  const previews = useMemo(() => files.map((file) => ({ name: file.name, url: URL.createObjectURL(file) })), [files]);
+  const [referencePreview, setReferencePreview] = useState(null);
+  const referenceInputRef = useRef(null);
+  const referencePreviewCloseRef = useRef(null);
+  const referencePreviewTriggerRef = useRef(null);
+  const previews = useMemo(() => files.map((file, index) => ({
+    id: `new-${file.name}-${file.lastModified}-${file.size}-${index}`,
+    name: file.name,
+    url: URL.createObjectURL(file),
+    file,
+    isNew: true,
+  })), [files]);
+  const existingReferences = (user?.referenceImages || []).filter(
+    (reference) => retainedReferenceIds.includes(reference.id),
+  );
+  const visibleReferences = [...existingReferences, ...previews];
+  const remainingReferenceSlots = Math.max(0, 3 - visibleReferences.length);
+  const referenceSlots = [
+    ...visibleReferences,
+    ...Array.from({ length: remainingReferenceSlots }, () => null),
+  ];
+  const referencesChanged = files.length > 0
+    || retainedReferenceIds.length !== (user?.referenceImages || []).length;
+
+  const closeEditor = () => {
+    setLocale(originalLanguageRef.current);
+    onClose();
+  };
 
   useEffect(() => () => previews.forEach((preview) => URL.revokeObjectURL(preview.url)), [previews]);
 
+  useEffect(() => {
+    if (!referencePreview) return undefined;
+    const frame = requestAnimationFrame(() => referencePreviewCloseRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [referencePreview]);
+
+  const openReferencePreview = (reference, index, trigger) => {
+    referencePreviewTriggerRef.current = trigger;
+    setReferencePreview({
+      url: reference.url,
+      number: index + 1,
+    });
+  };
+
+  const closeReferencePreview = () => {
+    setReferencePreview(null);
+    requestAnimationFrame(() => referencePreviewTriggerRef.current?.focus());
+  };
+
   const chooseReferences = (event) => {
     const selected = [...event.target.files].filter((file) => file.type.startsWith("image/"));
-    if (selected.length > 3) {
-      setFileError("Choose no more than three reference photos.");
-      setFiles(selected.slice(0, 3));
+    if (selected.length > remainingReferenceSlots) {
+      setFileError(tr(remainingReferenceSlots === 1 ? "Only {count} more photo fits in this profile." : "Only {count} more photos fit in this profile.", { count: remainingReferenceSlots }));
+      setFiles((current) => [...current, ...selected.slice(0, remainingReferenceSlots)]);
     } else {
       setFileError("");
-      setFiles(selected);
+      setFiles((current) => [...current, ...selected]);
     }
     event.target.value = "";
   };
 
+  const removeReference = (reference) => {
+    if (reference.isNew) {
+      setFiles((current) => current.filter((file) => file !== reference.file));
+    } else {
+      setRetainedReferenceIds((current) => current.filter((id) => id !== reference.id));
+    }
+    setFileError("");
+  };
+
   const submit = async (event) => {
     event.preventDefault();
-    if (isNew && !files.length) {
-      setFileError("Add at least one reference photo.");
+    if ((isNew || referencesChanged) && !visibleReferences.length) {
+      setActiveTab("basics");
+      setFileError(tr("Add at least one reference photo."));
       return;
     }
     const referenceImages = files.length
       ? await Promise.all(files.map(async (file) => ({ name: file.name, dataUrl: await fileToDataUrl(file) })))
       : undefined;
-    await onSave({ ...draft, age: draft.age === "" ? null : Number(draft.age), ...(referenceImages ? { referenceImages } : {}) });
+    const referenceUpdate = isNew || referencesChanged
+      ? { referenceImageIds: retainedReferenceIds, referenceImages: referenceImages || [] }
+      : {};
+    await onSave({
+      ...draft,
+      age: draft.age === "" ? null : Number(draft.age),
+      ...referenceUpdate,
+    });
   };
 
-  const visibleReferences = previews.length ? previews : (user?.referenceImages || []);
-
   return (
-    <div className="profile-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
+    <div className="profile-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !busy && closeEditor()}>
       <form className="profile-editor" onSubmit={submit}>
         <header>
           <div>
-            <p>{isNew ? "New wardrobe" : "Personal profile"}</p>
-            <h2>{isNew ? "Add a person" : `Edit ${user.name}`}</h2>
+            <p>{tr(isNew ? "New wardrobe" : "Personal profile")}</p>
+            <h2>{isNew ? tr("Add a person") : tr("Edit {name}", { name: user.name })}</h2>
           </div>
-          <button type="button" onClick={onClose} disabled={busy} aria-label="Close profile editor"><X size={20} /></button>
+          <button type="button" onClick={closeEditor} disabled={busy} aria-label={tr("Close profile editor")}><X size={20} /></button>
         </header>
 
-        <div className="profile-editor__body">
-          <div className="profile-reference-field">
-            <div className="profile-reference-field__heading">
-              <span>Reference photos</span>
-              <small>1–3 photos</small>
-            </div>
-            {!!visibleReferences.length && (
-              <div className="profile-reference-grid">
-                {visibleReferences.map((reference) => <img src={reference.url} alt="" key={reference.id || reference.url} />)}
-              </div>
-            )}
-            <label className="profile-upload">
-              <UploadSimple size={17} />
-              <span>{files.length ? "Choose different photos" : user?.referenceImages?.length ? "Replace reference photos" : "Choose reference photos"}</span>
-              <input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={chooseReferences} />
-            </label>
-            <p>Use clear, complementary photos of the same person. Replacing photos affects future modeled images only.</p>
-            {fileError && <small className="profile-field-error">{fileError}</small>}
-          </div>
+        <nav className="profile-editor__tabs" role="tablist" aria-label={tr("Profile sections")}>
+          {PROFILE_TABS.map((tab) => (
+            <button
+              type="button"
+              role="tab"
+              id={`profile-tab-${tab.id}`}
+              aria-controls={`profile-panel-${tab.id}`}
+              aria-selected={activeTab === tab.id}
+              className={activeTab === tab.id ? "active" : ""}
+              onClick={() => setActiveTab(tab.id)}
+              key={tab.id}
+            >
+              {tr(tab.label)}
+            </button>
+          ))}
+        </nav>
 
-          <div className="profile-fields">
-            <label><span>Name</span><input required maxLength="80" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Rafael" /></label>
-            <label><span>Age <small>optional</small></span><input type="number" min="1" max="120" value={draft.age} onChange={(event) => setDraft({ ...draft, age: event.target.value })} placeholder="32" /></label>
-            <label className="profile-field-wide"><span>Fashion style</span><input maxLength="240" value={draft.fashionStyle} onChange={(event) => setDraft({ ...draft, fashionStyle: event.target.value })} placeholder="Minimal, relaxed tailoring, quiet colors" /></label>
-            <label className="profile-field-wide profile-currency-field">
-              <span>Preferred currency</span>
-              <select value={draft.preferredCurrency} onChange={(event) => setDraft({ ...draft, preferredCurrency: event.target.value })}>
-                {CURRENCY_OPTIONS.map((currency) => <option value={currency.id} key={currency.id}>{currency.label}</option>)}
-              </select>
-            </label>
-            <ProfileSizeEditor value={draft.sizeProfile} onChange={(sizeProfile) => setDraft({ ...draft, sizeProfile })} />
-            <label className="profile-field-wide"><span>Additional sizing notes <small>optional</small></span><input maxLength="240" value={draft.sizes} onChange={(event) => setDraft({ ...draft, sizes: event.target.value })} placeholder="This brand runs small; prefer extra room at the shoulders" /></label>
-            <ProfilePreferenceList
-              label="Preferred materials"
-              help="Materials you enjoy wearing or want prioritized in styling."
-              values={draft.preferredMaterials}
-              onChange={(preferredMaterials) => setDraft({ ...draft, preferredMaterials })}
-              placeholder="Linen, cotton, wool…"
-            />
-            <ProfilePreferenceList
-              label="Favorite colors"
-              help="Color names or families to favor in supporting pieces and suggestions."
-              values={draft.favoriteColors}
-              onChange={(favoriteColors) => setDraft({ ...draft, favoriteColors })}
-              placeholder="Olive, navy, cream…"
-            />
-            <label className="profile-field-wide"><span>Other preferences</span><textarea rows="4" maxLength="1200" value={draft.preferences} onChange={(event) => setDraft({ ...draft, preferences: event.target.value })} placeholder="Occasions, styling goals, sensory needs, and anything to avoid." /></label>
-          </div>
+        <div className="profile-editor__body">
           {error && <p className="profile-save-error" role="alert">{error}</p>}
+          {activeTab === "basics" && (
+            <section className="profile-tab-panel profile-basics-grid" role="tabpanel" id="profile-panel-basics" aria-labelledby="profile-tab-basics">
+              <div className="profile-reference-field">
+                <div className="profile-reference-field__heading">
+                  <div className="profile-reference-field__title">
+                    <span>{tr("Reference photos")}</span>
+                    <InfoTooltip className="profile-reference-help" label={tr("About reference photos")}>
+                      {tr("Reference photos help AI create styled looks that resemble you while dressing you in different clothes. Add one to three clear photos from different angles, with only you in the frame—no other people. Changes apply to future modeled looks only.")}
+                    </InfoTooltip>
+                  </div>
+                  <small>{tr("{count}/3 added", { count: visibleReferences.length })}</small>
+                </div>
+                <div className="profile-reference-grid">
+                  {referenceSlots.map((reference, index) => (
+                    reference ? (
+                      <div className="profile-reference-photo" key={reference.id || reference.url}>
+                        <button
+                          className="profile-reference-photo__preview"
+                          type="button"
+                          onClick={(event) => openReferencePreview(reference, index, event.currentTarget)}
+                          aria-label={tr("Open reference photo {number}", { number: index + 1 })}
+                          title={tr("Open reference photo")}
+                        >
+                          <img src={reference.url} alt={tr("Reference {number}", { number: index + 1 })} />
+                        </button>
+                        <button
+                          className="profile-reference-photo__remove"
+                          type="button"
+                          onClick={() => removeReference(reference)}
+                          aria-label={tr("Remove reference photo {number}", { number: index + 1 })}
+                          title={tr("Remove photo")}
+                        >
+                          <X size={12} weight="bold" aria-hidden="true" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className="profile-reference-placeholder"
+                        type="button"
+                        onClick={() => referenceInputRef.current?.click()}
+                        disabled={busy}
+                        aria-label={tr("Add reference photo {number} of 3", { number: index + 1 })}
+                        title={tr("Add reference photo")}
+                        key={`empty-reference-${index}`}
+                      >
+                        <span><Plus size={18} weight="regular" aria-hidden="true" /></span>
+                      </button>
+                    )
+                  ))}
+                </div>
+                <input
+                  className="profile-reference-input"
+                  ref={referenceInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  multiple
+                  hidden
+                  disabled={busy || remainingReferenceSlots === 0}
+                  onChange={chooseReferences}
+                />
+                {fileError && <small className="profile-field-error">{fileError}</small>}
+              </div>
+
+              <div className="profile-fields profile-basics-fields">
+                <label><span>{tr("Name")}</span><input required maxLength="80" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Rafael" /></label>
+                <label><span>{tr("Age")} <small>{tr("optional")}</small></span><input type="number" min="1" max="120" value={draft.age} onChange={(event) => setDraft({ ...draft, age: event.target.value })} placeholder="32" /></label>
+                <label className="profile-field-wide profile-city-field">
+                  <span>{tr("City")} <small>{tr("optional")}</small></span>
+                  <LightTypeahead
+                    maxLength="120"
+                    value={draft.city}
+                    onChange={(city) => setDraft({ ...draft, city })}
+                    options={CITY_SUGGESTIONS}
+                    onSelect={(city) => setDraft({ ...draft, city })}
+                    ariaLabel={tr("City")}
+                    placeholder={tr("Lisbon, Portugal")}
+                  />
+                  <small className="profile-field-help">{tr("Choose a suggestion or keep any city name you type.")}</small>
+                </label>
+                <label className="profile-field-wide profile-currency-field">
+                  <span>{tr("Preferred currency")}</span>
+                  <LightSelect
+                    value={draft.preferredCurrency}
+                    onChange={(preferredCurrency) => setDraft({ ...draft, preferredCurrency })}
+                    options={CURRENCY_OPTIONS.map((currency) => ({ value: currency.id, label: currency.label }))}
+                    ariaLabel={tr("Preferred currency")}
+                  />
+                </label>
+                <label className="profile-field-wide profile-language-field">
+                  <span>{tr("Language")}</span>
+                  <LightSelect
+                    value={draft.language}
+                    onChange={(language) => {
+                      setDraft({ ...draft, language });
+                      setLocale(language);
+                    }}
+                    options={LANGUAGE_OPTIONS.map((language) => ({ value: language.id, label: tr(language.label) }))}
+                    ariaLabel={tr("Language")}
+                  />
+                </label>
+              </div>
+            </section>
+          )}
+          {activeTab === "sizes" && (
+            <section className="profile-tab-panel" role="tabpanel" id="profile-panel-sizes" aria-labelledby="profile-tab-sizes">
+              <ProfileSizeEditor
+                value={draft.sizeProfile}
+                notes={draft.sizes}
+                onChange={(sizeProfile) => setDraft({ ...draft, sizeProfile })}
+                onNotesChange={(sizes) => setDraft({ ...draft, sizes })}
+              />
+            </section>
+          )}
+          {activeTab === "style" && (
+            <section className="profile-tab-panel profile-fields profile-style-fields" role="tabpanel" id="profile-panel-style" aria-labelledby="profile-tab-style">
+              <label className="profile-field-wide"><span>{tr("Fashion style")}</span><input maxLength="240" value={draft.fashionStyle} onChange={(event) => setDraft({ ...draft, fashionStyle: event.target.value })} placeholder={tr("Minimal, relaxed tailoring, quiet colors")} /></label>
+              <ProfilePreferenceList
+                label={tr("Preferred materials")}
+                help={tr("Materials you enjoy wearing or want prioritized in styling.")}
+                values={draft.preferredMaterials}
+                onChange={(preferredMaterials) => setDraft({ ...draft, preferredMaterials })}
+                placeholder={tr("Linen, cotton, wool…")}
+              />
+              <ProfilePreferenceList
+                label={tr("Favorite colors")}
+                help={tr("Color names or families to favor in supporting pieces and suggestions.")}
+                values={draft.favoriteColors}
+                onChange={(favoriteColors) => setDraft({ ...draft, favoriteColors })}
+                placeholder={tr("Olive, navy, cream…")}
+              />
+              <ProfilePreferenceList
+                label={tr("Preferred stores")}
+                help={tr("These stores appear first when you search for garments suggested by a wardrobe plan.")}
+                values={draft.preferredStores}
+                onChange={(preferredStores) => setDraft({ ...draft, preferredStores })}
+                placeholder={tr("Zara, H&M, Mango…")}
+                suggestions={STORE_OPTIONS.map((store) => store.label)}
+              />
+              <label className="profile-field-wide profile-other-preferences">
+                <span>{tr("Other preferences")} <small>{tr("optional")}</small></span>
+                <small className="profile-field-help">{tr("Used when generating modeled looks and trip or event plans. It does not affect photo analysis or clean garment cutouts.")}</small>
+                <textarea rows="5" maxLength="1200" value={draft.preferences} onChange={(event) => setDraft({ ...draft, preferences: event.target.value })} placeholder={tr("Occasions, styling goals, modesty or sensory needs, preferred silhouettes, and anything to avoid.")} />
+              </label>
+            </section>
+          )}
+          {activeTab === "display" && (
+            <section className="profile-tab-panel profile-display-panel" role="tabpanel" id="profile-panel-display" aria-labelledby="profile-tab-display">
+              <ProfileWardrobeDisplayEditor
+                value={draft.wardrobeDisplay}
+                onChange={(wardrobeDisplay) => setDraft({ ...draft, wardrobeDisplay })}
+              />
+            </section>
+          )}
+          {activeTab === "ai" && (
+            <section className="profile-tab-panel" role="tabpanel" id="profile-panel-ai" aria-labelledby="profile-tab-ai">
+              <ProfileAiEditor
+                value={draft.aiPreferences}
+                user={user}
+                onChange={(aiPreferences) => setDraft({ ...draft, aiPreferences })}
+              />
+            </section>
+          )}
         </div>
 
         <footer>
-          <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
-          <button className="profile-save" type="submit" disabled={busy || !draft.name.trim()}><Check size={14} weight="bold" /> {busy ? "Saving…" : "Save profile"}</button>
+          <button type="button" onClick={closeEditor} disabled={busy}>{tr("Cancel")}</button>
+          <button className="profile-save" type="submit" disabled={busy || !draft.name.trim()}><Check size={14} weight="bold" /> {tr(busy ? "Saving…" : "Save profile")}</button>
+        </footer>
+      </form>
+      {referencePreview && (
+        <div
+          className="profile-reference-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={tr("Reference photo {number}", { number: referencePreview.number })}
+          onMouseDown={(event) => event.target === event.currentTarget && closeReferencePreview()}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              closeReferencePreview();
+            } else if (event.key === "Tab") {
+              event.preventDefault();
+              referencePreviewCloseRef.current?.focus();
+            }
+          }}
+        >
+          <img
+            className="profile-reference-lightbox__image"
+            src={referencePreview.url}
+            alt={tr("Enlarged reference photo {number}", { number: referencePreview.number })}
+          />
+          <button
+            className="profile-reference-lightbox__close"
+            ref={referencePreviewCloseRef}
+            type="button"
+            onClick={closeReferencePreview}
+            aria-label={tr("Close reference photo")}
+          >
+            <X size={22} weight="regular" aria-hidden="true" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FacetSection({ label, facetKey, options, selected, onToggle, colorGroups }) {
+  if (!options.length) return null;
+  return (
+    <details className="filter-facet" open>
+      <summary>
+        <span>{label}</span>
+        {!!selected.length && <small>{selected.length}</small>}
+        <CaretDown size={13} weight="regular" aria-hidden="true" />
+      </summary>
+      <div className="filter-facet__options">
+        {options.map((option) => {
+          const value = facetKey === "colors" ? option.id : option.label;
+          const color = colorGroups?.find((group) => group.id === option.id)?.tones?.[1];
+          return (
+            <label key={option.id}>
+              <input
+                type="checkbox"
+                checked={selected.some((entry) => entry.toLocaleLowerCase() === value.toLocaleLowerCase())}
+                onChange={() => onToggle(facetKey, value)}
+              />
+              {color && <i className="filter-color-swatch" style={{ backgroundColor: color }} aria-hidden="true" />}
+              {facetKey === "brands" && <BrandIcon brand={option.label} size={14} />}
+              <span>{facetKey === "colors" || facetKey === "seasons"
+                ? tr(colorGroups?.find((group) => group.id === option.id)?.label || option.label)
+                : option.label}</span>
+              <small>{option.count}</small>
+            </label>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
+function FilterRail({ open, filters, facets, typeCounts, onChange, onClear, onClose, onSaveView }) {
+  const toggleFacet = (key, value) => {
+    const selected = filters[key] || [];
+    const exists = selected.some((entry) => entry.toLocaleLowerCase() === value.toLocaleLowerCase());
+    onChange({
+      ...filters,
+      [key]: exists
+        ? selected.filter((entry) => entry.toLocaleLowerCase() !== value.toLocaleLowerCase())
+        : [...selected, value],
+    });
+  };
+  const selectedCount = activeFilterCount(filters);
+  return (
+    <aside className={`filter-rail${open ? " is-open" : ""}`} aria-label={tr("Wardrobe filters")} aria-hidden={!open}>
+      <div className="filter-rail__heading">
+        <div>
+          <span>{tr("Filters")}</span>
+          <small>{selectedCount ? tr("{count} selected", { count: selectedCount }) : tr("Refine wardrobe")}</small>
+        </div>
+        <button type="button" onClick={onClose} aria-label={tr("Collapse filters")}>
+          <CaretLeft size={18} weight="regular" aria-hidden="true" />
+        </button>
+      </div>
+      <label className="wardrobe-search">
+        <MagnifyingGlass size={17} weight="regular" aria-hidden="true" />
+        <input
+          type="search"
+          value={filters.query}
+          onChange={(event) => onChange({ ...filters, query: event.target.value })}
+          placeholder={tr("Name, brand, or tag")}
+          aria-label={tr("Search wardrobe")}
+        />
+      </label>
+      <div className="filter-rail__actions">
+        <button className="filter-save-view" type="button" onClick={onSaveView} disabled={!selectedCount}>
+          <BookmarkSimple size={14} weight="regular" aria-hidden="true" />
+          {tr("Save view")}
+        </button>
+        <button className="filter-clear" type="button" onClick={onClear} disabled={!selectedCount}>{tr("Clear filters")}</button>
+      </div>
+      <details className="filter-facet" open>
+        <summary>
+          <span>{tr("Category")}</span>
+          {filters.type !== "all" && <small>1</small>}
+          <CaretDown size={13} weight="regular" aria-hidden="true" />
+        </summary>
+        <div className="filter-facet__options">
+          {TYPES.map((type) => (
+            <label key={type.id}>
+              <input
+                type="radio"
+                name="wardrobe-category"
+                checked={filters.type === type.id}
+                onChange={() => onChange({ ...filters, type: type.id })}
+              />
+              <span>{tr(type.label)}</span>
+              <small>{typeCounts[type.id] || 0}</small>
+            </label>
+          ))}
+        </div>
+      </details>
+      <FacetSection label={tr("Color")} facetKey="colors" options={facets.colors} selected={filters.colors} onToggle={toggleFacet} colorGroups={COLOR_GROUPS} />
+      <FacetSection label={tr("Brand")} facetKey="brands" options={facets.brands} selected={filters.brands} onToggle={toggleFacet} />
+      <FacetSection label={tr("Tags")} facetKey="tags" options={facets.tags} selected={filters.tags} onToggle={toggleFacet} />
+      <FacetSection label={tr("Size")} facetKey="sizes" options={facets.sizes} selected={filters.sizes} onToggle={toggleFacet} />
+      <FacetSection label={tr("Fit")} facetKey="fits" options={facets.fits} selected={filters.fits} onToggle={toggleFacet} />
+      <FacetSection label={tr("Material")} facetKey="materials" options={facets.materials} selected={filters.materials} onToggle={toggleFacet} />
+      <FacetSection label={tr("Season")} facetKey="seasons" options={facets.seasons} selected={filters.seasons} onToggle={toggleFacet} />
+    </aside>
+  );
+}
+
+function SavedViewDialog({ onClose, onSave }) {
+  const [name, setName] = useState("");
+  return (
+    <div className="compact-dialog-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form
+        className="compact-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="saved-view-dialog-title"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (name.trim()) onSave(name.trim());
+        }}
+      >
+        <header>
+          <div>
+            <p>{tr("Saved view")}</p>
+            <h2 id="saved-view-dialog-title">{tr("Name this wardrobe view")}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label={tr("Close saved view dialog")}><X size={20} aria-hidden="true" /></button>
+        </header>
+        <label>
+          <span>{tr("View name")}</span>
+          <input autoFocus maxLength="48" value={name} onChange={(event) => setName(event.target.value)} placeholder={tr("Summer workwear")} />
+        </label>
+        <footer>
+          <button type="button" onClick={onClose}>{tr("Cancel")}</button>
+          <button className="primary" type="submit" disabled={!name.trim()}>
+            <BookmarkSimple size={15} weight="regular" aria-hidden="true" />
+            {tr("Save view")}
+          </button>
         </footer>
       </form>
     </div>
   );
 }
 
+function SavedViewDeleteDialog({ view, busy, onClose, onConfirm }) {
+  const filters = normalizeWardrobeFilters(view.filters);
+  const hasFilters = Boolean(filters.query || filters.type !== "all" || activeFilterCount(filters));
+  const summary = [];
+  if (filters.type !== "all") {
+    summary.push([tr("Category"), tr(TYPE_MAP[filters.type]?.label || "All")]);
+  }
+  if (filters.query) summary.push([tr("Search"), filters.query]);
+  [
+    ["colors", "Color"],
+    ["brands", "Brand"],
+    ["tags", "Tags"],
+    ["sizes", "Size"],
+    ["fits", "Fit"],
+    ["materials", "Material"],
+    ["seasons", "Season"],
+  ].forEach(([key, label]) => {
+    if (!filters[key].length) return;
+    const values = filters[key].map((value) => {
+      if (key === "colors") return tr(COLOR_GROUPS.find((group) => group.id === value)?.label || value);
+      if (key === "seasons") return tr(SEASON_OPTIONS.find((season) => season.id === value)?.label || value);
+      return value;
+    });
+    summary.push([tr(label), values.join(", ")]);
+  });
+  summary.push([
+    tr("Sort"),
+    tr(SORT_MODES.find((mode) => mode.id === view.sortMode)?.label || "My order"),
+  ]);
+  summary.push([
+    tr("Group by"),
+    tr(GROUP_MODES.find((mode) => mode.id === view.groupMode)?.label || "No grouping"),
+  ]);
+
+  return (
+    <div className="compact-dialog-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
+      <section
+        className="compact-dialog saved-view-delete-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="saved-view-delete-title"
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !busy) {
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+      >
+        <header>
+          <div>
+            <p>{tr("Saved view")}</p>
+            <h2 id="saved-view-delete-title">{tr("Delete {name}?", { name: view.name })}</h2>
+          </div>
+          <button type="button" disabled={busy} onClick={onClose} aria-label={tr("Close saved view dialog")}><X size={20} aria-hidden="true" /></button>
+        </header>
+        <div className="saved-view-delete-dialog__body">
+          <p>{tr("This saved view will be removed. Your garments will not be affected.")}</p>
+          <strong>{tr("Included filters")}</strong>
+          {!hasFilters && <p className="saved-view-delete-dialog__empty">{tr("No filters — this view shows the entire wardrobe.")}</p>}
+          <dl>
+            {summary.map(([label, value]) => (
+              <div key={`${label}-${value}`}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+        <footer>
+          <button type="button" onClick={onClose} disabled={busy}>{tr("Cancel")}</button>
+          <button className="primary" type="button" onClick={onConfirm} disabled={busy}>
+            <Trash size={15} aria-hidden="true" />
+            {tr(busy ? "Deleting…" : "Delete saved view")}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function PlannerGarmentButton({ item, reason = "", onClick, compact = false }) {
+  if (!item) return null;
+  const preview = item.thumbnail || item.imagePreview || item.image;
+  return (
+    <button
+      className={`planner-garment-link${compact ? " is-compact" : ""}`}
+      type="button"
+      onClick={onClick}
+    >
+      {!compact && <span className="planner-pack-list__swatch" style={{ backgroundColor: item.color }} aria-hidden="true" />}
+      <span className="planner-garment-link__copy">
+        <strong>{item.name}</strong>
+        {!!reason && <small>{reason}</small>}
+      </span>
+      {!!preview && (
+        <span className="planner-garment-tooltip" role="tooltip">
+          <OptimizedImage src={preview} alt="" sizes="180px" />
+          <b>{item.name}</b>
+        </span>
+      )}
+    </button>
+  );
+}
+
+function PlannerStoreSearch({ item, user, plan }) {
+  const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const preferred = preferredStoreOptions(user.preferredStores);
+  const stores = expanded ? STORE_OPTIONS : preferred;
+  const query = [item.name, item.category].filter(Boolean).join(" ");
+  return (
+    <div className={`planner-store-search${open ? " is-open" : ""}`}>
+      <button
+        type="button"
+        className="planner-store-search__trigger"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        aria-label={tr("Search stores for {item}", { item: item.name })}
+        title={tr("Search stores")}
+      >
+        <MagnifyingGlass size={15} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="planner-store-search__stores">
+          {stores.map((store) => {
+            const url = storeSearchUrl(store.id, query, {
+              language: user.language,
+              city: user.city,
+              location: plan.input.location,
+            });
+            return (
+              <a
+                key={store.id}
+                href={url}
+                target="_blank"
+                rel="noreferrer noopener"
+                title={tr("Search {store} for {item}", { store: store.label, item: item.name })}
+              >
+                <BrandIcon brand={store.label} size={17} />
+                <span>{store.label}</span>
+              </a>
+            );
+          })}
+          {!expanded && stores.length < STORE_OPTIONS.length && (
+            <button
+              type="button"
+              className="planner-store-search__more"
+              onClick={() => setExpanded(true)}
+              aria-label={tr("Show more stores")}
+              title={tr("Show more stores")}
+            >
+              <Plus size={15} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WardrobePlanner({
+  user,
+  items,
+  busy,
+  error,
+  viewerItemId,
+  onClose,
+  onGenerate,
+  onGenerateOutfit,
+  onDelete,
+  onOpenItem,
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [draft, setDraft] = useState({
+    kind: "trip",
+    title: "",
+    location: "",
+    startDate: today,
+    endDate: today,
+    notes: "",
+  });
+  const [selectedPlanId, setSelectedPlanId] = useState(user.wardrobePlans?.[0]?.id || null);
+  const [pendingDeletePlanId, setPendingDeletePlanId] = useState(null);
+  const [deletingPlanId, setDeletingPlanId] = useState(null);
+  const [generatingOutfitKey, setGeneratingOutfitKey] = useState("");
+  const [outfitErrors, setOutfitErrors] = useState({});
+  const plans = user.wardrobePlans || [];
+  const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) || plans[0] || null;
+  const itemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const submit = async (event) => {
+    event.preventDefault();
+    const plan = await onGenerate(draft);
+    if (plan) setSelectedPlanId(plan.id);
+  };
+  const deletePlan = async (planId) => {
+    if (pendingDeletePlanId !== planId) {
+      setPendingDeletePlanId(planId);
+      return;
+    }
+    setDeletingPlanId(planId);
+    const deleted = await onDelete(planId);
+    if (deleted !== false) {
+      const remaining = plans.filter((plan) => plan.id !== planId);
+      setSelectedPlanId(remaining[0]?.id || null);
+      setPendingDeletePlanId(null);
+    }
+    setDeletingPlanId(null);
+  };
+  const generateOutfit = async (outfitIndex) => {
+    if (!selectedPlan) return;
+    const key = `${selectedPlan.id}:${outfitIndex}`;
+    setGeneratingOutfitKey(key);
+    setOutfitErrors((current) => ({ ...current, [key]: "" }));
+    try {
+      await onGenerateOutfit(selectedPlan.id, outfitIndex);
+    } catch (requestError) {
+      setOutfitErrors((current) => ({ ...current, [key]: readableError(requestError) }));
+    } finally {
+      setGeneratingOutfitKey("");
+    }
+  };
+  return (
+    <div
+      className={`planner-overlay${viewerItemId ? " has-viewer" : ""}`}
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
+      <section
+        className="planner-dialog"
+        role="dialog"
+        aria-modal={viewerItemId ? "false" : "true"}
+        aria-labelledby="planner-title"
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !busy) {
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+      >
+        <header className="planner-dialog__header">
+          <div>
+            <p>{tr("Wardrobe planner")}</p>
+            <h2 id="planner-title">{tr("Plan for a trip or event")}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label={tr("Close wardrobe planner")}><X size={23} weight="light" aria-hidden="true" /></button>
+        </header>
+        <div className="planner-dialog__body">
+          <form className="planner-form" onSubmit={submit}>
+            <div className="planner-kind" role="group" aria-label={tr("Plan type")}>
+              {[
+                { id: "trip", label: "Trip", icon: SuitcaseRolling },
+                { id: "event", label: "Event", icon: CalendarDots },
+              ].map((option) => {
+                const Icon = option.icon;
+                return (
+                  <button key={option.id} type="button" className={draft.kind === option.id ? "active" : ""} onClick={() => setDraft({ ...draft, kind: option.id })} aria-pressed={draft.kind === option.id}>
+                    <Icon size={17} weight="regular" aria-hidden="true" />
+                    {tr(option.label)}
+                  </button>
+                );
+              })}
+            </div>
+            <label><span>{tr("Name")} <small>{tr("optional")}</small></span><input value={draft.title} maxLength="100" onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder={tr(draft.kind === "trip" ? "Lisbon weekend" : "Summer wedding")} /></label>
+            <label><span>{tr("Location")}</span><div className="planner-input-with-icon"><MapPin size={16} aria-hidden="true" /><input required value={draft.location} maxLength="120" onChange={(event) => setDraft({ ...draft, location: event.target.value })} placeholder={tr("City and country")} /></div></label>
+            <div className="planner-date-row">
+              <label><span>{tr("Starts")}</span><input required type="date" value={draft.startDate} onChange={(event) => setDraft({ ...draft, startDate: event.target.value, endDate: draft.endDate < event.target.value ? event.target.value : draft.endDate })} /></label>
+              <label><span>{tr("Ends")}</span><input required type="date" min={draft.startDate} value={draft.endDate} onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} /></label>
+            </div>
+            <label><span>{tr("Plans and dress code")} <small>{tr("optional")}</small></span><textarea rows="5" maxLength="500" value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder={tr("Outdoor dinners, business meetings, lots of walking…")} /></label>
+            {error && <p className="planner-error">{error}</p>}
+            <button className="planner-generate" type="submit" disabled={busy}>
+              {busy ? <SpinnerGap className="modeled-request__spinner" size={17} aria-hidden="true" /> : <Sparkle size={17} weight="fill" aria-hidden="true" />}
+              {tr(busy ? "Planning wardrobe…" : "Create wardrobe plan")}
+            </button>
+            {!!plans.length && (
+              <div className="planner-history">
+                <span>{tr("Saved plans")}</span>
+                <div>
+                  {plans.map((plan) => (
+                    <span className={`${selectedPlan?.id === plan.id ? "active" : ""}${pendingDeletePlanId === plan.id ? " pending-delete" : ""}`} key={plan.id}>
+                      <button type="button" onClick={() => { setPendingDeletePlanId(null); setSelectedPlanId(plan.id); }}>{plan.input.title || plan.input.location}</button>
+                      <button
+                        type="button"
+                        onClick={() => deletePlan(plan.id)}
+                        disabled={deletingPlanId === plan.id}
+                        aria-label={tr(
+                          pendingDeletePlanId === plan.id ? "Confirm deleting {name} plan" : "Delete {name} plan",
+                          { name: plan.input.title || plan.input.location },
+                        )}
+                      >
+                        {deletingPlanId === plan.id
+                          ? <SpinnerGap className="modeled-request__spinner" size={12} aria-hidden="true" />
+                          : pendingDeletePlanId === plan.id
+                            ? <Check size={12} weight="bold" aria-hidden="true" />
+                            : <X size={11} aria-hidden="true" />}
+                        {pendingDeletePlanId === plan.id && <span>{tr("Confirm")}</span>}
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </form>
+          <div className="planner-result">
+            {!selectedPlan ? (
+              <div className="planner-empty">
+                <CloudSun size={34} weight="light" aria-hidden="true" />
+                <h3>{tr("Weather-aware ideas from your wardrobe")}</h3>
+                <p>{tr("Add a location and dates. The planner will use seasonal climate expectations, your style profile, and the clothes you own.")}</p>
+              </div>
+            ) : (
+              <>
+                <div className="planner-result__intro">
+                  <span>{tr(selectedPlan.input.kind === "trip" ? "Trip" : "Event")}</span>
+                  <h3>{selectedPlan.input.title || selectedPlan.input.location}</h3>
+                  <p>{selectedPlan.result.summary}</p>
+                </div>
+                <section className="planner-weather">
+                  <CloudSun size={24} weight="light" aria-hidden="true" />
+                  <div><span>{tr("Expected conditions")}</span><strong>{selectedPlan.result.expectedWeather.temperatureRange}</strong><p>{selectedPlan.result.expectedWeather.summary}</p></div>
+                  <div className="planner-condition-chips">{selectedPlan.result.expectedWeather.conditions.map((condition) => <i key={condition}>{condition}</i>)}</div>
+                </section>
+                {!!selectedPlan.result.recommendedItems.length && (
+                  <section className="planner-section">
+                    <h4>{tr("Pack from your wardrobe")}</h4>
+                    <div className="planner-pack-list">
+                      {selectedPlan.result.recommendedItems.map((recommendation) => {
+                        const item = itemMap.get(recommendation.itemId);
+                        return (
+                          <PlannerGarmentButton
+                            item={item}
+                            reason={recommendation.reason}
+                            onClick={() => onOpenItem(item.id)}
+                            key={recommendation.itemId}
+                          />
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
+                {!!selectedPlan.result.outfitIdeas.length && (
+                  <section className="planner-section">
+                    <h4>{tr("Outfit ideas")}</h4>
+                    <div className="planner-outfits">
+                      {selectedPlan.result.outfitIdeas.map((outfit, outfitIndex) => {
+                        const generationKey = `${selectedPlan.id}:${outfitIndex}`;
+                        const generating = generatingOutfitKey === generationKey;
+                        return (
+                        <article className={outfit.modeledLook ? "has-modeled-look" : ""} key={`${selectedPlan.id}-${outfit.name}`}>
+                          {outfit.modeledLook && (
+                            <OptimizedImage
+                              className="planner-outfit-image"
+                              src={outfit.modeledLook.preview || outfit.modeledLook.image}
+                              alt={tr("Modeled outfit: {name}", { name: outfit.name })}
+                              sizes="(max-width: 860px) 80vw, 360px"
+                            />
+                          )}
+                          <div className="planner-outfit-copy">
+                            <strong>{outfit.name}</strong>
+                            <p>{outfit.note}</p>
+                          </div>
+                          <div className="planner-outfit-garments">
+                            {outfit.itemIds.map((id) => {
+                              const item = itemMap.get(id);
+                              return (
+                                <PlannerGarmentButton
+                                  compact
+                                  item={item}
+                                  onClick={() => onOpenItem(id)}
+                                  key={id}
+                                />
+                              );
+                            })}
+                          </div>
+                          <button
+                            className="planner-outfit-generate"
+                            type="button"
+                            onClick={() => generateOutfit(outfitIndex)}
+                            disabled={generating}
+                          >
+                            {generating
+                              ? <SpinnerGap className="modeled-request__spinner" size={15} aria-hidden="true" />
+                              : <Sparkle size={15} weight="fill" aria-hidden="true" />}
+                            {tr(generating ? "Creating outfit…" : outfit.modeledLook ? "Create again" : "Create modeled look")}
+                          </button>
+                          {!!outfitErrors[generationKey] && <p className="planner-outfit-error">{outfitErrors[generationKey]}</p>}
+                        </article>
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
+                {!!selectedPlan.result.missingItems.length && (
+                  <section className="planner-section planner-missing">
+                    <h4>{tr("Worth adding")}</h4>
+                    {selectedPlan.result.missingItems.map((missing) => (
+                      <article key={`${missing.name}-${missing.reason}`}>
+                        <span>{tr(missing.priority)}</span>
+                        <div><strong>{missing.name}</strong><p>{missing.reason}</p></div>
+                        <PlannerStoreSearch item={missing} user={user} plan={selectedPlan} />
+                      </article>
+                    ))}
+                  </section>
+                )}
+                {!!selectedPlan.result.packingNotes.length && (
+                  <section className="planner-section">
+                    <h4>{tr("Packing notes")}</h4>
+                    <ul>{selectedPlan.result.packingNotes.map((note) => <li key={note}>{note}</li>)}</ul>
+                  </section>
+                )}
+                <p className="planner-disclaimer">{selectedPlan.result.disclaimer}</p>
+              </>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function App() {
+  const locale = useLocale();
   const [auth, setAuth] = useState(null);
   const [authError, setAuthError] = useState("");
   const [users, setUsers] = useState([]);
@@ -1395,7 +3815,17 @@ export function App() {
   const [profileError, setProfileError] = useState("");
   const [items, setItems] = useState([]);
   const [activeType, setActiveType] = useState("all");
-  const [organizationMode, setOrganizationMode] = useState("custom");
+  const [filters, setFilters] = useState(() => normalizeWardrobeFilters(DEFAULT_WARDROBE_FILTERS));
+  const [filterRailOpen, setFilterRailOpen] = useState(false);
+  const [activeSavedViewId, setActiveSavedViewId] = useState(null);
+  const [savedViewDialogOpen, setSavedViewDialogOpen] = useState(false);
+  const [savedViewDeleteCandidate, setSavedViewDeleteCandidate] = useState(null);
+  const [savedViewDeleteBusy, setSavedViewDeleteBusy] = useState(false);
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const [plannerBusy, setPlannerBusy] = useState(false);
+  const [plannerError, setPlannerError] = useState("");
+  const [sortMode, setSortMode] = useState("custom");
+  const [groupMode, setGroupMode] = useState("none");
   const [organizationStatus, setOrganizationStatus] = useState("");
   const [draggedId, setDraggedId] = useState(null);
   const [dropTargetId, setDropTargetId] = useState(null);
@@ -1420,6 +3850,7 @@ export function App() {
       setCurrentUserId(null);
       setItems([]);
       setSelectedId(null);
+      setPlannerOpen(false);
       setViewerDirty(false);
       setBlockedSwitchSignal(0);
     };
@@ -1453,7 +3884,7 @@ export function App() {
       .then((response) => {
         if (!response.ok) {
           if (response.status === 401) window.dispatchEvent(new Event("wardrobe:unauthorized"));
-          throw new Error("Could not load the wardrobe.");
+          throw new Error(tr("Could not load the wardrobe."));
         }
         return response.json();
       })
@@ -1477,6 +3908,10 @@ export function App() {
                   purchaseMonth: item.purchaseMonth,
                   purchasePrice: item.purchasePrice,
                   tags: item.tags,
+                  sizes: item.sizes,
+                  fits: item.fits,
+                  materials: item.materials,
+                  seasons: item.seasons,
                 }),
               });
               removePersistedEdit(item.id, currentUserId);
@@ -1485,7 +3920,7 @@ export function App() {
             .filter((id) => id.startsWith("import-"))
             .map(async (id) => {
               const response = await fetch(`/api/import/wardrobe/${id}?user=${encodeURIComponent(currentUserId)}`, { method: "DELETE" });
-              if (!response.ok && response.status !== 404) throw new Error("Could not migrate a locally deleted item.");
+              if (!response.ok && response.status !== 404) throw new Error(tr("Could not migrate a locally deleted item."));
               removePersistedDeletedItem(id, currentUserId);
             }),
         ];
@@ -1501,17 +3936,48 @@ export function App() {
   }, [auth?.authenticated, currentUserId]);
 
   const currentUser = users.find((user) => user.id === currentUserId) || null;
-  const selectedItem = items.find((item) => item.id === selectedId) || null;
 
   useEffect(() => {
-    const nextMode = ORGANIZATION_MODE_IDS.has(currentUser?.wardrobeSortMode)
+    if (!profileEditor && currentUser?.language && currentUser.language !== locale) setLocale(currentUser.language);
+  }, [currentUser?.language, locale, profileEditor]);
+  const selectedItem = items.find((item) => item.id === selectedId) || null;
+  const wardrobeDisplay = normalizeWardrobeDisplayPreferences(currentUser?.wardrobeDisplay);
+  const gridDensity = wardrobeDisplay.density;
+
+  useEffect(() => {
+    const legacyColorGrouping = currentUser?.wardrobeSortMode === "color";
+    const nextSortMode = SORT_MODE_IDS.has(currentUser?.wardrobeSortMode)
       ? currentUser.wardrobeSortMode
       : "custom";
-    setOrganizationMode(nextMode);
+    const nextGroupMode = GROUP_MODE_IDS.has(currentUser?.wardrobeGroupMode)
+      ? currentUser.wardrobeGroupMode
+      : legacyColorGrouping ? "color" : "none";
+    setSortMode(nextSortMode);
+    setGroupMode(nextGroupMode);
     setOrganizationStatus("");
     setDraggedId(null);
     setDropTargetId(null);
-  }, [currentUserId, currentUser?.wardrobeSortMode]);
+  }, [currentUserId, currentUser?.wardrobeGroupMode, currentUser?.wardrobeSortMode]);
+
+  useEffect(() => {
+    setFilters(normalizeWardrobeFilters(DEFAULT_WARDROBE_FILTERS));
+    setActiveType("all");
+    setFilterRailOpen(false);
+    setActiveSavedViewId(null);
+    setSavedViewDeleteCandidate(null);
+    setSavedViewDeleteBusy(false);
+    setPlannerOpen(false);
+    setPlannerError("");
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!plannerOpen && !savedViewDialogOpen && !savedViewDeleteCandidate) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
 
   const customOrderedItems = useMemo(() => {
     const sourcePositions = new Map(items.map((item, index) => [item.id, index]));
@@ -1527,42 +3993,39 @@ export function App() {
   }, [items]);
 
   const visibleItems = useMemo(() => {
-    const filtered = activeType === "all"
-      ? customOrderedItems
-      : customOrderedItems.filter((item) => item.part === activeType);
-    if (organizationMode === "custom") return filtered;
-    if (organizationMode === "updated") {
+    const filtered = customOrderedItems.filter((item) => wardrobeItemMatches(item, {
+      ...filters,
+      type: activeType,
+    }));
+    if (sortMode === "custom") return filtered;
+    if (sortMode === "updated") {
       return [...filtered].sort((first, second) => (
         timestampValue(second) - timestampValue(first)
         || first.name.localeCompare(second.name)
       ));
     }
-    if (organizationMode === "purchase-oldest") {
+    if (sortMode === "purchase-oldest") {
       return [...filtered].sort((first, second) => (
         purchaseMonthValue(first) - purchaseMonthValue(second)
         || timestampValue(first) - timestampValue(second)
         || first.name.localeCompare(second.name)
       ));
     }
-    return [...filtered].sort((first, second) => {
-      const firstColor = colorGroup(first);
-      const secondColor = colorGroup(second);
-      return (
-        COLOR_GROUP_INDEX[firstColor.id] - COLOR_GROUP_INDEX[secondColor.id]
-        || firstColor.hue - secondColor.hue
-        || secondColor.lightness - firstColor.lightness
-        || first.name.localeCompare(second.name)
-      );
-    });
-  }, [activeType, customOrderedItems, organizationMode]);
+    return filtered;
+  }, [activeType, customOrderedItems, filters, sortMode]);
 
-  const colorSections = useMemo(() => {
-    if (organizationMode !== "color") return [];
-    return COLOR_GROUPS.map((group) => ({
-      ...group,
-      items: visibleItems.filter((item) => colorGroup(item).id === group.id),
-    })).filter((group) => group.items.length);
-  }, [organizationMode, visibleItems]);
+  const facets = useMemo(() => collectFacetOptions(items), [items]);
+  const typeCounts = useMemo(() => Object.fromEntries(TYPES.map((type) => [
+    type.id,
+    type.id === "all" ? items.length : items.filter((item) => item.part === type.id).length,
+  ])), [items]);
+  const selectedFilterCount = activeFilterCount({ ...filters, type: activeType });
+  const savedViews = normalizeSavedViews(currentUser?.savedViews);
+
+  const wardrobeSections = useMemo(() => groupWardrobeItems(visibleItems, groupMode, {
+    colorGroups: COLOR_GROUPS,
+    typeGroups: TYPES,
+  }), [groupMode, visibleItems]);
 
   const visibleItemIndex = useMemo(
     () => new Map(visibleItems.map((item, index) => [item.id, index])),
@@ -1582,35 +4045,143 @@ export function App() {
     return () => window.clearTimeout(timeoutId);
   }, [loading, visibleItems]);
 
-  const chooseType = (typeId) => {
-    setActiveType(typeId);
+  const changeFilters = (nextFilters) => {
+    const normalized = normalizeWardrobeFilters(nextFilters);
+    setFilters(normalized);
+    if (normalized.type !== activeType) setActiveType(normalized.type);
+    setActiveSavedViewId(null);
   };
 
-  const saveOrganizationMode = async (mode) => {
-    if (!ORGANIZATION_MODE_IDS.has(mode) || mode === organizationMode || !currentUserId) return;
-    const previousMode = organizationMode;
-    setOrganizationMode(mode);
+  const clearFilters = () => {
+    setFilters(normalizeWardrobeFilters(DEFAULT_WARDROBE_FILTERS));
+    setActiveType("all");
+    setActiveSavedViewId(null);
+  };
+
+  const saveWardrobeArrangement = async (nextSortMode, nextGroupMode) => {
+    if (
+      !SORT_MODE_IDS.has(nextSortMode)
+      || !GROUP_MODE_IDS.has(nextGroupMode)
+      || !currentUserId
+      || (nextSortMode === sortMode && nextGroupMode === groupMode)
+    ) return;
+    setActiveSavedViewId(null);
+    const previousSortMode = sortMode;
+    const previousGroupMode = groupMode;
+    setSortMode(nextSortMode);
+    setGroupMode(nextGroupMode);
     setDraggedId(null);
     setDropTargetId(null);
     setOrganizationStatus("saving");
     setUsers((current) => current.map((user) => (
-      user.id === currentUserId ? { ...user, wardrobeSortMode: mode } : user
+      user.id === currentUserId
+        ? { ...user, wardrobeSortMode: nextSortMode, wardrobeGroupMode: nextGroupMode }
+        : user
     )));
     try {
-      const result = await profileApi(`/api/import/wardrobe/organization?user=${encodeURIComponent(currentUserId)}`, {
-        method: "PUT",
-        body: JSON.stringify({ mode }),
+      const result = await profileApi(`/api/users/${currentUserId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          wardrobeSortMode: nextSortMode,
+          wardrobeGroupMode: nextGroupMode,
+        }),
       });
       setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
       setOrganizationStatus("saved");
       window.setTimeout(() => setOrganizationStatus((status) => status === "saved" ? "" : status), 1600);
     } catch (requestError) {
-      setOrganizationMode(previousMode);
+      setSortMode(previousSortMode);
+      setGroupMode(previousGroupMode);
       setUsers((current) => current.map((user) => (
-        user.id === currentUserId ? { ...user, wardrobeSortMode: previousMode } : user
+        user.id === currentUserId
+          ? { ...user, wardrobeSortMode: previousSortMode, wardrobeGroupMode: previousGroupMode }
+          : user
       )));
       setOrganizationStatus("");
-      setError(`Could not save this organization mode. ${requestError.message}`);
+      setError(tr("Could not save this wardrobe arrangement. {error}", { error: readableError(requestError) }));
+    }
+  };
+
+  const saveSortMode = (mode) => {
+    void saveWardrobeArrangement(mode, groupMode);
+  };
+
+  const saveGroupMode = (mode) => {
+    void saveWardrobeArrangement(sortMode, mode);
+  };
+
+  const persistSavedViews = async (nextViews) => {
+    if (!currentUserId) return null;
+    const result = await profileApi(`/api/users/${currentUserId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ savedViews: nextViews }),
+    });
+    setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+    return result.user;
+  };
+
+  const updateWardrobeDisplay = async (nextDisplay) => {
+    if (!currentUserId) return;
+    const previous = normalizeWardrobeDisplayPreferences(currentUser?.wardrobeDisplay);
+    const normalized = normalizeWardrobeDisplayPreferences({ ...previous, ...nextDisplay });
+    setUsers((current) => current.map((user) => (
+      user.id === currentUserId ? { ...user, wardrobeDisplay: normalized } : user
+    )));
+    try {
+      const result = await profileApi(`/api/users/${currentUserId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ wardrobeDisplay: normalized }),
+      });
+      setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+    } catch (requestError) {
+      setUsers((current) => current.map((user) => (
+        user.id === currentUserId ? { ...user, wardrobeDisplay: previous } : user
+      )));
+      setError(tr("Could not save the wardrobe display. {error}", { error: readableError(requestError) }));
+    }
+  };
+
+  const saveCurrentView = async (name) => {
+    const view = {
+      id: crypto.randomUUID(),
+      name,
+      filters: normalizeWardrobeFilters({ ...filters, type: activeType }),
+      sortMode,
+      groupMode,
+      density: gridDensity,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      const nextViews = normalizeSavedViews([view, ...savedViews]);
+      await persistSavedViews(nextViews);
+      setActiveSavedViewId(view.id);
+      setSavedViewDialogOpen(false);
+    } catch (requestError) {
+      setError(tr("Could not save this view. {error}", { error: readableError(requestError) }));
+    }
+  };
+
+  const applySavedView = (view) => {
+    const nextFilters = normalizeWardrobeFilters(view.filters);
+    setFilters(nextFilters);
+    setActiveType(nextFilters.type);
+    setSortMode(view.sortMode);
+    setGroupMode(view.groupMode);
+    setActiveSavedViewId(view.id);
+    setDraggedId(null);
+    setDropTargetId(null);
+  };
+
+  const deleteSavedView = async (viewId) => {
+    setSavedViewDeleteBusy(true);
+    try {
+      await persistSavedViews(savedViews.filter((view) => view.id !== viewId));
+      if (activeSavedViewId === viewId) setActiveSavedViewId(null);
+      setSavedViewDeleteCandidate(null);
+    } catch (requestError) {
+      setError(tr("Could not delete this saved view. {error}", { error: readableError(requestError) }));
+    } finally {
+      setSavedViewDeleteBusy(false);
     }
   };
 
@@ -1636,12 +4207,12 @@ export function App() {
     } catch (requestError) {
       setItems(previousItems);
       setOrganizationStatus("");
-      setError(`Could not save your wardrobe order. ${requestError.message}`);
+      setError(tr("Could not save your wardrobe order. {error}", { error: readableError(requestError) }));
     }
   };
 
   const beginItemDrag = (event, id) => {
-    if (organizationMode !== "custom" || organizationStatus === "saving") {
+    if (sortMode !== "custom" || groupMode !== "none" || organizationStatus === "saving") {
       event.preventDefault();
       return;
     }
@@ -1681,6 +4252,7 @@ export function App() {
     }
     setBlockedSwitchSignal(0);
     setSelectedId(id);
+    if (window.matchMedia("(max-width: 860px)").matches) setFilterRailOpen(false);
   };
 
   const closeViewer = useCallback(() => {
@@ -1705,12 +4277,16 @@ export function App() {
           purchaseMonth: updatedItem.purchaseMonth,
           purchasePrice: updatedItem.purchasePrice,
           tags: updatedItem.tags,
+          sizes: updatedItem.sizes,
+          fits: updatedItem.fits,
+          materials: updatedItem.materials,
+          seasons: updatedItem.seasons,
         }),
       });
       removePersistedEdit(updatedItem.id, currentUserId);
       setItems((current) => current.map((item) => item.id === saved.id ? { ...item, ...saved } : item));
     } catch (requestError) {
-      setError(`${requestError.message} Your change is still saved in this browser.`);
+      setError(tr("{error} Your change is still saved in this browser.", { error: readableError(requestError) }));
     }
   };
 
@@ -1718,10 +4294,10 @@ export function App() {
     if (id.startsWith("import-")) {
       try {
         const response = await fetch(`/api/import/wardrobe/${id}?user=${encodeURIComponent(currentUserId)}`, { method: "DELETE" });
-        if (!response.ok && response.status !== 404) throw new Error("Could not delete the imported item.");
+        if (!response.ok && response.status !== 404) throw new Error(tr("Could not delete the imported item."));
       } catch (requestError) {
         setError(requestError.message);
-        return;
+        throw requestError;
       }
     }
     setItems((current) => current.filter((item) => item.id !== id));
@@ -1770,14 +4346,14 @@ export function App() {
           .filter((id) => id.startsWith("import-"))
           .map(async (id) => {
             const response = await fetch(`/api/import/wardrobe/${id}?user=${encodeURIComponent(user.id)}`, { method: "DELETE" });
-            if (!response.ok && response.status !== 404) throw new Error(`Could not prepare ${user.name}'s deleted items for export.`);
+            if (!response.ok && response.status !== 404) throw new Error(tr("Could not prepare {name}'s deleted items for export.", { name: user.name }));
             removePersistedDeletedItem(id, user.id);
           }),
       ];
     });
     const results = await Promise.allSettled(migrations);
     if (results.some((result) => result.status === "rejected")) {
-      setError("The backup could not include every browser-only change. Check your connection and try the download again.");
+      setError(tr("The backup could not include every browser-only change. Check your connection and try the download again."));
       return;
     }
     window.location.assign("/api/export");
@@ -1808,7 +4384,9 @@ export function App() {
   };
 
   const addImportedItem = useCallback((newItem) => {
-    setItems((current) => current.some((item) => item.id === newItem.id) ? current : [...current, newItem]);
+    setItems((current) => current.some((item) => item.id === newItem.id)
+      ? current.map((item) => item.id === newItem.id ? { ...item, ...newItem } : item)
+      : [...current, newItem]);
   }, []);
 
   const generateModeledLook = async (id) => {
@@ -1827,6 +4405,53 @@ export function App() {
     return updated;
   };
 
+  const generateWardrobePlan = async (input) => {
+    setPlannerBusy(true);
+    setPlannerError("");
+    try {
+      const result = await profileApi(`/api/import/planner?user=${encodeURIComponent(currentUserId)}`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      });
+      setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+      return result.plan;
+    } catch (requestError) {
+      setPlannerError(readableError(requestError));
+      return null;
+    } finally {
+      setPlannerBusy(false);
+    }
+  };
+
+  const deleteWardrobePlan = async (planId) => {
+    setPlannerError("");
+    try {
+      const result = await profileApi(`/api/import/planner/${encodeURIComponent(planId)}?user=${encodeURIComponent(currentUserId)}`, {
+        method: "DELETE",
+      });
+      setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+      return true;
+    } catch (requestError) {
+      setPlannerError(readableError(requestError));
+      return false;
+    }
+  };
+
+  const generatePlannedOutfitLook = async (planId, outfitIndex) => {
+    setPlannerError("");
+    try {
+      const result = await profileApi(
+        `/api/import/planner/${encodeURIComponent(planId)}/outfits/${outfitIndex}/modeled?user=${encodeURIComponent(currentUserId)}`,
+        { method: "POST" },
+      );
+      setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+      return result.modeledLook;
+    } catch (requestError) {
+      setPlannerError(readableError(requestError));
+      throw requestError;
+    }
+  };
+
   const logout = async () => {
     try {
       await profileApi("/api/auth/logout", { method: "POST" });
@@ -1835,11 +4460,12 @@ export function App() {
       setUsers([]);
       setCurrentUserId(null);
       setItems([]);
+      setPlannerOpen(false);
       closeViewer();
     }
   };
 
-  if (auth === null) return <main className="password-gate"><p className="status">Checking access</p></main>;
+  if (auth === null) return <main className="password-gate"><p className="status">{tr("Checking access")}</p></main>;
   if (!auth.authenticated) {
     return <PasswordGate error={authError} onAuthenticated={(result) => { setAuthError(""); setAuth(result); setLoading(true); }} />;
   }
@@ -1849,111 +4475,172 @@ export function App() {
       <main className="gallery-pane">
         <header className="gallery-header">
           <div className="gallery-meta-row">
-            <div>
-              <p className="wardrobe-owner">{currentUser?.name || "Wardrobe"}</p>
-              <p className="piece-count">{items.length} {items.length === 1 ? "piece" : "pieces"}</p>
-            </div>
-            {!!currentUser && (
-              <ProfileMenu
-                users={users}
-                currentUser={currentUser}
-                onSelect={selectUser}
-                onAdd={() => { setProfileError(""); setProfileEditor("new"); }}
-                onEdit={() => { setProfileError(""); setProfileEditor(currentUser.id); }}
-                onExport={downloadPersonalData}
-                onLogout={auth.enabled ? logout : null}
-              />
-            )}
+            <p className="wardrobe-owner">
+              {currentUser?.name || tr("Wardrobe")}
+              <span>{tr(items.length === 1 ? "{count} garment" : "{count} garments", { count: items.length })}</span>
+            </p>
           </div>
-          <div className="gallery-controls">
-            <nav className="category-nav" aria-label="Filter wardrobe by item type">
-              {TYPES.map((type) => (
-                <button
-                  key={type.id}
-                  type="button"
-                  className={activeType === type.id ? "active" : ""}
-                  onClick={() => chooseType(type.id)}
-                  aria-pressed={activeType === type.id}
-                >
-                  {type.label}
-                </button>
-              ))}
-            </nav>
-            <div className="organization-control">
-              <span className="organization-label">Organize</span>
-              <div className="organization-options" role="group" aria-label="Organize wardrobe">
-                {ORGANIZATION_MODES.map((mode) => (
-                  <button
-                    key={mode.id}
-                    type="button"
-                    className={organizationMode === mode.id ? "active" : ""}
-                    onClick={() => saveOrganizationMode(mode.id)}
-                    aria-pressed={organizationMode === mode.id}
-                    disabled={organizationStatus === "saving"}
-                  >
-                    {mode.label}
-                  </button>
-                ))}
-              </div>
-              <small className="organization-help" aria-live="polite">
-                {organizationStatus === "saving"
-                  ? "Saving…"
-                  : organizationStatus === "saved"
-                    ? "Saved"
-                    : organizationMode === "custom"
-                      ? "Drag pieces to arrange"
-                      : organizationMode === "color"
-                        ? "Grouped by tone"
-                        : organizationMode === "purchase-oldest"
-                          ? "Unknown purchase dates appear last"
-                          : "Newest changes first"}
-              </small>
+          <div className="discovery-toolbar">
+            <button
+              className={filterRailOpen ? "active" : ""}
+              type="button"
+              onClick={() => setFilterRailOpen((current) => !current)}
+              aria-expanded={filterRailOpen}
+              aria-controls="wardrobe-filter-rail"
+            >
+              <FunnelSimple size={16} weight="regular" aria-hidden="true" />
+              {tr("Filters")}
+              {!!selectedFilterCount && <span className="toolbar-count">{selectedFilterCount}</span>}
+            </button>
+            <button type="button" onClick={() => { setPlannerError(""); setPlannerOpen(true); }}>
+              <CalendarDots size={16} weight="regular" aria-hidden="true" />
+              {tr("Plan")}
+            </button>
+            <div className="wardrobe-arrangement-control sort-control">
+              <span><ArrowsDownUp size={14} weight="regular" aria-hidden="true" />{tr("Sort")}</span>
+              <LightSelect
+                value={sortMode}
+                onChange={saveSortMode}
+                options={SORT_MODES.map((mode) => {
+                  const ModeIcon = mode.icon;
+                  return {
+                    value: mode.id,
+                    label: tr(mode.label),
+                    icon: <ModeIcon size={17} weight="regular" />,
+                  };
+                })}
+                disabled={organizationStatus === "saving"}
+                ariaLabel={tr("Sort wardrobe")}
+              />
             </div>
+            <div className="wardrobe-arrangement-control group-control">
+              <span><SquaresFour size={14} weight="regular" aria-hidden="true" />{tr("Group by")}</span>
+              <LightSelect
+                value={groupMode}
+                onChange={saveGroupMode}
+                options={GROUP_MODES.map((mode) => {
+                  const ModeIcon = mode.icon;
+                  return {
+                    value: mode.id,
+                    label: tr(mode.label),
+                    icon: <ModeIcon size={17} weight="regular" />,
+                  };
+                })}
+                disabled={organizationStatus === "saving"}
+                ariaLabel={tr("Group wardrobe")}
+              />
+            </div>
+            <button
+              className={`details-visibility-toggle${wardrobeDisplay.mode === "details" ? " active" : ""}`}
+              type="button"
+              aria-pressed={wardrobeDisplay.mode === "details"}
+              onClick={() => updateWardrobeDisplay({
+                mode: wardrobeDisplay.mode === "details" ? "pieces" : "details",
+              })}
+            >
+              <span className={`details-visibility-toggle__icon${wardrobeDisplay.mode === "details" ? "" : " is-off"}`} aria-hidden="true">
+                <ListBullets size={16} weight="regular" />
+              </span>
+              {tr("Details")}
+            </button>
+            {!!organizationStatus && (
+              <small className="toolbar-status" aria-live="polite">
+                {tr(organizationStatus === "saving" ? "Saving…" : "Saved")}
+              </small>
+            )}
           </div>
         </header>
 
         {error && <p className="status error">{error}</p>}
-        {!error && loading && <p className="status">Loading wardrobe</p>}
-        {!error && !loading && !items.length && <p className="status empty">Drop, paste, or add a photo to import your first piece.</p>}
+        {!error && loading && <p className="status">{tr("Loading wardrobe")}</p>}
+        {!error && !loading && !items.length && <p className="status empty">{tr("Drop, paste, or add a photo to import your first garment.")}</p>}
 
         {!!items.length && (
-          <section className={`gallery-grid${organizationMode === "color" ? " is-color-organized" : ""}`} aria-label={`${TYPE_MAP[activeType]?.label || "All"} wardrobe items`}>
-            {organizationMode === "color"
-              ? colorSections.flatMap((section) => [
-                  <header className="color-collection-heading" key={`heading-${section.id}`}>
-                    <span className="color-collection-swatches" aria-hidden="true">
-                      {section.tones.map((tone) => <i key={tone} style={{ background: tone }} />)}
-                    </span>
-                    <h2>{section.label}</h2>
-                    <span>{section.items.length} {section.items.length === 1 ? "piece" : "pieces"}</span>
-                  </header>,
-                  ...section.items.map((item) => (
-                    <GalleryItem
-                      key={item.id}
-                      item={item}
-                      selected={selectedId === item.id}
-                      onOpen={openItem}
-                      priority={(visibleItemIndex.get(item.id) ?? Infinity) < 8}
-                    />
-                  )),
-                ])
-              : visibleItems.map((item) => (
-                  <GalleryItem
-                    key={item.id}
-                    item={item}
-                    selected={selectedId === item.id}
-                    onOpen={openItem}
-                    priority={(visibleItemIndex.get(item.id) ?? Infinity) < 8}
-                    draggable={organizationMode === "custom" && organizationStatus !== "saving"}
-                    dragging={draggedId === item.id}
-                    dropTarget={dropTargetId === item.id}
-                    onDragStart={beginItemDrag}
-                    onDragOver={dragOverItem}
-                    onDrop={dropItem}
-                    onDragEnd={finishItemDrag}
-                  />
-                ))}
-          </section>
+          <div className={`wardrobe-browser${filterRailOpen ? " has-filter-rail" : ""}`}>
+            <div id="wardrobe-filter-rail">
+              <FilterRail
+                open={filterRailOpen}
+                filters={{ ...filters, type: activeType }}
+                facets={facets}
+                typeCounts={typeCounts}
+                onChange={changeFilters}
+                onClear={clearFilters}
+                onClose={() => setFilterRailOpen(false)}
+                onSaveView={() => setSavedViewDialogOpen(true)}
+              />
+            </div>
+            <div className="wardrobe-results">
+              {!!savedViews.length && (
+                <div className="saved-view-bar">
+                  <div className="saved-view-chips">
+                    <button type="button" className={!activeSavedViewId ? "active" : ""} onClick={clearFilters}>{tr("All wardrobe")}</button>
+                    {savedViews.map((view) => (
+                      <span className={activeSavedViewId === view.id ? "active" : ""} key={view.id}>
+                        <button type="button" onClick={() => applySavedView(view)}>{view.name}</button>
+                        <button type="button" onClick={() => setSavedViewDeleteCandidate(view)} aria-label={tr("Delete {name} saved view", { name: view.name })}><X size={11} aria-hidden="true" /></button>
+                      </span>
+                    ))}
+                  </div>
+                  <small className="saved-view-count">{tr("{visible} of {total} garments", { visible: visibleItems.length, total: items.length })}</small>
+                </div>
+              )}
+              {!visibleItems.length ? (
+                <div className="filtered-empty">
+                  <MagnifyingGlass size={28} weight="light" aria-hidden="true" />
+                  <h2>{tr("No garments match this view")}</h2>
+                  <p>{tr("Try removing a facet or clearing the search.")}</p>
+                  <button type="button" onClick={clearFilters}>{tr("Clear filters")}</button>
+                </div>
+              ) : (
+                <section className={`gallery-grid density-${gridDensity}${groupMode !== "none" ? " is-grouped" : ""}`} aria-label={tr("{category} wardrobe items", { category: tr(TYPE_MAP[activeType]?.label || "All") })}>
+                  {groupMode !== "none"
+                    ? wardrobeSections.flatMap((section) => [
+                        <header className="wardrobe-section-heading" key={`heading-${section.id}`}>
+                          {!!section.tones?.length && (
+                            <span className="wardrobe-section-swatches" aria-hidden="true">
+                              {section.tones.map((tone) => <i key={tone} style={{ background: tone }} />)}
+                            </span>
+                          )}
+                          {groupMode === "type" && TYPE_MAP[section.id]?.icon && (() => {
+                            const SectionIcon = TYPE_MAP[section.id].icon;
+                            return <SectionIcon className="wardrobe-section-type-icon" size={20} weight="regular" aria-hidden="true" />;
+                          })()}
+                          {groupMode === "brand" && !section.missing && <BrandIcon brand={section.label} size={18} />}
+                          <h2>{tr(section.label)}</h2>
+                          <span>{tr(section.items.length === 1 ? "{count} garment" : "{count} garments", { count: section.items.length })}</span>
+                        </header>,
+                        ...section.items.map((item) => (
+                          <GalleryItem
+                            key={item.id}
+                            item={item}
+                            display={wardrobeDisplay}
+                            selected={selectedId === item.id}
+                            onOpen={openItem}
+                            priority={(visibleItemIndex.get(item.id) ?? Infinity) < 8}
+                          />
+                        )),
+                      ])
+                    : visibleItems.map((item) => (
+                        <GalleryItem
+                          key={item.id}
+                          item={item}
+                          display={wardrobeDisplay}
+                          selected={selectedId === item.id}
+                          onOpen={openItem}
+                          priority={(visibleItemIndex.get(item.id) ?? Infinity) < 8}
+                          draggable={sortMode === "custom" && groupMode === "none" && organizationStatus !== "saving" && !selectedFilterCount}
+                          dragging={draggedId === item.id}
+                          dropTarget={dropTargetId === item.id}
+                          onDragStart={beginItemDrag}
+                          onDragOver={dragOverItem}
+                          onDrop={dropItem}
+                          onDragEnd={finishItemDrag}
+                        />
+                      ))}
+                </section>
+              )}
+            </div>
+          </div>
         )}
       </main>
 
@@ -1970,6 +4657,17 @@ export function App() {
           blockedSwitchSignal={blockedSwitchSignal}
         />
       )}
+      {!!currentUser && (
+        <ProfileMenu
+          users={users}
+          currentUser={currentUser}
+          onSelect={selectUser}
+          onAdd={() => { setProfileError(""); setProfileEditor("new"); }}
+          onEdit={() => { setProfileError(""); setProfileEditor(currentUser.id); }}
+          onExport={downloadPersonalData}
+          onLogout={auth.enabled ? logout : null}
+        />
+      )}
       {currentUser && (
         <WardrobeImportFlow
           key={`${currentUser.id}:${currentUser.updatedAt}`}
@@ -1984,6 +4682,37 @@ export function App() {
           error={profileError}
           onClose={() => !profileBusy && setProfileEditor(null)}
           onSave={saveProfile}
+        />
+      )}
+      {savedViewDialogOpen && (
+        <SavedViewDialog
+          onClose={() => setSavedViewDialogOpen(false)}
+          onSave={saveCurrentView}
+        />
+      )}
+      {savedViewDeleteCandidate && (
+        <SavedViewDeleteDialog
+          view={savedViewDeleteCandidate}
+          busy={savedViewDeleteBusy}
+          onClose={() => !savedViewDeleteBusy && setSavedViewDeleteCandidate(null)}
+          onConfirm={() => deleteSavedView(savedViewDeleteCandidate.id)}
+        />
+      )}
+      {plannerOpen && currentUser && (
+        <WardrobePlanner
+          user={currentUser}
+          items={items}
+          busy={plannerBusy}
+          error={plannerError}
+          viewerItemId={selectedId}
+          onClose={() => !plannerBusy && setPlannerOpen(false)}
+          onGenerate={generateWardrobePlan}
+          onGenerateOutfit={generatePlannedOutfitLook}
+          onDelete={deleteWardrobePlan}
+          onOpenItem={(id) => {
+            if (selectedId === id) closeViewer();
+            else openItem(id);
+          }}
         />
       )}
     </div>

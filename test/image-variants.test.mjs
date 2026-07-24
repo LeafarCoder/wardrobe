@@ -5,10 +5,178 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import {
+  buildGarmentPrompt,
+  cropDetailDiagnostics,
+  cropDetectedItem,
   imageVariantFileName,
+  prepareGarmentReference,
   prepareProviderImage,
+  processChromaBackground,
   writeImageVariant,
 } from "../scripts/import-job-api.mjs";
+
+test("respects a user-defined crop without adding hidden padding", async () => {
+  const source = await sharp({
+    create: {
+      width: 100,
+      height: 200,
+      channels: 3,
+      background: { r: 40, g: 60, b: 100 },
+    },
+  }).png().toBuffer();
+  const cropped = await cropDetectedItem(source, {
+    x: 200,
+    y: 100,
+    width: 600,
+    height: 500,
+  }, {
+    paddingRatio: 0,
+    minimumPadding: 0,
+  });
+  const metadata = await sharp(cropped).metadata();
+
+  assert.equal(metadata.width, 60);
+  assert.equal(metadata.height, 100);
+});
+
+test("magnifies tiny garment crops onto a stable square generation canvas", async () => {
+  const source = await sharp({
+    create: {
+      width: 148,
+      height: 94,
+      channels: 3,
+      background: { r: 99, g: 71, b: 57 },
+    },
+  }).png().toBuffer();
+  const reference = await prepareGarmentReference(source);
+  const metadata = await sharp(reference).metadata();
+
+  assert.equal(metadata.width, 1024);
+  assert.equal(metadata.height, 1024);
+});
+
+test("can remove contextual color influence while preserving a square garment reference", async () => {
+  const source = await sharp({
+    create: {
+      width: 148,
+      height: 94,
+      channels: 3,
+      background: { r: 20, g: 170, b: 70 },
+    },
+  }).png().toBuffer();
+  const reference = await prepareGarmentReference(source, 1024, { grayscale: true });
+  const { data, info } = await sharp(reference)
+    .extract({ left: 512, top: 512, width: 1, height: 1 })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  assert.ok(info.channels >= 3);
+  assert.equal(data[0], data[1]);
+  assert.equal(data[1], data[2]);
+});
+
+test("marks tiny source crops as low-detail", async () => {
+  const source = await sharp({
+    create: {
+      width: 3024,
+      height: 4032,
+      channels: 3,
+      background: { r: 220, g: 220, b: 220 },
+    },
+  }).png().toBuffer();
+  const crop = await sharp({
+    create: {
+      width: 148,
+      height: 94,
+      channels: 3,
+      background: { r: 99, g: 71, b: 57 },
+    },
+  }).png().toBuffer();
+  const diagnostics = await cropDetailDiagnostics(source, crop);
+
+  assert.equal(diagnostics.cropWidth, 148);
+  assert.equal(diagnostics.cropHeight, 94);
+  assert.equal(diagnostics.lowDetail, true);
+});
+
+test("uses accessory-specific reconstruction language instead of clothing anatomy", () => {
+  const prompt = buildGarmentPrompt({
+    name: "Wristwatch",
+    part: "accessories_up",
+    color: "#634739",
+    tags: ["brown strap", "casual"],
+  }, "#00ffff", { hasContextReference: true });
+
+  assert.match(prompt, /fashion accessory/i);
+  assert.match(prompt, /case, crown, strap, buckle/i);
+  assert.match(prompt, /not reinterpret it as another kind/i);
+  assert.match(prompt, /shirt, T-shirt, polo/i);
+  assert.match(prompt, /Image 2 is a grayscale wider contextual crop/i);
+  assert.match(prompt, /never take product colors from Image 2/i);
+  assert.match(prompt, /Color control — mandatory/i);
+  assert.match(prompt, /saved primary color is #634739/i);
+  assert.match(prompt, /There is no saved secondary color/i);
+  assert.doesNotMatch(prompt, /neckline, sleeves, fastenings/i);
+});
+
+test("uses both saved colors as mandatory controls during garment regeneration", () => {
+  const prompt = buildGarmentPrompt({
+    name: "Wristwatch",
+    part: "accessories_up",
+    color: "#634739",
+    secondaryColor: "#D1C3A8",
+    tags: ["brown strap", "casual"],
+  }, "#00ffff", { hasContextReference: true });
+
+  assert.match(prompt, /saved primary color is #634739/i);
+  assert.match(prompt, /saved secondary color is #D1C3A8/i);
+  assert.match(prompt, /primary color controls the strap/i);
+  assert.match(prompt, /secondary color controls a distinct dial, case, trim, or hardware region/i);
+});
+
+test("removes a neutral studio background when the image model ignores the chroma key", async () => {
+  const watch = await sharp({
+    create: {
+      width: 70,
+      height: 130,
+      channels: 4,
+      background: { r: 212, g: 125, b: 58, alpha: 1 },
+    },
+  }).png().toBuffer();
+  const source = await sharp({
+    create: {
+      width: 220,
+      height: 220,
+      channels: 4,
+      background: { r: 232, g: 230, b: 225, alpha: 1 },
+    },
+  })
+    .composite([{ input: watch, left: 75, top: 45 }])
+    .png()
+    .toBuffer();
+
+  const result = await processChromaBackground(source, "#00ff00", {
+    protectedColors: ["#d47d3a"],
+  });
+  const { data, info } = await sharp(result.bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const alphaAt = (x, y) => data[(((y * info.width) + x) * 4) + 3];
+
+  assert.equal(result.edgeFallbackApplied, true);
+  assert.equal(alphaAt(0, 0), 0);
+  assert.ok(alphaAt(Math.floor(info.width / 2), Math.floor(info.height / 2)) > 240);
+});
+
+test("asks the generator for transparency and explicitly rejects neutral substitute backgrounds", () => {
+  const prompt = buildGarmentPrompt({
+    name: "Wristwatch",
+    part: "accessories_up",
+    color: "#d47d3a",
+    tags: ["leather strap"],
+  }, "#00ffff");
+
+  assert.match(prompt, /real transparent PNG alpha/i);
+  assert.match(prompt, /Never substitute white, gray, beige, cream/i);
+});
 
 test("uses versioned WebP filenames for cache-safe image variants", () => {
   assert.equal(
