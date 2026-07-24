@@ -51,11 +51,11 @@ If you are setting up Wardrobe for a user, ask how they want to import their clo
 
 - Detects every garment in a photo with structured multimodal analysis
 - Extracts clean product cutouts with reference-image editing
-- Generates and saves a modeled editorial look only when requested from an item's detail panel
+- Generates and saves multiple modeled editorial looks only when requested from an item's detail panel
 - Supports multiple local users with separate clothes, references, active imports, sizing, style, and preferences
 - Keeps originals, jobs, generated images, and the JSON database local in `data/`
 - Supports drag, drop, paste, editing, review, regeneration, and approval
-- Shows the original uploaded photo by default, then lets a modeled item toggle between its generated look and source
+- Lets modeled items rotate through saved looks, toggle to the original source, and delete individual generated images from storage
 
 ## User profiles
 
@@ -75,7 +75,7 @@ The checked-in `.env.example` uses a low-cost OpenRouter mix:
 | Stage | Model |
 | --- | --- |
 | Garment detection and metadata | `google/gemini-3.1-flash-lite` |
-| Clean garment reconstruction | `google/gemini-3.1-flash-lite-image` |
+| Clean garment reconstruction | `black-forest-labs/flux.2-klein-4b` |
 | Modeled editorial image | `google/gemini-3.1-flash-lite-image` |
 
 Add your key and start the app:
@@ -91,11 +91,14 @@ OPENROUTER_API_KEY=sk-or-v1-your-key
 
 | Preset | `OPENROUTER_GARMENT_MODEL` | `OPENROUTER_MODELED_MODEL` |
 | --- | --- | --- |
-| Cheapest (default) | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-lite-image` |
+| Cheapest (default) | `black-forest-labs/flux.2-klein-4b` | `google/gemini-3.1-flash-lite-image` |
+| Private | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-lite-image` |
 | Balanced | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-image` |
 | Highest fidelity | `google/gemini-3.1-flash-image` | `google/gemini-3-pro-image` |
 
 The garment and modeled stages can use different image models because a clean single-product reconstruction is simpler than preserving both a person's identity and a garment in one scene.
+
+The default Klein garment route is cheaper, but it is not currently available under OpenRouter Zero Data Retention. `OPENROUTER_ALLOW_NON_ZDR_GARMENT=true` is therefore an explicit, garment-only privacy exception. Wardrobe keeps `OPENROUTER_ZDR=true` for clothing analysis and modeled looks, and refuses to send garment source images to Klein unless that exception is present. Use the Private preset if provider retention is not acceptable.
 
 When the primary image model returns a content-policy refusal such as `PROHIBITED_CONTENT` or `IMAGE_SAFETY`, Wardrobe automatically retries the same request with the models in `OPENROUTER_IMAGE_FALLBACK_MODELS`. Other failures—authentication, credits, rate limits, networking, and invalid configuration—are not hidden by this fallback. The default is `bytedance-seed/seedream-4.5`, which supports the app's multiple reference images and 3:2 modeled output. It starts at 2K because the current Seed route rejects the smaller concrete dimensions derived from 1K for some reference-image requests. Set the fallback-model value to `none` to disable it.
 
@@ -106,9 +109,12 @@ When the primary image model returns a content-policy refusal such as `PROHIBITE
 | `OPENROUTER_API_KEY` | Required when using OpenRouter |
 | `OPENROUTER_API_BASE_URL` | `https://openrouter.ai/api/v1` |
 | `OPENROUTER_VISION_MODEL` | `google/gemini-3.1-flash-lite` |
-| `OPENROUTER_GARMENT_MODEL` | `google/gemini-3.1-flash-lite-image` |
+| `OPENROUTER_GARMENT_MODEL` | `black-forest-labs/flux.2-klein-4b` in `.env.example` |
 | `OPENROUTER_MODELED_MODEL` | `google/gemini-3.1-flash-lite-image` |
 | `OPENROUTER_IMAGE_FALLBACK_MODELS` | `bytedance-seed/seedream-4.5` |
+| `OPENROUTER_ALLOW_NON_ZDR_GARMENT` | `true` in `.env.example` |
+| `OPENROUTER_GARMENT_PROVIDER` | `black-forest-labs` in `.env.example` |
+| `OPENROUTER_MODELED_PROVIDER` | Automatic |
 | `OPENROUTER_IMAGE_FALLBACK_PROVIDER` | `seed` |
 | `OPENROUTER_IMAGE_RESOLUTION` | `1K` |
 | `OPENROUTER_IMAGE_FALLBACK_RESOLUTION` | `2K` |
@@ -117,9 +123,9 @@ When the primary image model returns a content-policy refusal such as `PROHIBITE
 | `OPENROUTER_IMAGE_PROVIDER` | Automatic |
 | `WARDROBE_AI_CONCURRENCY` | `2` |
 
-`OPENROUTER_ZDR=true` restricts the analysis request to zero-data-retention routes. With the default Google image models, Wardrobe also pins image requests to `google-vertex/global`, rather than Google AI Studio. The default Seedream fallback is pinned to OpenRouter's current `seed` ZDR endpoint. If you choose another fallback model, review the live [OpenRouter ZDR endpoint list](https://openrouter.ai/api/v1/endpoints/zdr) and update or clear `OPENROUTER_IMAGE_FALLBACK_PROVIDER`.
+`OPENROUTER_ZDR=true` restricts the analysis request to zero-data-retention routes. With Google image models, Wardrobe also pins modeled-image requests to `google-vertex/global`, rather than Google AI Studio. The default Seedream fallback is pinned to OpenRouter's current `seed` ZDR endpoint. The Klein exception is limited to the garment stage and must be enabled explicitly with `OPENROUTER_ALLOW_NON_ZDR_GARMENT=true`. If you choose another fallback model, review the live [OpenRouter ZDR endpoint list](https://openrouter.ai/api/v1/endpoints/zdr) and update or clear `OPENROUTER_IMAGE_FALLBACK_PROVIDER`.
 
-Wardrobe downsizes provider-bound reference images to a maximum 2048-pixel edge and keeps at most `WARDROBE_AI_CONCURRENCY` image generations in flight. Primary image calls stay at 1K to control cost; safety fallbacks start at 2K. If OpenRouter reports that a concrete size is below an upstream route's minimum, Wardrobe retries the same model at the next supported resolution tier instead of showing the raw provider error.
+Wardrobe downsizes provider-bound reference images to a maximum 2048-pixel edge and keeps at most `WARDROBE_AI_CONCURRENCY` image generations in flight. Primary models that expose normalized dimensions stay at 1K; Klein currently chooses its own output dimensions because its OpenRouter endpoint does not advertise `resolution` or `aspect_ratio`. Safety fallbacks start at 2K. If OpenRouter reports that a concrete size is below an upstream route's minimum, Wardrobe retries the same model at the next supported resolution tier instead of showing the raw provider error.
 
 ### Direct OpenAI settings
 

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CaretDown, Check, DownloadSimple, LockKey, PencilSimple, Plus, Sparkle, SpinnerGap, Trash, UploadSimple, UserCircle, X } from "@phosphor-icons/react";
+import { CaretDown, CaretLeft, CaretRight, Check, DownloadSimple, LockKey, PencilSimple, Plus, Sparkle, SpinnerGap, Trash, UploadSimple, UserCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
+import { colorGroup } from "./color-organization.js";
 
 const STORAGE_KEY = "open-wardrobe-edits-v1";
 const DELETED_STORAGE_KEY = "open-wardrobe-deleted-v1";
@@ -42,49 +43,22 @@ const LEGACY_ORIGINAL_FOCUS = {
   shoes: [50, 78],
 };
 
-function hexToHsl(value) {
-  const match = /^#([0-9a-f]{6})$/i.exec(value || "");
-  if (!match) return { hue: 0, saturation: 0, lightness: 0.5 };
-  const [red, green, blue] = match[1].match(/.{2}/g).map((channel) => Number.parseInt(channel, 16) / 255);
-  const maximum = Math.max(red, green, blue);
-  const minimum = Math.min(red, green, blue);
-  const lightness = (maximum + minimum) / 2;
-  const difference = maximum - minimum;
-  if (!difference) return { hue: 0, saturation: 0, lightness };
-  const saturation = difference / (1 - Math.abs((2 * lightness) - 1));
-  let hue = maximum === red
-    ? 60 * (((green - blue) / difference) % 6)
-    : maximum === green
-      ? 60 * (((blue - red) / difference) + 2)
-      : 60 * (((red - green) / difference) + 4);
-  if (hue < 0) hue += 360;
-  return { hue, saturation, lightness };
-}
-
-function colorGroup(item) {
-  const color = hexToHsl(item.color);
-  const { hue, saturation, lightness } = color;
-  let id = "other";
-
-  if (
-    lightness >= 0.86
-    || (saturation <= 0.18 && lightness >= 0.46)
-    || (hue >= 25 && hue <= 65 && saturation <= 0.58 && lightness >= 0.5)
-  ) id = "light-neutrals";
-  else if (saturation <= 0.2 || lightness <= 0.06) id = "dark-neutrals";
-  else if (hue >= 18 && hue <= 55 && lightness < 0.5) id = "browns";
-  else if (hue >= 58 && hue < 192) id = "greens";
-  else if (hue >= 192 && hue < 260) id = "blues";
-  else if (hue >= 260 && hue < 325) id = "purples";
-  else if (hue >= 325 || hue < 18) id = "reds";
-  else if (hue >= 18 && hue < 70) id = "warm";
-
-  return { id, ...color };
-}
-
 function timestampValue(item) {
   const value = Date.parse(item.updatedAt || item.modeledGeneratedAt || item.createdAt || "");
   return Number.isFinite(value) ? value : 0;
+}
+
+function itemModeledLooks(item) {
+  if (Array.isArray(item.modeledLooks)) {
+    return item.modeledLooks.filter((look) => look?.id && look?.image);
+  }
+  return item.modeledImage ? [{
+    id: "legacy",
+    image: item.modeledImage,
+    model: item.modeledModel || null,
+    fallbackUsed: Boolean(item.modeledFallbackUsed),
+    generatedAt: item.modeledGeneratedAt || null,
+  }] : [];
 }
 
 function originalPhotoPosition(item) {
@@ -478,7 +452,7 @@ function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleSta
   );
 }
 
-function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled }) {
+function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDeleteModeled }) {
   const closeButtonRef = useRef(null);
   const imageRef = useRef(null);
   const samplingCanvasRef = useRef(null);
@@ -491,9 +465,14 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled }) {
   const [closeBlocked, setCloseBlocked] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
   const [generatingModeled, setGeneratingModeled] = useState(false);
+  const [deletingModeled, setDeletingModeled] = useState(false);
   const [generationError, setGenerationError] = useState("");
   const type = TYPE_MAP[item.part]?.singular || "Wardrobe item";
-  const hasModeledImage = Boolean(item.modeledImage);
+  const modeledLooks = useMemo(() => itemModeledLooks(item), [item]);
+  const [modeledIndex, setModeledIndex] = useState(Math.max(0, modeledLooks.length - 1));
+  const activeModeledIndex = modeledLooks.length ? Math.min(modeledIndex, modeledLooks.length - 1) : 0;
+  const activeModeledLook = modeledLooks[activeModeledIndex] || null;
+  const hasModeledImage = Boolean(activeModeledLook);
   const hasOriginalImage = Boolean(item.originalImage);
   const hasHeroImage = hasModeledImage || hasOriginalImage;
   const pieceRotation = useMemo(() => {
@@ -561,6 +540,7 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled }) {
     setPalette(item.palette || []);
     setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
     setShowOriginal(false);
+    setModeledIndex(Math.max(0, itemModeledLooks(item).length - 1));
     setGenerationError("");
   }, [item]);
 
@@ -598,6 +578,7 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled }) {
   };
 
   const generateModeledLook = async () => {
+    if (deletingModeled) return;
     if (isDirty) {
       setGenerationError("Save your item changes before generating the modeled look.");
       nudgeUnsaved();
@@ -611,6 +592,36 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled }) {
       setGenerationError(readableError(requestError));
     } finally {
       setGeneratingModeled(false);
+    }
+  };
+
+  const rotateModeledLook = (direction) => {
+    if (modeledLooks.length < 2) return;
+    setShowOriginal(false);
+    setModeledIndex((current) => {
+      const safeCurrent = Math.min(current, modeledLooks.length - 1);
+      return (safeCurrent + direction + modeledLooks.length) % modeledLooks.length;
+    });
+  };
+
+  const deleteModeledLook = async () => {
+    if (!activeModeledLook || deletingModeled || generatingModeled) return;
+    if (isDirty) {
+      setGenerationError("Save your item changes before deleting a modeled look.");
+      nudgeUnsaved();
+      return;
+    }
+    if (!window.confirm(`Delete modeled look ${activeModeledIndex + 1} of ${modeledLooks.length}? This removes the image from storage.`)) return;
+    setDeletingModeled(true);
+    setGenerationError("");
+    try {
+      await onDeleteModeled(item.id, activeModeledLook.id);
+      setModeledIndex(Math.max(0, activeModeledIndex - (activeModeledIndex === modeledLooks.length - 1 ? 1 : 0)));
+      setShowOriginal(false);
+    } catch (requestError) {
+      setGenerationError(readableError(requestError));
+    } finally {
+      setDeletingModeled(false);
     }
   };
 
@@ -642,49 +653,72 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled }) {
       </button>
 
       {hasHeroImage ? (
-        <div className="modeled-hero">
-          {hasModeledImage && hasOriginalImage ? (
-            <button
-              className="modeled-hero-toggle"
-              type="button"
-              aria-pressed={showOriginal}
-              onClick={() => setShowOriginal((current) => !current)}
-            >
-              <OptimizedImage
-                className="modeled-hero-photo"
-                src={showOriginal ? item.originalImage : item.modeledImage}
-                alt={showOriginal ? `Original photo containing ${draft.name || type}` : `${draft.name || type} worn by a model`}
-                style={showOriginal ? { objectPosition: originalPhotoPosition(item) } : undefined}
-                sizes="(max-width: 860px) 100vw, 520px"
-                breakpoints={[320, 480, 640, 800, 1040, 1280]}
-                quality={82}
-                priority
-              />
-            </button>
-          ) : (
-            <OptimizedImage
-              className="modeled-hero-photo"
-              src={hasModeledImage ? item.modeledImage : item.originalImage}
-              alt={hasModeledImage ? `${draft.name || type} worn by a model` : `Original photo containing ${draft.name || type}`}
-              style={!hasModeledImage ? { objectPosition: originalPhotoPosition(item) } : undefined}
-              sizes="(max-width: 860px) 100vw, 520px"
-              breakpoints={[320, 480, 640, 800, 1040, 1280]}
-              quality={82}
-              priority
-            />
-          )}
-          {hasModeledImage && hasOriginalImage && (
-            <span className="modeled-toggle-hint">
-              {showOriginal ? "Click photo to see modeled look" : "Click photo to see original"}
-            </span>
-          )}
+        <>
           <div className="viewer-heading modeled-heading">
             <div>
               <h2>{draft.name || TYPE_MAP[draft.part]?.singular}</h2>
             </div>
           </div>
-          {garmentArtwork}
-        </div>
+          <div className="modeled-hero">
+            {hasModeledImage && hasOriginalImage ? (
+              <button
+                className="modeled-hero-toggle"
+                type="button"
+                aria-pressed={showOriginal}
+                onClick={() => setShowOriginal((current) => !current)}
+              >
+                <OptimizedImage
+                  key={showOriginal ? "original" : activeModeledLook.id}
+                  className="modeled-hero-photo"
+                  src={showOriginal ? item.originalImage : activeModeledLook.image}
+                  alt={showOriginal ? `Original photo containing ${draft.name || type}` : `${draft.name || type} modeled look ${activeModeledIndex + 1} of ${modeledLooks.length}`}
+                  style={showOriginal ? { objectPosition: originalPhotoPosition(item) } : undefined}
+                  sizes="(max-width: 860px) 100vw, 520px"
+                  breakpoints={[320, 480, 640, 800, 1040, 1280]}
+                  quality={82}
+                  priority
+                />
+              </button>
+            ) : (
+              <OptimizedImage
+                key={hasModeledImage ? activeModeledLook.id : "original"}
+                className="modeled-hero-photo"
+                src={hasModeledImage ? activeModeledLook.image : item.originalImage}
+                alt={hasModeledImage ? `${draft.name || type} modeled look ${activeModeledIndex + 1} of ${modeledLooks.length}` : `Original photo containing ${draft.name || type}`}
+                style={!hasModeledImage ? { objectPosition: originalPhotoPosition(item) } : undefined}
+                sizes="(max-width: 860px) 100vw, 520px"
+                breakpoints={[320, 480, 640, 800, 1040, 1280]}
+                quality={82}
+                priority
+              />
+            )}
+            {hasModeledImage && hasOriginalImage && (
+              <span className="modeled-toggle-hint">
+                {showOriginal ? "Click photo to see modeled look" : "Click photo to see original"}
+              </span>
+            )}
+            {garmentArtwork}
+          </div>
+          {hasModeledImage && (
+            <div className={`modeled-look-toolbar${modeledLooks.length > 1 ? "" : " single"}`} aria-label="Modeled look controls">
+              {modeledLooks.length > 1 && (
+                <div className="modeled-look-pagination">
+                  <button type="button" onClick={() => rotateModeledLook(-1)} aria-label="Previous modeled look">
+                    <CaretLeft size={18} aria-hidden="true" />
+                  </button>
+                  <span aria-live="polite">{activeModeledIndex + 1} of {modeledLooks.length}</span>
+                  <button type="button" onClick={() => rotateModeledLook(1)} aria-label="Next modeled look">
+                    <CaretRight size={18} aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+              <button className="modeled-look-delete" type="button" disabled={deletingModeled || generatingModeled} onClick={deleteModeledLook}>
+                <Trash size={14} aria-hidden="true" />
+                {deletingModeled ? "Deleting…" : "Delete look"}
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <>
           <div className="viewer-heading">
@@ -697,15 +731,15 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled }) {
       )}
 
       <div className="viewer-details editing">
-        {!hasModeledImage && item.id.startsWith("import-") && (
+        {item.id.startsWith("import-") && (
           <section className="modeled-request" aria-label="Modeled look">
             <div>
-              <strong>See this piece styled on you</strong>
-              <p>Generates and saves one AI image only when you request it.</p>
+              <strong>{hasModeledImage ? "Create another styled look" : "See this piece styled on you"}</strong>
+              <p>{hasModeledImage ? "Adds a new image without replacing your existing looks." : "Generates and saves one AI image only when you request it."}</p>
             </div>
-            <button className="modeled-request__button" type="button" disabled={generatingModeled} onClick={generateModeledLook}>
+            <button className="modeled-request__button" type="button" disabled={generatingModeled || deletingModeled} onClick={generateModeledLook}>
               {generatingModeled ? <SpinnerGap className="modeled-request__spinner" size={16} /> : <Sparkle size={16} weight="fill" />}
-              {generatingModeled ? "Generating look…" : "Generate modeled look"}
+              {generatingModeled ? "Generating look…" : hasModeledImage ? "Generate another" : "Generate modeled look"}
             </button>
             {generationError && <p className="modeled-request__error" role="alert">{generationError}</p>}
           </section>
@@ -1308,6 +1342,14 @@ export function App() {
     return generated;
   };
 
+  const deleteModeledLook = async (id, lookId) => {
+    const updated = await profileApi(`/api/import/wardrobe/${id}/modeled/${encodeURIComponent(lookId)}?user=${encodeURIComponent(currentUserId)}`, {
+      method: "DELETE",
+    });
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    return updated;
+  };
+
   const logout = async () => {
     try {
       await profileApi("/api/auth/logout", { method: "POST" });
@@ -1434,7 +1476,7 @@ export function App() {
         )}
       </main>
 
-      {selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} onGenerateModeled={generateModeledLook} />}
+      {selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} onGenerateModeled={generateModeledLook} onDeleteModeled={deleteModeledLook} />}
       {currentUser && (
         <WardrobeImportFlow
           key={`${currentUser.id}:${currentUser.updatedAt}`}

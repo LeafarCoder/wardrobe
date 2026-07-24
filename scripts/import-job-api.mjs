@@ -21,6 +21,9 @@ const WARDROBE_SORT_MODES = new Set(["custom", "updated", "color"]);
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 const USER_ID = /^(?:default|[a-f0-9-]{36})$/i;
 const TAR_BLOCK_SIZE = 512;
+const OPENROUTER_KLEIN_4B = "black-forest-labs/flux.2-klein-4b";
+const OPENROUTER_MODELS_WITHOUT_NORMALIZED_DIMENSIONS = new Set([OPENROUTER_KLEIN_4B]);
+const OPENROUTER_MODELS_WITHOUT_ZDR = new Set([OPENROUTER_KLEIN_4B]);
 const ANALYSIS_PROMPT = "Identify every distinct wearable clothing item visible in this image. A photo may show one isolated garment or a person wearing several items. Return one record per actual item that should enter a wardrobe. Ignore the person's body and non-wearable background objects. For each item, include a tight bounding box around only that item using integer coordinates normalized to a 1000 by 1000 image: x and y are the top-left corner, followed by width and height. Boxes may overlap when garments overlap, but each box must focus on one distinct item. Use only these category ids: upperbody, wholebody_up, lowerbody, accessories_up, shoes. Suggest a concise specific name, primary hex color, optional genuinely distinct secondary hex color, and 1-4 useful lowercase detail tags.";
 const WARDROBE_ITEMS_SCHEMA = {
   type: "object",
@@ -370,6 +373,78 @@ function withUser(url, userId) {
   if (!url || !userId || !url.startsWith("/api/")) return url;
   const separator = url.includes("?") ? "&" : "?";
   return `${url}${separator}user=${encodeURIComponent(userId)}`;
+}
+
+export function modeledLooksForRecord(record = {}) {
+  const source = Array.isArray(record.modeledLooks)
+    ? record.modeledLooks
+    : record.modeledImage
+      ? [{
+          id: "legacy",
+          image: record.modeledImage,
+          model: record.modeledModel || null,
+          fallbackUsed: Boolean(record.modeledFallbackUsed),
+          generatedAt: record.modeledGeneratedAt || null,
+        }]
+      : [];
+  const seen = new Set();
+  return source.flatMap((look, index) => {
+    if (!look || typeof look.image !== "string" || !look.image.trim()) return [];
+    const candidate = typeof look.id === "string" && /^[a-z0-9-]{1,80}$/i.test(look.id)
+      ? look.id
+      : `look-${index + 1}`;
+    let id = candidate;
+    let suffix = 2;
+    while (seen.has(id)) {
+      id = `${candidate}-${suffix}`;
+      suffix += 1;
+    }
+    seen.add(id);
+    return [{
+      id,
+      image: look.image,
+      model: typeof look.model === "string" && look.model ? look.model : null,
+      fallbackUsed: Boolean(look.fallbackUsed),
+      generatedAt: typeof look.generatedAt === "string" && look.generatedAt ? look.generatedAt : null,
+    }];
+  });
+}
+
+export function recordWithModeledLooks(record, looks) {
+  const modeledLooks = modeledLooksForRecord({ modeledLooks: looks });
+  const latest = modeledLooks.at(-1) || null;
+  return {
+    ...record,
+    modeledLooks,
+    modeledImage: latest?.image || null,
+    modeledModel: latest?.model || null,
+    modeledFallbackUsed: latest?.fallbackUsed || false,
+    modeledGeneratedAt: latest?.generatedAt || null,
+  };
+}
+
+export function recordWithoutModeledLook(record, lookId) {
+  const modeledLooks = modeledLooksForRecord(record);
+  const removed = modeledLooks.find((look) => look.id === lookId) || null;
+  if (!removed) return { record, removed: null };
+  return {
+    record: recordWithModeledLooks(record, modeledLooks.filter((look) => look.id !== lookId)),
+    removed,
+  };
+}
+
+function publicImportedRecord(record, userId) {
+  return {
+    ...record,
+    image: withUser(record.image, userId),
+    thumbnail: withUser(record.thumbnail, userId),
+    modeledImage: withUser(record.modeledImage, userId),
+    modeledLooks: modeledLooksForRecord(record).map((look) => ({
+      ...look,
+      image: withUser(look.image, userId),
+    })),
+    originalImage: withUser(record.originalImage, userId),
+  };
 }
 
 function publicJob(job) {
@@ -758,13 +833,15 @@ function openRouterHeaders(provider) {
   };
 }
 
-function openRouterImageRouting(provider, model, fallbackFrom = "") {
+function openRouterImageRouting(provider, model, fallbackFrom = "", operation = "generation") {
   const configuredProvider = fallbackFrom && model.startsWith("bytedance-seed/")
     ? provider.imageFallbackProvider
     : fallbackFrom
       ? ""
-      : provider.imageProvider;
-  const configured = configuredProvider
+      : operation === "garment"
+        ? provider.garmentProvider || (model === OPENROUTER_KLEIN_4B ? "black-forest-labs" : provider.imageProvider)
+        : provider.modeledProvider || provider.imageProvider;
+  const configured = String(configuredProvider || "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
@@ -774,6 +851,22 @@ function openRouterImageRouting(provider, model, fallbackFrom = "") {
       ? ["google-vertex/global"]
       : [];
   return only.length ? { only, allow_fallbacks: false } : undefined;
+}
+
+function assertOpenRouterImagePrivacy(provider, model, operation) {
+  if (!provider.zdr || !OPENROUTER_MODELS_WITHOUT_ZDR.has(model)) return;
+  if (operation === "garment" && provider.allowNonZdrGarment) {
+    console.warn(`[wardrobe:ai] non-ZDR garment route enabled | model=${cleanLogValue(model)}`);
+    return;
+  }
+  const optIn = operation === "garment"
+    ? " Set OPENROUTER_ALLOW_NON_ZDR_GARMENT=true if you accept provider retention for garment source images."
+    : " Choose a ZDR-capable model or set OPENROUTER_ZDR=false if you accept provider retention.";
+  throw apiError(
+    `OpenRouter has no zero-data-retention route for ${model}.${optIn}`,
+    400,
+    "openrouter_zdr_unavailable",
+  );
 }
 
 async function openAIEdit({ provider, model, prompt, images, size, background, quality, operation = "generation", trace }) {
@@ -834,6 +927,34 @@ function nextOpenRouterResolution(resolution) {
     : null;
 }
 
+export function openRouterImageRequest({
+  model,
+  prompt,
+  inputReferences,
+  size,
+  resolution,
+  quality,
+  background,
+  routing,
+}) {
+  const request = {
+    model,
+    prompt,
+    n: 1,
+    input_references: inputReferences,
+  };
+  if (!OPENROUTER_MODELS_WITHOUT_NORMALIZED_DIMENSIONS.has(model)) {
+    request.resolution = resolution;
+    request.aspect_ratio = size === "1536x1024" ? "3:2" : "1:1";
+    if (quality && quality !== "auto") request.quality = quality;
+    if (background) request.background = background;
+  } else {
+    request.output_format = "png";
+  }
+  if (routing) request.provider = routing;
+  return request;
+}
+
 export async function openRouterEdit({ provider, model, prompt, images, size, background, quality, operation = "generation", trace }) {
   const inputReferences = await Promise.all(images.map(async (image) => {
     const prepared = await prepareProviderImage(image.data);
@@ -846,24 +967,27 @@ export async function openRouterEdit({ provider, model, prompt, images, size, ba
     ? provider.imageFallbackResolution
     : provider.imageResolution;
   let resolution = normalizeOpenRouterResolution(configuredResolution, trace?.fallbackFrom ? "2K" : "1K");
+  const supportsNormalizedDimensions = !OPENROUTER_MODELS_WITHOUT_NORMALIZED_DIMENSIONS.has(model);
+  let attempted = false;
+  assertOpenRouterImagePrivacy(provider, model, operation);
 
-  while (resolution) {
-    const request = {
+  while (!attempted || (supportsNormalizedDimensions && resolution)) {
+    attempted = true;
+    const routing = openRouterImageRouting(provider, model, trace?.fallbackFrom, operation);
+    const request = openRouterImageRequest({
       model,
       prompt,
-      n: 1,
       resolution,
-      aspect_ratio: size === "1536x1024" ? "3:2" : "1:1",
-      input_references: inputReferences,
-    };
-    if (quality && quality !== "auto") request.quality = quality;
-    if (background) request.background = background;
-    const routing = openRouterImageRouting(provider, model, trace?.fallbackFrom);
-    if (routing) request.provider = routing;
+      size,
+      inputReferences,
+      quality,
+      background,
+      routing,
+    });
     const requestBody = JSON.stringify(request);
     const callTrace = routing?.only?.length
-      ? { ...trace, resolution, route: routing.only.join(","), payloadBytes: Buffer.byteLength(requestBody) }
-      : { ...trace, resolution, payloadBytes: Buffer.byteLength(requestBody) };
+      ? { ...trace, resolution: supportsNormalizedDimensions ? resolution : null, route: routing.only.join(","), payloadBytes: Buffer.byteLength(requestBody) }
+      : { ...trace, resolution: supportsNormalizedDimensions ? resolution : null, payloadBytes: Buffer.byteLength(requestBody) };
 
     let response;
     const startedAt = Date.now();
@@ -879,7 +1003,7 @@ export async function openRouterEdit({ provider, model, prompt, images, size, ba
     }
     const result = await response.json().catch(() => ({}));
     logAiCall({ provider, model, operation, response, result, startedAt, trace: callTrace });
-    if (!response.ok && isImageResolutionTooSmall(result)) {
+    if (!response.ok && supportsNormalizedDimensions && isImageResolutionTooSmall(result)) {
       const nextResolution = nextOpenRouterResolution(resolution);
       if (nextResolution) {
         console.warn(`[wardrobe:ai] resolution retry | operation=${cleanLogValue(operation)} | model=${cleanLogValue(model)} | rejected=${resolution} | next=${nextResolution}`);
@@ -1148,8 +1272,11 @@ export function wardrobeImportApi(options = {}) {
         imageResolution: setting("OPENROUTER_IMAGE_RESOLUTION", "1K"),
         imageFallbackResolution: setting("OPENROUTER_IMAGE_FALLBACK_RESOLUTION", "2K"),
         imageProvider: setting("OPENROUTER_IMAGE_PROVIDER"),
+        garmentProvider: setting("OPENROUTER_GARMENT_PROVIDER"),
+        modeledProvider: setting("OPENROUTER_MODELED_PROVIDER"),
         imageFallbackProvider: setting("OPENROUTER_IMAGE_FALLBACK_PROVIDER", "seed"),
         zdr: booleanSetting("OPENROUTER_ZDR", true),
+        allowNonZdrGarment: booleanSetting("OPENROUTER_ALLOW_NON_ZDR_GARMENT", false),
       };
     }
     const imageModel = setting("OPENAI_IMAGE_MODEL", "gpt-image-2");
@@ -1166,8 +1293,11 @@ export function wardrobeImportApi(options = {}) {
       imageFallbackModels: [],
       imageQuality: setting("OPENAI_IMAGE_QUALITY", "high"),
       imageProvider: "",
+      garmentProvider: "",
+      modeledProvider: "",
       imageFallbackProvider: "",
       zdr: false,
+      allowNonZdrGarment: false,
     };
   };
 
@@ -1318,7 +1448,10 @@ export function wardrobeImportApi(options = {}) {
       : store.users[0].id;
     const records = await loadImported();
     if (records.length) {
-      const migrated = records.map((record) => ({ ...record, userId: record.userId || ownerId }));
+      const migrated = records.map((record) => recordWithModeledLooks(
+        { ...record, userId: record.userId || ownerId },
+        modeledLooksForRecord(record),
+      ));
       const assetTimestamp = async (asset) => {
         if (!asset) return null;
         try {
@@ -1427,13 +1560,7 @@ export function wardrobeImportApi(options = {}) {
       if (!userId) return records;
       return records
         .filter((record) => record.userId === userId)
-        .map((record) => ({
-          ...record,
-          image: withUser(record.image, userId),
-          thumbnail: withUser(record.thumbnail, userId),
-          modeledImage: withUser(record.modeledImage, userId),
-          originalImage: withUser(record.originalImage, userId),
-        }));
+        .map((record) => publicImportedRecord(record, userId));
     } catch (error) {
       if (error.code === "ENOENT") return [];
       throw error;
@@ -1454,14 +1581,21 @@ export function wardrobeImportApi(options = {}) {
       await copyFile(path.join(jobsDir, job.id, job.internal.originalFile), path.join(libraryAssetDir, originalName));
       originalImage = `${LIBRARY_ASSET_ROOT}/${originalName}`;
     }
-    let modeledImage = null;
+    let modeledLook = null;
     if (includeModeled) {
-      const modeledName = `${id}-modeled.png`;
+      const lookId = randomUUID();
+      const modeledName = `${id}-modeled-${lookId}.png`;
       const modeledSource = job.stages.modeled.assetUrl
         ? path.basename(new URL(job.stages.modeled.assetUrl, "http://localhost").pathname)
         : `modeled-${job.stages.modeled.attempts}.png`;
       await copyFile(path.join(jobsDir, job.id, modeledSource), path.join(libraryAssetDir, modeledName));
-      modeledImage = `${LIBRARY_ASSET_ROOT}/${modeledName}`;
+      modeledLook = {
+        id: lookId,
+        image: `${LIBRARY_ASSET_ROOT}/${modeledName}`,
+        model: job.stages.modeled.model || null,
+        fallbackUsed: Boolean(job.stages.modeled.fallbackUsed),
+        generatedAt: job.stages.modeled.updatedAt || new Date().toISOString(),
+      };
     }
     const metadata = job.metadata || {};
     const records = await loadImported();
@@ -1470,7 +1604,11 @@ export function wardrobeImportApi(options = {}) {
     const nextCustomOrder = records
       .filter((record) => record.userId === job.userId && record.id !== id)
       .reduce((highest, record) => Math.max(highest, Number.isFinite(record.customOrder) ? record.customOrder : -1), -1) + 1;
-    const record = {
+    const modeledLooks = [
+      ...modeledLooksForRecord(existing),
+      ...(modeledLook ? [modeledLook] : []),
+    ];
+    const record = recordWithModeledLooks({
       id,
       userId: job.userId,
       name: metadata.name || "New piece",
@@ -1484,13 +1622,12 @@ export function wardrobeImportApi(options = {}) {
       originalFocusSource: job.originalFocusBox ? "ai-import" : existing?.originalFocusSource || null,
       image: `${LIBRARY_ASSET_ROOT}/${garmentName}`,
       thumbnail: `${LIBRARY_ASSET_ROOT}/${garmentName}`,
-      modeledImage: modeledImage || existing?.modeledImage || null,
       originalImage: originalImage || existing?.originalImage || null,
       importJobId: job.id,
       customOrder: Number.isFinite(existing?.customOrder) ? existing.customOrder : nextCustomOrder,
       createdAt: existing?.createdAt || job.createdAt || now,
       updatedAt: now,
-    };
+    }, modeledLooks);
     const next = [...records.filter((item) => item.id !== id), record];
     await atomicJson(importedFile, next);
     return record;
@@ -1503,7 +1640,7 @@ export function wardrobeImportApi(options = {}) {
       const records = await loadImported();
       const record = records.find((candidate) => candidate.id === itemId && candidate.userId === user.id);
       if (!record) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
-      if (record.modeledImage) return record;
+      const existingLooks = modeledLooksForRecord(record);
 
       const provider = aiProvider();
       if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
@@ -1541,12 +1678,13 @@ export function wardrobeImportApi(options = {}) {
         trace: {
           jobId: itemId,
           itemName: record.name,
-          attempt: 1,
+          attempt: existingLooks.length + 1,
           personReferenceCount: models.length,
         },
       }));
 
-      const modeledName = `${itemId}-modeled.png`;
+      const lookId = randomUUID();
+      const modeledName = `${itemId}-modeled-${lookId}.png`;
       await atomicFile(path.join(libraryAssetDir, modeledName), generation.bytes);
       const latest = await loadImported();
       const index = latest.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
@@ -1554,19 +1692,49 @@ export function wardrobeImportApi(options = {}) {
         await rm(path.join(libraryAssetDir, modeledName), { force: true });
         throw apiError("The wardrobe item was deleted while its modeled look was being generated.", 409, "wardrobe_item_deleted");
       }
-      latest[index] = {
-        ...latest[index],
-        modeledImage: `${LIBRARY_ASSET_ROOT}/${modeledName}`,
-        modeledModel: generation.model,
-        modeledFallbackUsed: generation.fallbackUsed,
-        modeledGeneratedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+      const generatedAt = new Date().toISOString();
+      const modeledLook = {
+        id: lookId,
+        image: `${LIBRARY_ASSET_ROOT}/${modeledName}`,
+        model: generation.model,
+        fallbackUsed: generation.fallbackUsed,
+        generatedAt,
       };
+      latest[index] = recordWithModeledLooks({
+        ...latest[index],
+        updatedAt: generatedAt,
+      }, [...modeledLooksForRecord(latest[index]), modeledLook]);
       await atomicJson(importedFile, latest);
       return latest[index];
     })().finally(() => running.delete(lock));
     running.set(lock, task);
     return task;
+  }
+
+  async function deleteImportedModeledLook(itemId, lookId, user) {
+    const records = await loadImported();
+    const index = records.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
+    if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+    const removal = recordWithoutModeledLook(records[index], lookId);
+    const removed = removal.removed;
+    if (!removed) throw apiError("Modeled look not found.", 404, "modeled_look_not_found");
+
+    const previous = records[index];
+    records[index] = {
+      ...removal.record,
+      updatedAt: new Date().toISOString(),
+    };
+    await atomicJson(importedFile, records);
+    try {
+      const fileName = path.basename(new URL(removed.image, "http://localhost").pathname);
+      await rm(path.join(libraryAssetDir, fileName), { force: true });
+    } catch (error) {
+      records[index] = previous;
+      await atomicJson(importedFile, records).catch(() => {});
+      throw apiError("The modeled look could not be removed from storage. Try again.", 500, "modeled_look_delete_failed", error);
+    }
+    console.info(`[wardrobe] Deleted modeled look ${lookId} for "${records[index].name}" from the data volume.`);
+    return records[index];
   }
 
   async function backfillOriginalFocus() {
@@ -1922,13 +2090,12 @@ export function wardrobeImportApi(options = {}) {
       const wardrobeItemMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})(?:\/(modeled))?$/i);
       if (wardrobeItemMatch?.[2] === "modeled" && req.method === "POST") {
         const record = await generateImportedModeledLook(wardrobeItemMatch[1], user);
-        return json(res, 200, {
-          ...record,
-          image: withUser(record.image, user.id),
-          thumbnail: withUser(record.thumbnail, user.id),
-          modeledImage: withUser(record.modeledImage, user.id),
-          originalImage: withUser(record.originalImage, user.id),
-        });
+        return json(res, 200, publicImportedRecord(record, user.id));
+      }
+      const modeledLookMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/modeled\/([a-z0-9-]{1,80})$/i);
+      if (modeledLookMatch && req.method === "DELETE") {
+        const record = await deleteImportedModeledLook(modeledLookMatch[1], modeledLookMatch[2], user);
+        return json(res, 200, publicImportedRecord(record, user.id));
       }
       if (wardrobeItemMatch && !wardrobeItemMatch[2] && req.method === "PATCH") {
         const id = wardrobeItemMatch[1];
@@ -1948,25 +2115,23 @@ export function wardrobeImportApi(options = {}) {
           updatedAt: new Date().toISOString(),
         };
         await atomicJson(importedFile, records);
-        return json(res, 200, {
-          ...records[index],
-          image: withUser(records[index].image, user.id),
-          thumbnail: withUser(records[index].thumbnail, user.id),
-          modeledImage: withUser(records[index].modeledImage, user.id),
-          originalImage: withUser(records[index].originalImage, user.id),
-        });
+        return json(res, 200, publicImportedRecord(records[index], user.id));
       }
       if (wardrobeItemMatch && !wardrobeItemMatch[2] && req.method === "DELETE") {
         const id = wardrobeItemMatch[1];
         const records = await loadImported();
+        const record = records.find((candidate) => candidate.id === id && candidate.userId === user.id);
         const next = records.filter((record) => record.id !== id || record.userId !== user.id);
         if (next.length === records.length) return json(res, 404, { error: "Imported wardrobe item not found" });
         await atomicJson(importedFile, next);
-        await Promise.all([
-          rm(path.join(libraryAssetDir, `${id}-garment.png`), { force: true }),
-          rm(path.join(libraryAssetDir, `${id}-modeled.png`), { force: true }),
-          rm(path.join(libraryAssetDir, `${id}-original.png`), { force: true }),
-        ]);
+        const assets = new Set([
+          record.image,
+          record.thumbnail,
+          record.originalImage,
+          record.modeledImage,
+          ...modeledLooksForRecord(record).map((look) => look.image),
+        ].filter(Boolean).map((asset) => path.basename(new URL(asset, "http://localhost").pathname)));
+        await Promise.all([...assets].map((fileName) => rm(path.join(libraryAssetDir, fileName), { force: true })));
         return json(res, 200, { deleted: true, id });
       }
       const libraryAssetMatch = url.pathname.match(/^\/api\/import\/library\/([\w.-]+)$/i);
@@ -1977,6 +2142,7 @@ export function wardrobeImportApi(options = {}) {
           record.thumbnail,
           record.modeledImage,
           record.originalImage,
+          ...modeledLooksForRecord(record).map((look) => look.image),
         ].filter(Boolean).some((asset) => path.basename(new URL(asset, "http://localhost").pathname) === libraryAssetMatch[1]));
         if (!allowed) throw apiError("Wardrobe image not found.", 404, "wardrobe_image_not_found");
         const file = path.join(libraryAssetDir, path.basename(libraryAssetMatch[1]));

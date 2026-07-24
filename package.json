@@ -13,7 +13,8 @@
     "build": "vite build",
     "start": "node --env-file-if-exists=.env scripts/server.mjs",
     "preview": "vite preview",
-    "check": "npm run build"
+    "test": "node --test",
+    "check": "npm test && npm run build"
   },
   "dependencies": {
     "@fontsource-variable/instrument-sans": "^5.2.8",

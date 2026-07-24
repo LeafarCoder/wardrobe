@@ -739,22 +739,96 @@ button { font: inherit; }
 }
 
 .modeled-hero::before {
-  z-index: 1;
-  height: 170px;
-  -webkit-backdrop-filter: blur(7px);
-  backdrop-filter: blur(7px);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 68%);
-  mask-image: linear-gradient(to bottom, transparent 0%, #000 68%);
+  display: none;
 }
 
 .modeled-hero::after {
   z-index: 2;
-  height: 124px;
-  background: linear-gradient(to bottom, rgba(246, 241, 232, 0), var(--paper) 82%);
-  -webkit-backdrop-filter: blur(17px);
-  backdrop-filter: blur(17px);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 60%);
-  mask-image: linear-gradient(to bottom, transparent 0%, #000 60%);
+  height: 104px;
+  background: linear-gradient(
+    to bottom,
+    rgba(246, 241, 232, 0) 0%,
+    rgba(246, 241, 232, .14) 38%,
+    rgba(246, 241, 232, .7) 78%,
+    var(--paper) 100%
+  );
+}
+
+.modeled-look-toolbar {
+  position: relative;
+  z-index: 7;
+  flex: 0 0 auto;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 24px 10px;
+  background: var(--paper);
+}
+
+.modeled-look-pagination {
+  grid-column: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modeled-look-pagination button,
+.modeled-look-delete {
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.modeled-look-pagination button {
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.modeled-look-pagination span {
+  min-width: 52px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.modeled-look-pagination button:hover,
+.modeled-look-pagination button:focus-visible,
+.modeled-look-delete:hover,
+.modeled-look-delete:focus-visible {
+  border-color: var(--ink);
+  outline: none;
+}
+
+.modeled-look-delete {
+  grid-column: 3;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 9px;
+  color: var(--accent);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.modeled-look-delete:disabled {
+  color: var(--muted);
+  cursor: wait;
+  opacity: .65;
+}
+
+.modeled-look-toolbar.single .modeled-look-delete {
+  grid-column: 3;
 }
 
 @keyframes overlay-in {
@@ -816,31 +890,33 @@ button { font: inherit; }
 }
 
 .modeled-heading {
-  position: absolute;
-  top: 24px;
-  left: 24px;
+  position: relative;
   z-index: 6;
-  max-width: calc(100% - 108px);
-  padding: 13px 16px 14px;
-  background: rgba(246, 241, 232, .88);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 64px;
+  max-width: none;
+  padding: 20px 82px 20px 24px;
+  background: var(--paper);
 }
 
 .modeled-heading h2 {
-  max-width: none;
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
   font-size: 18px;
   font-weight: 520;
+  line-height: 1.15;
   letter-spacing: -.015em;
   text-transform: none;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .has-hero-image .viewer-icon-close {
-  top: 24px;
+  top: 11px;
   right: 24px;
-  background: rgba(246, 241, 232, .88);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
+  background: var(--paper);
 }
 
 .viewer-swatch {
@@ -1482,11 +1558,14 @@ button { font: inherit; }
   .viewer { padding: max(24px, env(safe-area-inset-top)) 22px max(28px, env(safe-area-inset-bottom)); }
   .modeled-hero { flex-basis: 360px; height: 360px; }
   .modeled-hero-photo { height: 326px; object-position: 49% 43%; }
-  .modeled-hero::before { height: 150px; }
-  .modeled-hero::after { height: 112px; }
-  .modeled-heading { top: 20px; left: 20px; padding: 11px 13px 12px; }
+  .modeled-hero::after { height: 96px; }
+  .modeled-heading { min-height: 58px; padding: 17px 70px 17px 20px; }
   .modeled-heading h2 { font-size: 17px; }
-  .has-hero-image .viewer-icon-close { top: 20px; right: 20px; }
+  .has-hero-image .viewer-icon-close { top: 8px; right: 16px; }
+  .modeled-look-toolbar { padding: 2px 16px 9px; }
+  .modeled-look-pagination { gap: 5px; }
+  .modeled-look-pagination span { min-width: 42px; }
+  .modeled-look-delete { padding-inline: 7px; }
   .viewer-art.viewer-art-floating { right: 15px; bottom: 0; flex-basis: auto; width: 40%; height: 158px; min-height: 0; padding: 0; }
   .has-hero-image .viewer-details.editing { padding: 12px 22px 30px; }
   .viewer-heading { padding-top: 0; }
