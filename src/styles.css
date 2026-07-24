@@ -331,7 +331,7 @@ button { font: inherit; }
 }
 
 .profile-editor {
-  width: min(760px, 100%);
+  width: min(940px, 100%);
   max-height: calc(100vh - 48px);
   display: flex;
   flex-direction: column;
@@ -407,6 +407,7 @@ button { font: inherit; }
 .profile-fields label > span small { color: var(--muted); font-weight: 450; }
 .profile-field-wide { grid-column: 1 / -1; }
 .profile-fields input,
+.profile-fields select,
 .profile-fields textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -420,8 +421,75 @@ button { font: inherit; }
 }
 
 .profile-fields input:focus,
+.profile-fields select:focus,
 .profile-fields textarea:focus { border-color: var(--ink); outline: none; }
 .profile-save-error { grid-column: 1 / -1; margin: 0; color: var(--accent); font-size: 11px; }
+.profile-currency-field select { max-width: 220px; }
+
+.profile-size-editor {
+  min-width: 0;
+  display: grid;
+  gap: 15px;
+  margin: 0;
+  border: 1px solid var(--line);
+  padding: 16px;
+}
+
+.profile-size-editor > legend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.profile-size-editor > p {
+  margin: -3px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.profile-size-controls,
+.profile-size-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.profile-size-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.profile-size-controls label,
+.profile-size-grid label {
+  min-width: 0;
+}
+
+.profile-preference-list {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  border: 1px solid var(--line);
+  padding: 16px;
+}
+
+.profile-preference-list > legend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.profile-preference-list > legend small {
+  color: var(--muted);
+  font-weight: 450;
+}
+
+.profile-preference-list > p {
+  margin: -2px 0 2px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
 
 .profile-editor > footer {
   justify-content: flex-end;
@@ -1349,6 +1417,8 @@ button { font: inherit; }
 }
 
 .field > span,
+.field > .field-heading,
+.field > legend,
 .color-field legend {
   display: block;
   margin-bottom: 8px;
@@ -1357,6 +1427,77 @@ button { font: inherit; }
   font-weight: 500;
   letter-spacing: .1em;
   text-transform: uppercase;
+}
+
+.field > span small,
+.field > .field-heading small,
+.field > legend small {
+  color: var(--muted);
+  font-size: .9em;
+  font-weight: 450;
+  letter-spacing: 0;
+  text-transform: lowercase;
+}
+
+.brand-field {
+  position: relative;
+}
+
+.brand-suggestions {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  z-index: 6;
+  max-height: 174px;
+  overflow-y: auto;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 0 12px 30px rgba(25, 24, 22, .14);
+}
+
+.brand-suggestions button {
+  width: 100%;
+  display: block;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 9px 10px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.brand-suggestions button:last-child { border-bottom: 0; }
+.brand-suggestions button:hover,
+.brand-suggestions button:focus-visible,
+.brand-suggestions button[aria-selected="true"] { background: var(--ink); color: var(--paper); outline: none; }
+.brand-suggestions p { margin: 0; padding: 10px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+
+.purchase-price-field {
+  grid-column: 1 / -1;
+}
+
+.purchase-price-field > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+}
+
+.purchase-price-field input {
+  border-right: 0;
+}
+
+.purchase-price-currency {
+  min-height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  padding: 9px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .field input,
@@ -1700,6 +1841,8 @@ button { font: inherit; }
   .profile-editor__body { padding: 22px 18px; }
   .profile-editor > footer { padding: 14px 18px max(14px, env(safe-area-inset-bottom)); }
   .profile-fields { grid-template-columns: 1fr 90px; }
+  .profile-size-controls { grid-template-columns: 1fr; }
+  .profile-size-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .gallery-controls { margin-top: 24px; gap: 15px; }
   .category-nav button { min-height: 44px; padding: 9px 14px; font-size: 10px; }
   .organization-control { grid-template-columns: 1fr; gap: 7px; }

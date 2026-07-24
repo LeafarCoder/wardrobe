@@ -56,6 +56,7 @@ If you are setting up Wardrobe for a user, ask how they want to import their clo
 - Keeps originals, jobs, generated images, and the JSON database local in `data/`
 - Supports drag, drop, paste, editing, review, regeneration, and approval
 - Lets modeled items rotate through saved looks, toggle to the original source, and delete individual generated images from storage
+- Stores optional garment brands, purchase months, and prices, with an oldest-purchase-first organization mode
 
 ## User profiles
 
@@ -63,7 +64,11 @@ Use the wardrobe switcher in the top-right corner to add a person, edit the curr
 
 - a name and optional age
 - one to three identity-reference photos
-- fashion style, sizing and fit notes, and free-form preferences
+- fashion style and free-form preferences
+- a regional sizing system with separate tops, bottoms, outerwear, shoes, and ring sizes
+- a preferred fit plus optional brand-specific sizing notes
+- a preferred currency shared by every garment price
+- preferred materials and favorite colors for styling context
 - its own visible clothes and in-progress imports
 
 The original single-user wardrobe is assigned to the initial `My wardrobe` profile automatically. Existing local browser edits and deletions are also preserved for that profile. New garments and jobs are tagged with their owner, so switching profiles cannot mix wardrobes. Profile references and preferences are included only in that user's future modeled-image requests.

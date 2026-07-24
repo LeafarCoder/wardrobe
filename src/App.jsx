@@ -3,6 +3,19 @@ import { CaretDown, CaretLeft, CaretRight, Check, DownloadSimple, LockKey, Penci
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { colorGroup } from "./color-organization.js";
+import {
+  BRAND_OPTIONS,
+  CURRENCY_OPTIONS,
+  FIT_OPTIONS,
+  normalizePreferenceList,
+  normalizePurchaseCurrency,
+  normalizePurchaseMonth,
+  normalizePurchasePrice,
+  normalizeSizeProfile,
+  purchaseMonthValue,
+  SIZE_FIELDS,
+  SIZE_SYSTEMS,
+} from "./wardrobe-metadata.js";
 
 const STORAGE_KEY = "open-wardrobe-edits-v1";
 const DELETED_STORAGE_KEY = "open-wardrobe-deleted-v1";
@@ -20,6 +33,7 @@ const TYPE_MAP = Object.fromEntries(TYPES.map((type) => [type.id, type]));
 const ORGANIZATION_MODES = [
   { id: "custom", label: "My order" },
   { id: "updated", label: "Last updated" },
+  { id: "purchase-oldest", label: "Oldest first" },
   { id: "color", label: "Colors" },
 ];
 const ORGANIZATION_MODE_IDS = new Set(ORGANIZATION_MODES.map((mode) => mode.id));
@@ -47,6 +61,19 @@ const IMAGE_PREFETCHES = new Map();
 function timestampValue(item) {
   const value = Date.parse(item.updatedAt || item.modeledGeneratedAt || item.createdAt || "");
   return Number.isFinite(value) ? value : 0;
+}
+
+function editableItem(item) {
+  return {
+    name: item.name || "",
+    part: item.part,
+    color: item.color || "#9a9286",
+    secondaryColor: item.secondaryColor || null,
+    brand: item.brand || "",
+    purchaseMonth: normalizePurchaseMonth(item.purchaseMonth) || "",
+    purchasePrice: normalizePurchasePrice(item.purchasePrice) ?? "",
+    tags: [...(item.tags || [])],
+  };
 }
 
 function itemModeledLooks(item) {
@@ -138,6 +165,9 @@ function persistEdit(item, userId) {
     part: item.part,
     color: item.color || null,
     secondaryColor: item.secondaryColor || null,
+    brand: item.brand || "",
+    purchaseMonth: normalizePurchaseMonth(item.purchaseMonth),
+    purchasePrice: normalizePurchasePrice(item.purchasePrice),
     tags: item.tags || [],
   };
   localStorage.setItem(userStorageKey(STORAGE_KEY, userId), JSON.stringify(edits));
@@ -337,7 +367,13 @@ function GalleryItem({
   );
 }
 
-function TagEditor({ tags, onChange }) {
+function TagEditor({
+  tags,
+  onChange,
+  placeholder = "Add a detail",
+  inputLabel = "Add detail tag",
+  addLabel = "Add detail",
+}) {
   const [input, setInput] = useState("");
 
   const addTag = () => {
@@ -369,10 +405,10 @@ function TagEditor({ tags, onChange }) {
               addTag();
             }
           }}
-          placeholder="Add a detail"
-          aria-label="Add detail tag"
+          placeholder={placeholder}
+          aria-label={inputLabel}
         />
-        <button type="button" onClick={addTag} disabled={!input.trim()} aria-label="Add detail">
+        <button type="button" onClick={addTag} disabled={!input.trim()} aria-label={addLabel}>
           <Plus size={15} weight="regular" aria-hidden="true" />
         </button>
       </div>
@@ -440,8 +476,73 @@ function ColorControl({ label, field, value, palette, onChange, sampling, setSam
   );
 }
 
-function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleStatus }) {
+function BrandField({ value, onChange }) {
+  const fieldRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const normalizedQuery = value.trim().toLowerCase();
+  const suggestions = useMemo(() => (
+    [...BRAND_OPTIONS].sort((first, second) => {
+      const firstStarts = first.toLowerCase().startsWith(normalizedQuery);
+      const secondStarts = second.toLowerCase().startsWith(normalizedQuery);
+      return Number(secondStarts) - Number(firstStarts) || first.localeCompare(second);
+    }).filter((brand) => !normalizedQuery || brand.toLowerCase().includes(normalizedQuery))
+  ), [normalizedQuery]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (!fieldRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [open]);
+
+  return (
+    <div className="field brand-field" ref={fieldRef}>
+      <label className="field-heading" htmlFor="wardrobe-brand-input">Brand <small>optional</small></label>
+      <input
+        id="wardrobe-brand-input"
+        value={value}
+        maxLength="80"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={open}
+        aria-controls="wardrobe-brand-suggestions"
+        onFocus={() => setOpen(true)}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setOpen(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+        }}
+        placeholder="Search or type a brand"
+      />
+      {open && (
+        <div className="brand-suggestions" id="wardrobe-brand-suggestions" role="listbox" aria-label="Brand suggestions">
+          {suggestions.length ? suggestions.map((brand) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={brand.toLowerCase() === value.trim().toLowerCase()}
+              key={brand}
+              onClick={() => {
+                onChange(brand);
+                setOpen(false);
+              }}
+            >
+              {brand}
+            </button>
+          )) : <p>Keep typing to use “{value.trim()}” as a custom brand.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleStatus, currency }) {
   const suggestedSecondary = palette.find((color) => color.toLowerCase() !== draft.color?.toLowerCase()) || "#9a9286";
+  const currencyOption = CURRENCY_OPTIONS.find((option) => option.id === currency) || CURRENCY_OPTIONS[0];
 
   return (
     <div className="item-editor">
@@ -460,6 +561,39 @@ function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleSta
           {TYPES.slice(1).map((type) => <option value={type.id} key={type.id}>{type.label}</option>)}
         </select>
       </label>
+
+      <BrandField
+        value={draft.brand}
+        onChange={(brand) => setDraft((current) => ({ ...current, brand }))}
+      />
+
+      <label className="field">
+        <span>Purchased <small>optional</small></span>
+        <input
+          type="month"
+          value={draft.purchaseMonth}
+          onChange={(event) => setDraft((current) => ({ ...current, purchaseMonth: event.target.value }))}
+          aria-label="Purchase month and year"
+        />
+      </label>
+
+      <fieldset className="field purchase-price-field">
+        <legend>Purchase price <small>optional</small></legend>
+        <div>
+          <input
+            type="number"
+            min="0"
+            max="1000000"
+            step="0.01"
+            inputMode="decimal"
+            value={draft.purchasePrice}
+            onChange={(event) => setDraft((current) => ({ ...current, purchasePrice: event.target.value }))}
+            placeholder="79.90"
+            aria-label="Purchase price"
+          />
+          <span className="purchase-price-currency">{currencyOption.label}</span>
+        </div>
+      </fieldset>
 
       <fieldset className="color-field">
         <legend>Colors</legend>
@@ -499,6 +633,7 @@ function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleSta
 
 function ItemViewer({
   item,
+  currency,
   onClose,
   onSave,
   onDelete,
@@ -517,7 +652,7 @@ function ItemViewer({
   const [sampling, setSampling] = useState(null);
   const [sampleStatus, setSampleStatus] = useState("");
   const [palette, setPalette] = useState(item.palette || []);
-  const [draft, setDraft] = useState({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
+  const [draft, setDraft] = useState(() => editableItem(item));
   const [shaking, setShaking] = useState(false);
   const [closeBlocked, setCloseBlocked] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
@@ -541,17 +676,25 @@ function ItemViewer({
 
   const isDirty = useMemo(() => {
     const normalizedTags = (tags) => tags.map((tag) => tag.trim()).filter(Boolean);
+    const draftPrice = normalizePurchasePrice(draft.purchasePrice);
+    const itemPrice = normalizePurchasePrice(item.purchasePrice);
     return JSON.stringify({
       name: draft.name.trim(),
       part: draft.part,
       color: draft.color?.toLowerCase() || null,
       secondaryColor: draft.secondaryColor?.toLowerCase() || null,
+      brand: draft.brand.trim(),
+      purchaseMonth: normalizePurchaseMonth(draft.purchaseMonth),
+      purchasePrice: draftPrice,
       tags: normalizedTags(draft.tags),
     }) !== JSON.stringify({
       name: (item.name || "").trim(),
       part: item.part,
       color: item.color?.toLowerCase() || null,
       secondaryColor: item.secondaryColor?.toLowerCase() || null,
+      brand: (item.brand || "").trim(),
+      purchaseMonth: normalizePurchaseMonth(item.purchaseMonth),
+      purchasePrice: itemPrice,
       tags: normalizedTags(item.tags || []),
     });
   }, [draft, item]);
@@ -609,7 +752,7 @@ function ItemViewer({
     samplingCanvasRef.current = null;
     setSampleStatus("");
     setPalette(item.palette || []);
-    setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
+    setDraft(editableItem(item));
     setShowOriginal(false);
     setModeledIndex(Math.max(0, itemModeledLooks(item).length - 1));
     setDeleteCandidate(null);
@@ -627,14 +770,23 @@ function ItemViewer({
   }, [activeModeledIndex, item.originalImage, item.originalPreview, modeledLooks]);
 
   const cancelEditing = () => {
-    setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
+    setDraft(editableItem(item));
     setSampling(null);
     setSampleStatus("");
     onClose();
   };
 
   const saveEditing = () => {
-    onSave({ ...item, ...draft, name: draft.name.trim(), tags: draft.tags.map((tag) => tag.trim()).filter(Boolean) });
+    const purchasePrice = normalizePurchasePrice(draft.purchasePrice);
+    onSave({
+      ...item,
+      ...draft,
+      name: draft.name.trim(),
+      brand: draft.brand.trim(),
+      purchaseMonth: normalizePurchaseMonth(draft.purchaseMonth),
+      purchasePrice,
+      tags: draft.tags.map((tag) => tag.trim()).filter(Boolean),
+    });
     setSampling(null);
     setSampleStatus("Changes saved.");
   };
@@ -877,6 +1029,7 @@ function ItemViewer({
           sampling={sampling}
           setSampling={setSampling}
           sampleStatus={sampleStatus}
+          currency={currency}
         />
 
         {closeBlocked && <p className="unsaved-notice" role="status">Save or cancel changes before leaving this item.</p>}
@@ -1046,13 +1199,82 @@ function ProfileMenu({ users, currentUser, onSelect, onAdd, onEdit, onExport, on
   );
 }
 
+function ProfileSizeEditor({ value, onChange }) {
+  const normalized = normalizeSizeProfile(value);
+  const system = SIZE_SYSTEMS.find((candidate) => candidate.id === normalized.system) || SIZE_SYSTEMS[0];
+  const update = (field, nextValue) => onChange({ ...normalized, [field]: nextValue });
+
+  return (
+    <fieldset className="profile-size-editor profile-field-wide">
+      <legend>Sizes and fit</legend>
+      <p>Choose the sizing system printed on most of your clothes. You can still type any brand-specific size.</p>
+      <div className="profile-size-controls">
+        <label>
+          <span>Sizing system</span>
+          <select value={normalized.system} onChange={(event) => update("system", event.target.value)}>
+            {SIZE_SYSTEMS.map((candidate) => <option value={candidate.id} key={candidate.id}>{candidate.label}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Preferred fit</span>
+          <select value={normalized.fit} onChange={(event) => update("fit", event.target.value)}>
+            {FIT_OPTIONS.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="profile-size-grid">
+        {SIZE_FIELDS.map((field) => {
+          const listId = `profile-${normalized.system}-${field.id}-sizes`;
+          return (
+            <label key={field.id}>
+              <span>{field.label} <small>optional</small></span>
+              <input
+                value={normalized[field.id]}
+                list={system.suggestions[field.id]?.length ? listId : undefined}
+                maxLength="40"
+                onChange={(event) => update(field.id, event.target.value)}
+                placeholder={system.examples[field.id]}
+              />
+              {!!system.suggestions[field.id]?.length && (
+                <datalist id={listId}>
+                  {system.suggestions[field.id].map((suggestion) => <option value={suggestion} key={suggestion} />)}
+                </datalist>
+              )}
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+function ProfilePreferenceList({ label, help, values, onChange, placeholder }) {
+  return (
+    <fieldset className="profile-preference-list profile-field-wide">
+      <legend>{label} <small>optional</small></legend>
+      <p>{help}</p>
+      <TagEditor
+        tags={values}
+        onChange={(nextValues) => onChange(normalizePreferenceList(nextValues))}
+        placeholder={placeholder}
+        inputLabel={`Add ${label.toLowerCase()}`}
+        addLabel={`Add ${label.toLowerCase()}`}
+      />
+    </fieldset>
+  );
+}
+
 function ProfileEditor({ user, busy, error, onClose, onSave }) {
   const isNew = !user;
   const [draft, setDraft] = useState({
     name: user?.name || "",
     age: user?.age || "",
     fashionStyle: user?.fashionStyle || "",
+    sizeProfile: normalizeSizeProfile(user?.sizeProfile),
     sizes: user?.sizes || "",
+    preferredCurrency: normalizePurchaseCurrency(user?.preferredCurrency),
+    preferredMaterials: normalizePreferenceList(user?.preferredMaterials),
+    favoriteColors: normalizePreferenceList(user?.favoriteColors),
     preferences: user?.preferences || "",
   });
   const [files, setFiles] = useState([]);
@@ -1122,8 +1344,29 @@ function ProfileEditor({ user, busy, error, onClose, onSave }) {
             <label><span>Name</span><input required maxLength="80" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Rafael" /></label>
             <label><span>Age <small>optional</small></span><input type="number" min="1" max="120" value={draft.age} onChange={(event) => setDraft({ ...draft, age: event.target.value })} placeholder="32" /></label>
             <label className="profile-field-wide"><span>Fashion style</span><input maxLength="240" value={draft.fashionStyle} onChange={(event) => setDraft({ ...draft, fashionStyle: event.target.value })} placeholder="Minimal, relaxed tailoring, quiet colors" /></label>
-            <label className="profile-field-wide"><span>Sizes and fit</span><input maxLength="240" value={draft.sizes} onChange={(event) => setDraft({ ...draft, sizes: event.target.value })} placeholder="Usually M tops, 32 trousers; prefers a relaxed fit" /></label>
-            <label className="profile-field-wide"><span>Preferences</span><textarea rows="4" maxLength="1200" value={draft.preferences} onChange={(event) => setDraft({ ...draft, preferences: event.target.value })} placeholder="Favorite colors, materials, occasions, styling goals, and anything to avoid." /></label>
+            <label className="profile-field-wide profile-currency-field">
+              <span>Preferred currency</span>
+              <select value={draft.preferredCurrency} onChange={(event) => setDraft({ ...draft, preferredCurrency: event.target.value })}>
+                {CURRENCY_OPTIONS.map((currency) => <option value={currency.id} key={currency.id}>{currency.label}</option>)}
+              </select>
+            </label>
+            <ProfileSizeEditor value={draft.sizeProfile} onChange={(sizeProfile) => setDraft({ ...draft, sizeProfile })} />
+            <label className="profile-field-wide"><span>Additional sizing notes <small>optional</small></span><input maxLength="240" value={draft.sizes} onChange={(event) => setDraft({ ...draft, sizes: event.target.value })} placeholder="This brand runs small; prefer extra room at the shoulders" /></label>
+            <ProfilePreferenceList
+              label="Preferred materials"
+              help="Materials you enjoy wearing or want prioritized in styling."
+              values={draft.preferredMaterials}
+              onChange={(preferredMaterials) => setDraft({ ...draft, preferredMaterials })}
+              placeholder="Linen, cotton, wool…"
+            />
+            <ProfilePreferenceList
+              label="Favorite colors"
+              help="Color names or families to favor in supporting pieces and suggestions."
+              values={draft.favoriteColors}
+              onChange={(favoriteColors) => setDraft({ ...draft, favoriteColors })}
+              placeholder="Olive, navy, cream…"
+            />
+            <label className="profile-field-wide"><span>Other preferences</span><textarea rows="4" maxLength="1200" value={draft.preferences} onChange={(event) => setDraft({ ...draft, preferences: event.target.value })} placeholder="Occasions, styling goals, sensory needs, and anything to avoid." /></label>
           </div>
           {error && <p className="profile-save-error" role="alert">{error}</p>}
         </div>
@@ -1225,6 +1468,9 @@ export function App() {
                   part: item.part,
                   color: item.color,
                   secondaryColor: item.secondaryColor,
+                  brand: item.brand,
+                  purchaseMonth: item.purchaseMonth,
+                  purchasePrice: item.purchasePrice,
                   tags: item.tags,
                 }),
               });
@@ -1283,6 +1529,13 @@ export function App() {
     if (organizationMode === "updated") {
       return [...filtered].sort((first, second) => (
         timestampValue(second) - timestampValue(first)
+        || first.name.localeCompare(second.name)
+      ));
+    }
+    if (organizationMode === "purchase-oldest") {
+      return [...filtered].sort((first, second) => (
+        purchaseMonthValue(first) - purchaseMonthValue(second)
+        || timestampValue(first) - timestampValue(second)
         || first.name.localeCompare(second.name)
       ));
     }
@@ -1443,6 +1696,9 @@ export function App() {
           part: updatedItem.part,
           color: updatedItem.color,
           secondaryColor: updatedItem.secondaryColor,
+          brand: updatedItem.brand,
+          purchaseMonth: updatedItem.purchaseMonth,
+          purchasePrice: updatedItem.purchasePrice,
           tags: updatedItem.tags,
         }),
       });
@@ -1643,7 +1899,9 @@ export function App() {
                       ? "Drag pieces to arrange"
                       : organizationMode === "color"
                         ? "Grouped by tone"
-                        : "Newest changes first"}
+                        : organizationMode === "purchase-oldest"
+                          ? "Unknown purchase dates appear last"
+                          : "Newest changes first"}
               </small>
             </div>
           </div>
@@ -1697,6 +1955,7 @@ export function App() {
       {selectedItem && (
         <ItemViewer
           item={selectedItem}
+          currency={normalizePurchaseCurrency(currentUser?.preferredCurrency)}
           onClose={closeViewer}
           onSave={saveItem}
           onDelete={deleteItem}

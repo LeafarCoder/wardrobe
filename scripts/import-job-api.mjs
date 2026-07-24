@@ -6,6 +6,15 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import sharp from "sharp";
+import {
+  normalizeBrand,
+  normalizePreferenceList,
+  normalizePurchaseCurrency,
+  normalizePurchaseMonth,
+  normalizePurchasePrice,
+  normalizeSizeProfile,
+  sizeProfileSummary,
+} from "../src/wardrobe-metadata.js";
 
 const API_ROOT = "/api/import/jobs";
 const ASSET_ROOT = "/api/import/assets";
@@ -17,7 +26,7 @@ const AUTH_CONTEXT = "wardrobe-access-v1";
 const STAGES = new Set(["crop", "garment", "modeled"]);
 const DECISIONS = new Set(["approve", "reject"]);
 const PARTS = new Set(["upperbody", "wholebody_up", "lowerbody", "accessories_up", "shoes"]);
-const WARDROBE_SORT_MODES = new Set(["custom", "updated", "color"]);
+const WARDROBE_SORT_MODES = new Set(["custom", "updated", "purchase-oldest", "color"]);
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 const USER_ID = /^(?:default|[a-f0-9-]{36})$/i;
 const TAR_BLOCK_SIZE = 512;
@@ -545,6 +554,9 @@ function normalizeMetadata(value = {}) {
     part: PARTS.has(metadata.part) ? metadata.part : "upperbody",
     color,
     secondaryColor,
+    brand: normalizeBrand(metadata.brand),
+    purchaseMonth: normalizePurchaseMonth(metadata.purchaseMonth),
+    purchasePrice: normalizePurchasePrice(metadata.purchasePrice),
     tags: Array.isArray(metadata.tags) ? metadata.tags.filter((tag) => typeof tag === "string").map((tag) => tag.trim().toLowerCase().slice(0, 40)).filter(Boolean).slice(0, 12) : [],
     boundingBox: normalizeBoundingBox(metadata.boundingBox),
   };
@@ -686,11 +698,15 @@ export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metad
   const categoryDirection = metadata.part === "shoes"
     ? "The featured item is footwear. Compose this as a conventional retail fashion editorial: show the complete person in ordinary daywear, standing naturally in a head-to-toe view, with both pieces of footwear fully visible and worn normally. Keep the footwear prominent through framing and pose rather than an isolated body-part close-up. Preserve the person's apparent age exactly from the identity references."
     : "";
+  const structuredSizes = sizeProfileSummary(profile.sizeProfile);
   const profileDetails = [
     profile.name ? `The wardrobe owner is ${profile.name}.` : null,
     profile.age ? `They are ${profile.age} years old.` : null,
     profile.fashionStyle ? `Preferred fashion style: ${profile.fashionStyle}.` : null,
+    structuredSizes ? `Structured size and fit context: ${structuredSizes}.` : null,
     profile.sizes ? `Sizing and fit context: ${profile.sizes}.` : null,
+    profile.preferredMaterials?.length ? `Preferred materials: ${profile.preferredMaterials.join(", ")}.` : null,
+    profile.favoriteColors?.length ? `Favorite colors: ${profile.favoriteColors.join(", ")}.` : null,
     profile.preferences ? `Personal styling preferences and constraints: ${profile.preferences}.` : null,
   ].filter(Boolean).join(" ");
 
@@ -1381,7 +1397,11 @@ export function wardrobeImportApi(options = {}) {
       name,
       age,
       fashionStyle: cleanProfileText(input.fashionStyle ?? existing.fashionStyle, 240),
+      sizeProfile: normalizeSizeProfile(input.sizeProfile, existing.sizeProfile),
       sizes: cleanProfileText(input.sizes ?? existing.sizes, 240),
+      preferredCurrency: normalizePurchaseCurrency(input.preferredCurrency ?? existing.preferredCurrency),
+      preferredMaterials: normalizePreferenceList(input.preferredMaterials ?? existing.preferredMaterials),
+      favoriteColors: normalizePreferenceList(input.favoriteColors ?? existing.favoriteColors),
       preferences: cleanProfileText(input.preferences ?? existing.preferences, 1200),
       wardrobeSortMode: WARDROBE_SORT_MODES.has(input.wardrobeSortMode)
         ? input.wardrobeSortMode
@@ -1755,6 +1775,9 @@ export function wardrobeImportApi(options = {}) {
       part: metadata.part || "upperbody",
       color: metadata.color || "#d8d0c2",
       secondaryColor: metadata.secondaryColor || null,
+      brand: metadata.brand || "",
+      purchaseMonth: metadata.purchaseMonth || null,
+      purchasePrice: metadata.purchasePrice ?? null,
       palette: [metadata.color, metadata.secondaryColor].filter(Boolean),
       tags: Array.isArray(metadata.tags) ? metadata.tags : [],
       boundingBox: metadata.boundingBox || existing?.boundingBox || null,
@@ -2198,7 +2221,7 @@ export function wardrobeImportApi(options = {}) {
         }
 
         if (changingMode && !WARDROBE_SORT_MODES.has(input.mode)) {
-          throw apiError("Organization mode must be custom, updated, or color.", 400, "invalid_organization_mode");
+          throw apiError("Organization mode must be custom, updated, purchase-oldest, or color.", 400, "invalid_organization_mode");
         }
 
         let orderedIds = null;
@@ -2264,6 +2287,9 @@ export function wardrobeImportApi(options = {}) {
           part: metadata.part,
           color: metadata.color,
           secondaryColor: metadata.secondaryColor,
+          brand: metadata.brand,
+          purchaseMonth: metadata.purchaseMonth,
+          purchasePrice: metadata.purchasePrice,
           palette: [metadata.color, metadata.secondaryColor].filter(Boolean),
           tags: metadata.tags,
           updatedAt: new Date().toISOString(),
