@@ -143,6 +143,8 @@ Existing OpenAI configuration remains supported:
 
 Your database, user profiles, import jobs, originals, and generated assets stay in the local `data/` directory. AI processing is not fully local: the imported photo and garment crop are sent to OpenRouter or OpenAI. The current user's reference photos and profile styling context are sent only when that user explicitly requests a modeled look. API keys stay on the local Vite server and are never exposed to the browser bundle.
 
+Wardrobe keeps every original image intact and automatically creates lightweight WebP derivatives beside it: 320-pixel garment thumbnails for the gallery and 1040-pixel previews for the item panel. Existing libraries are backfilled once at startup, while new garments and modeled looks are optimized as they are saved. Only the derivatives receive long-lived private browser caching; originals remain uncached and are still included in personal-data exports. No environment variable is required.
+
 Other settings:
 
 | Variable | Default |

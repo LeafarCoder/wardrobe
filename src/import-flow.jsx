@@ -316,17 +316,15 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
         const metadata = { ...draft, secondaryColor: draft.secondaryColor || null, tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean) };
         await api(`${API}/${job.id}/metadata`, { method: "PATCH", body: JSON.stringify({ metadata }) }, userId);
         const updated = await api(`${API}/${job.id}/stages/garment/approve`, { method: "POST" }, userId);
-        const garmentPath = `/api/import/library/import-${job.id}-garment.png?user=${encodeURIComponent(userId)}`;
-        const originalPath = `/api/import/library/import-${job.id}-original.png?user=${encodeURIComponent(userId)}`;
-        onGarmentApproved?.({
+        onGarmentApproved?.(updated.importedRecord || {
           id: `import-${job.id}`,
           ...metadata,
           boundingBox: updated.metadata?.boundingBox || job.metadata?.boundingBox || null,
           originalFocusBox: updated.originalFocusBox || job.originalFocusBox || null,
-          image: garmentPath,
-          thumbnail: garmentPath,
+          image: `/api/import/library/import-${job.id}-garment.png?user=${encodeURIComponent(userId)}`,
+          thumbnail: `/api/import/library/import-${job.id}-garment.png?user=${encodeURIComponent(userId)}`,
           modeledImage: null,
-          originalImage: originalPath,
+          originalImage: `/api/import/library/import-${job.id}-original.png?user=${encodeURIComponent(userId)}`,
           palette: [metadata.color, metadata.secondaryColor].filter(Boolean),
           importJobId: job.id,
         });

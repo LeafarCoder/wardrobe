@@ -42,6 +42,7 @@ const LEGACY_ORIGINAL_FOCUS = {
   accessories_up: [50, 54],
   shoes: [50, 78],
 };
+const IMAGE_PREFETCHES = new Map();
 
 function timestampValue(item) {
   const value = Date.parse(item.updatedAt || item.modeledGeneratedAt || item.createdAt || "");
@@ -59,6 +60,38 @@ function itemModeledLooks(item) {
     fallbackUsed: Boolean(item.modeledFallbackUsed),
     generatedAt: item.modeledGeneratedAt || null,
   }] : [];
+}
+
+function modeledLookSource(look) {
+  return look?.preview || look?.image || null;
+}
+
+function preferredHeroImage(item) {
+  const latestLook = itemModeledLooks(item).at(-1);
+  return modeledLookSource(latestLook)
+    || item.originalPreview
+    || item.originalImage
+    || item.imagePreview
+    || item.image
+    || null;
+}
+
+function preloadImage(src) {
+  if (!src || typeof Image === "undefined" || IMAGE_PREFETCHES.has(src)) return;
+  const image = new Image();
+  image.decoding = "async";
+  IMAGE_PREFETCHES.set(src, image);
+  const release = () => IMAGE_PREFETCHES.set(src, true);
+  image.onload = release;
+  image.onerror = release;
+  image.src = src;
+}
+
+function preloadItemPanel(item) {
+  [...new Set([
+    preferredHeroImage(item),
+    item.imagePreview || item.image,
+  ].filter(Boolean))].forEach(preloadImage);
 }
 
 function originalPhotoPosition(item) {
@@ -261,12 +294,19 @@ function GalleryItem({
   draggable = false,
   dragging = false,
   dropTarget = false,
+  priority = false,
   onDragStart,
   onDragOver,
   onDrop,
   onDragEnd,
 }) {
   const type = TYPE_MAP[item.part]?.singular || "wardrobe item";
+  const prefetchedHero = useRef(false);
+  const warmHero = () => {
+    if (prefetchedHero.current) return;
+    prefetchedHero.current = true;
+    preloadItemPanel(item);
+  };
 
   return (
     <button
@@ -274,6 +314,8 @@ function GalleryItem({
       type="button"
       draggable={draggable}
       onClick={() => onOpen(item.id)}
+      onPointerEnter={warmHero}
+      onFocus={warmHero}
       onDragStart={(event) => onDragStart?.(event, item.id)}
       onDragOver={(event) => onDragOver?.(event, item.id)}
       onDrop={(event) => onDrop?.(event, item.id)}
@@ -287,6 +329,9 @@ function GalleryItem({
         alt=""
         sizes="(max-width: 520px) calc(50vw - 16px), (max-width: 860px) calc(33vw - 18px), 180px"
         breakpoints={[120, 180, 240, 320, 480]}
+        priority={priority}
+        fetchPriority={priority ? "high" : "auto"}
+        reveal
       />
     </button>
   );
@@ -454,6 +499,8 @@ function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleSta
 
 function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDeleteModeled }) {
   const closeButtonRef = useRef(null);
+  const deleteLookButtonRef = useRef(null);
+  const deleteCancelButtonRef = useRef(null);
   const imageRef = useRef(null);
   const samplingCanvasRef = useRef(null);
   const shakeTimerRef = useRef(null);
@@ -466,6 +513,7 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
   const [showOriginal, setShowOriginal] = useState(false);
   const [generatingModeled, setGeneratingModeled] = useState(false);
   const [deletingModeled, setDeletingModeled] = useState(false);
+  const [deleteCandidate, setDeleteCandidate] = useState(null);
   const [generationError, setGenerationError] = useState("");
   const type = TYPE_MAP[item.part]?.singular || "Wardrobe item";
   const modeledLooks = useMemo(() => itemModeledLooks(item), [item]);
@@ -515,7 +563,12 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === "Escape") {
-        if (sampling) setSampling(null);
+        if (deleteCandidate) {
+          if (!deletingModeled) {
+            setDeleteCandidate(null);
+            requestAnimationFrame(() => deleteLookButtonRef.current?.focus({ preventScroll: true }));
+          }
+        } else if (sampling) setSampling(null);
         else requestClose();
       }
     };
@@ -528,7 +581,11 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
       document.body.classList.remove("viewer-open");
       clearTimeout(shakeTimerRef.current);
     };
-  }, [requestClose, sampling]);
+  }, [deleteCandidate, deletingModeled, requestClose, sampling]);
+
+  useEffect(() => {
+    if (deleteCandidate) deleteCancelButtonRef.current?.focus({ preventScroll: true });
+  }, [deleteCandidate]);
 
   useEffect(() => {
     if (!isDirty) setCloseBlocked(false);
@@ -541,8 +598,18 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
     setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
     setShowOriginal(false);
     setModeledIndex(Math.max(0, itemModeledLooks(item).length - 1));
+    setDeleteCandidate(null);
     setGenerationError("");
   }, [item]);
+
+  useEffect(() => {
+    preloadImage(item.originalPreview || item.originalImage);
+    if (modeledLooks.length < 2) return;
+    const previous = (activeModeledIndex - 1 + modeledLooks.length) % modeledLooks.length;
+    const next = (activeModeledIndex + 1) % modeledLooks.length;
+    preloadImage(modeledLookSource(modeledLooks[previous]));
+    preloadImage(modeledLookSource(modeledLooks[next]));
+  }, [activeModeledIndex, item.originalImage, item.originalPreview, modeledLooks]);
 
   const cancelEditing = () => {
     setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
@@ -604,22 +671,53 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
     });
   };
 
-  const deleteModeledLook = async () => {
+  const requestDeleteModeledLook = () => {
     if (!activeModeledLook || deletingModeled || generatingModeled) return;
     if (isDirty) {
       setGenerationError("Save your item changes before deleting a modeled look.");
       nudgeUnsaved();
       return;
     }
-    if (!window.confirm(`Delete modeled look ${activeModeledIndex + 1} of ${modeledLooks.length}? This removes the image from storage.`)) return;
+    setDeleteCandidate({
+      look: activeModeledLook,
+      index: activeModeledIndex,
+      total: modeledLooks.length,
+    });
+  };
+
+  const closeDeleteConfirmation = () => {
+    if (deletingModeled) return;
+    setDeleteCandidate(null);
+    requestAnimationFrame(() => deleteLookButtonRef.current?.focus({ preventScroll: true }));
+  };
+
+  const keepDeleteDialogFocus = (event) => {
+    if (event.key !== "Tab") return;
+    const buttons = [...event.currentTarget.querySelectorAll("button:not(:disabled)")];
+    if (!buttons.length) return;
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  const deleteModeledLook = async () => {
+    if (!deleteCandidate || deletingModeled) return;
     setDeletingModeled(true);
     setGenerationError("");
     try {
-      await onDeleteModeled(item.id, activeModeledLook.id);
-      setModeledIndex(Math.max(0, activeModeledIndex - (activeModeledIndex === modeledLooks.length - 1 ? 1 : 0)));
+      await onDeleteModeled(item.id, deleteCandidate.look.id);
+      setModeledIndex(Math.max(0, deleteCandidate.index - (deleteCandidate.index === deleteCandidate.total - 1 ? 1 : 0)));
       setShowOriginal(false);
+      setDeleteCandidate(null);
     } catch (requestError) {
       setGenerationError(readableError(requestError));
+      setDeleteCandidate(null);
     } finally {
       setDeletingModeled(false);
     }
@@ -632,11 +730,12 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
     >
       <OptimizedImage
         ref={imageRef}
-        src={item.image}
+        src={item.imagePreview || item.image}
         alt={`Selected ${type.toLowerCase()}`}
         sizes="(max-width: 520px) 40vw, 300px"
         breakpoints={[160, 240, 320, 480, 640]}
         priority
+        reveal
         onLoad={handleImageLoad}
         onClick={handleImageClick}
       />
@@ -646,7 +745,7 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
 
   return (
     <div className="viewer-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
-    <div className="viewer-entry">
+    <div className="viewer-entry" aria-hidden={deleteCandidate ? "true" : undefined}>
     <aside className={`viewer editing${hasHeroImage ? " has-hero-image" : ""}${shaking ? " shake" : ""}`} role="dialog" aria-modal="true" aria-label="Selected wardrobe item">
       <button className="viewer-icon-close" type="button" onClick={requestClose} aria-label="Close viewer" ref={closeButtonRef}>
         <X size={24} weight="light" aria-hidden="true" />
@@ -670,26 +769,28 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
                 <OptimizedImage
                   key={showOriginal ? "original" : activeModeledLook.id}
                   className="modeled-hero-photo"
-                  src={showOriginal ? item.originalImage : activeModeledLook.image}
+                  src={showOriginal ? item.originalPreview || item.originalImage : modeledLookSource(activeModeledLook)}
                   alt={showOriginal ? `Original photo containing ${draft.name || type}` : `${draft.name || type} modeled look ${activeModeledIndex + 1} of ${modeledLooks.length}`}
                   style={showOriginal ? { objectPosition: originalPhotoPosition(item) } : undefined}
                   sizes="(max-width: 860px) 100vw, 520px"
                   breakpoints={[320, 480, 640, 800, 1040, 1280]}
                   quality={82}
                   priority
+                  reveal
                 />
               </button>
             ) : (
               <OptimizedImage
                 key={hasModeledImage ? activeModeledLook.id : "original"}
                 className="modeled-hero-photo"
-                src={hasModeledImage ? activeModeledLook.image : item.originalImage}
+                src={hasModeledImage ? modeledLookSource(activeModeledLook) : item.originalPreview || item.originalImage}
                 alt={hasModeledImage ? `${draft.name || type} modeled look ${activeModeledIndex + 1} of ${modeledLooks.length}` : `Original photo containing ${draft.name || type}`}
                 style={!hasModeledImage ? { objectPosition: originalPhotoPosition(item) } : undefined}
                 sizes="(max-width: 860px) 100vw, 520px"
                 breakpoints={[320, 480, 640, 800, 1040, 1280]}
                 quality={82}
                 priority
+                reveal
               />
             )}
             {hasModeledImage && hasOriginalImage && (
@@ -712,7 +813,13 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
                   </button>
                 </div>
               )}
-              <button className="modeled-look-delete" type="button" disabled={deletingModeled || generatingModeled} onClick={deleteModeledLook}>
+              <button
+                ref={deleteLookButtonRef}
+                className="modeled-look-delete"
+                type="button"
+                disabled={deletingModeled || generatingModeled}
+                onClick={requestDeleteModeledLook}
+              >
                 <Trash size={14} aria-hidden="true" />
                 {deletingModeled ? "Deleting…" : "Delete look"}
               </button>
@@ -769,6 +876,61 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
       </div>
     </aside>
     </div>
+    {deleteCandidate && (
+      <div
+        className="look-delete-overlay"
+        role="presentation"
+        onMouseDown={(event) => event.target === event.currentTarget && closeDeleteConfirmation()}
+      >
+        <section
+          className="look-delete-dialog"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="look-delete-title"
+          onKeyDown={keepDeleteDialogFocus}
+        >
+          <button
+            className="look-delete-dialog__close"
+            type="button"
+            onClick={closeDeleteConfirmation}
+            disabled={deletingModeled}
+            aria-label="Cancel deleting this look"
+          >
+            <X size={22} weight="light" aria-hidden="true" />
+          </button>
+          <div className="look-delete-dialog__image">
+            <OptimizedImage
+              src={modeledLookSource(deleteCandidate.look)}
+              alt={`${draft.name || type} modeled look to delete`}
+              sizes="(max-width: 520px) calc(100vw - 64px), 400px"
+              breakpoints={[320, 480, 640, 800]}
+              quality={82}
+              priority
+              reveal
+            />
+          </div>
+          <div className="look-delete-dialog__body">
+            <p className="look-delete-dialog__eyebrow">Delete look</p>
+            <h2 id="look-delete-title">Are you sure you want to delete this look?</h2>
+          </div>
+          <div className="look-delete-dialog__actions">
+            <button
+              ref={deleteCancelButtonRef}
+              className="secondary-button"
+              type="button"
+              onClick={closeDeleteConfirmation}
+              disabled={deletingModeled}
+            >
+              Cancel
+            </button>
+            <button className="look-delete-dialog__confirm" type="button" onClick={deleteModeledLook} disabled={deletingModeled}>
+              <Trash size={15} aria-hidden="true" />
+              {deletingModeled ? "Deleting…" : "Delete look"}
+            </button>
+          </div>
+        </section>
+      </div>
+    )}
     </div>
   );
 }
@@ -1120,6 +1282,24 @@ export function App() {
     })).filter((group) => group.items.length);
   }, [organizationMode, visibleItems]);
 
+  const visibleItemIndex = useMemo(
+    () => new Map(visibleItems.map((item, index) => [item.id, index])),
+    [visibleItems],
+  );
+
+  useEffect(() => {
+    if (loading || !visibleItems.length || navigator.connection?.saveData) return undefined;
+    const warmVisibleHeroes = () => {
+      visibleItems.slice(0, 6).forEach(preloadItemPanel);
+    };
+    if ("requestIdleCallback" in window) {
+      const idleId = window.requestIdleCallback(warmVisibleHeroes, { timeout: 1800 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timeoutId = window.setTimeout(warmVisibleHeroes, 700);
+    return () => window.clearTimeout(timeoutId);
+  }, [loading, visibleItems]);
+
   const chooseType = (typeId) => {
     setActiveType(typeId);
     setSelectedId(null);
@@ -1454,6 +1634,7 @@ export function App() {
                       item={item}
                       selected={selectedId === item.id}
                       onOpen={openItem}
+                      priority={(visibleItemIndex.get(item.id) ?? Infinity) < 8}
                     />
                   )),
                 ])
@@ -1463,6 +1644,7 @@ export function App() {
                     item={item}
                     selected={selectedId === item.id}
                     onOpen={openItem}
+                    priority={(visibleItemIndex.get(item.id) ?? Infinity) < 8}
                     draggable={organizationMode === "custom" && organizationStatus !== "saving"}
                     dragging={draggedId === item.id}
                     dropTarget={dropTargetId === item.id}

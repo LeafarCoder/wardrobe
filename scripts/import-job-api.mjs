@@ -21,6 +21,11 @@ const WARDROBE_SORT_MODES = new Set(["custom", "updated", "color"]);
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 const USER_ID = /^(?:default|[a-f0-9-]{36})$/i;
 const TAR_BLOCK_SIZE = 512;
+const IMAGE_VARIANT_VERSION = 1;
+const IMAGE_VARIANTS = {
+  thumbnail: { width: 320, height: 320, quality: 80, alphaQuality: 100 },
+  preview: { width: 1040, height: 1040, quality: 82, alphaQuality: 100 },
+};
 const OPENROUTER_KLEIN_4B = "black-forest-labs/flux.2-klein-4b";
 const OPENROUTER_MODELS_WITHOUT_NORMALIZED_DIMENSIONS = new Set([OPENROUTER_KLEIN_4B]);
 const OPENROUTER_MODELS_WITHOUT_ZDR = new Set([OPENROUTER_KLEIN_4B]);
@@ -400,9 +405,13 @@ export function modeledLooksForRecord(record = {}) {
       suffix += 1;
     }
     seen.add(id);
+    const preview = typeof look.preview === "string" && look.preview.trim()
+      ? look.preview
+      : null;
     return [{
       id,
       image: look.image,
+      ...(preview ? { preview } : {}),
       model: typeof look.model === "string" && look.model ? look.model : null,
       fallbackUsed: Boolean(look.fallbackUsed),
       generatedAt: typeof look.generatedAt === "string" && look.generatedAt ? look.generatedAt : null,
@@ -437,14 +446,29 @@ function publicImportedRecord(record, userId) {
   return {
     ...record,
     image: withUser(record.image, userId),
+    imagePreview: withUser(record.imagePreview, userId),
     thumbnail: withUser(record.thumbnail, userId),
     modeledImage: withUser(record.modeledImage, userId),
     modeledLooks: modeledLooksForRecord(record).map((look) => ({
       ...look,
       image: withUser(look.image, userId),
+      preview: withUser(look.preview, userId),
     })),
     originalImage: withUser(record.originalImage, userId),
+    originalPreview: withUser(record.originalPreview, userId),
   };
+}
+
+export function importedRecordAssets(record = {}) {
+  return [
+    record.image,
+    record.imagePreview,
+    record.thumbnail,
+    record.originalImage,
+    record.originalPreview,
+    record.modeledImage,
+    ...modeledLooksForRecord(record).flatMap((look) => [look.image, look.preview]),
+  ].filter(Boolean);
 }
 
 function publicJob(job) {
@@ -461,6 +485,45 @@ function publicJob(job) {
 
 function extension(mime = "image/png") {
   return ({ "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" })[mime] || "png";
+}
+
+function imageMime(fileName) {
+  return ({
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+  })[path.extname(fileName).toLowerCase()] || "application/octet-stream";
+}
+
+export function imageVariantFileName(asset, variant) {
+  if (!IMAGE_VARIANTS[variant]) throw new Error(`Unknown image variant: ${variant}`);
+  const fileName = path.basename(new URL(asset, "http://localhost").pathname);
+  const parsed = path.parse(fileName);
+  return `${parsed.name}-${variant}-v${IMAGE_VARIANT_VERSION}.webp`;
+}
+
+export async function writeImageVariant(sourceFile, targetFile, variant) {
+  const settings = IMAGE_VARIANTS[variant];
+  if (!settings) throw new Error(`Unknown image variant: ${variant}`);
+  const bytes = await sharp(sourceFile)
+    .rotate()
+    .resize({
+      width: settings.width,
+      height: settings.height,
+      fit: "inside",
+      withoutEnlargement: true,
+      fastShrinkOnLoad: true,
+    })
+    .webp({
+      quality: settings.quality,
+      alphaQuality: settings.alphaQuality,
+      effort: 4,
+      smartSubsample: true,
+    })
+    .toBuffer();
+  await atomicFile(targetFile, bytes);
+  return bytes.length;
 }
 
 function decodeImage(input) {
@@ -1567,6 +1630,83 @@ export function wardrobeImportApi(options = {}) {
     }
   }
 
+  const libraryAssetUrl = (fileName, version = null) => (
+    `${LIBRARY_ASSET_ROOT}/${fileName}${version ? `?v=${encodeURIComponent(version)}` : ""}`
+  );
+
+  async function ensureLibraryVariant(asset, variant) {
+    if (!asset) return null;
+    const sourceName = path.basename(new URL(asset, "http://localhost").pathname);
+    const sourceFile = path.join(libraryAssetDir, sourceName);
+    const sourceDetails = await stat(sourceFile);
+    const sourceVersion = Math.trunc(sourceDetails.mtimeMs).toString(36);
+    const targetName = imageVariantFileName(asset, variant);
+    const targetFile = path.join(libraryAssetDir, targetName);
+    try {
+      const targetDetails = await stat(targetFile);
+      if (targetDetails.isFile() && targetDetails.mtimeMs >= sourceDetails.mtimeMs) {
+        return libraryAssetUrl(targetName, sourceVersion);
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const bytes = await writeImageVariant(
+      sourceFile,
+      targetFile,
+      variant,
+    );
+    console.info(`[wardrobe] Created ${variant} image ${targetName} (${Math.max(1, Math.round(bytes / 1024))} KB).`);
+    return libraryAssetUrl(targetName, sourceVersion);
+  }
+
+  async function safeLibraryVariant(asset, variant, label) {
+    if (!asset) return null;
+    try {
+      return await ensureLibraryVariant(asset, variant);
+    } catch (error) {
+      console.warn(`[wardrobe] Could not optimize ${label}: ${error.message}`);
+      return null;
+    }
+  }
+
+  async function optimizeImportedRecord(record) {
+    const looks = modeledLooksForRecord(record);
+    const [thumbnail, imagePreview, originalPreview, optimizedLooks] = await Promise.all([
+      safeLibraryVariant(record.image, "thumbnail", `${record.name || record.id} thumbnail`),
+      safeLibraryVariant(record.image, "preview", `${record.name || record.id} garment preview`),
+      safeLibraryVariant(record.originalImage, "preview", `${record.name || record.id} original-photo preview`),
+      Promise.all(looks.map(async (look) => ({
+        ...look,
+        preview: await safeLibraryVariant(
+          look.image,
+          "preview",
+          `${record.name || record.id} modeled look ${look.id}`,
+        ) || look.preview || undefined,
+      }))),
+    ]);
+
+    return recordWithModeledLooks({
+      ...record,
+      thumbnail: thumbnail || record.thumbnail || record.image,
+      imagePreview: imagePreview || record.imagePreview || null,
+      originalPreview: originalPreview || record.originalPreview || null,
+    }, optimizedLooks);
+  }
+
+  async function backfillLibraryVariants() {
+    const records = await loadImported();
+    if (!records.length) return;
+    const optimized = [];
+    let changed = 0;
+    for (const record of records) {
+      const next = await optimizeImportedRecord(record);
+      if (JSON.stringify(next) !== JSON.stringify(record)) changed += 1;
+      optimized.push(next);
+    }
+    if (changed) await atomicJson(importedFile, optimized);
+    console.info(`[wardrobe] Image optimization ready for ${records.length} existing wardrobe item${records.length === 1 ? "" : "s"}${changed ? ` (${changed} record${changed === 1 ? "" : "s"} updated)` : ""}.`);
+  }
+
   async function persistImported(job, includeModeled = false) {
     const id = `import-${job.id}`;
     await mkdir(libraryAssetDir, { recursive: true });
@@ -1608,7 +1748,7 @@ export function wardrobeImportApi(options = {}) {
       ...modeledLooksForRecord(existing),
       ...(modeledLook ? [modeledLook] : []),
     ];
-    const record = recordWithModeledLooks({
+    const record = await optimizeImportedRecord(recordWithModeledLooks({
       id,
       userId: job.userId,
       name: metadata.name || "New piece",
@@ -1627,7 +1767,7 @@ export function wardrobeImportApi(options = {}) {
       customOrder: Number.isFinite(existing?.customOrder) ? existing.customOrder : nextCustomOrder,
       createdAt: existing?.createdAt || job.createdAt || now,
       updatedAt: now,
-    }, modeledLooks);
+    }, modeledLooks));
     const next = [...records.filter((item) => item.id !== id), record];
     await atomicJson(importedFile, next);
     return record;
@@ -1686,16 +1826,28 @@ export function wardrobeImportApi(options = {}) {
       const lookId = randomUUID();
       const modeledName = `${itemId}-modeled-${lookId}.png`;
       await atomicFile(path.join(libraryAssetDir, modeledName), generation.bytes);
+      const modeledImage = libraryAssetUrl(modeledName);
+      const modeledPreview = await safeLibraryVariant(
+        modeledImage,
+        "preview",
+        `${record.name || record.id} modeled look ${lookId}`,
+      );
       const latest = await loadImported();
       const index = latest.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
       if (index < 0) {
-        await rm(path.join(libraryAssetDir, modeledName), { force: true });
+        await Promise.all([
+          rm(path.join(libraryAssetDir, modeledName), { force: true }),
+          modeledPreview
+            ? rm(path.join(libraryAssetDir, path.basename(new URL(modeledPreview, "http://localhost").pathname)), { force: true })
+            : Promise.resolve(),
+        ]);
         throw apiError("The wardrobe item was deleted while its modeled look was being generated.", 409, "wardrobe_item_deleted");
       }
       const generatedAt = new Date().toISOString();
       const modeledLook = {
         id: lookId,
-        image: `${LIBRARY_ASSET_ROOT}/${modeledName}`,
+        image: modeledImage,
+        ...(modeledPreview ? { preview: modeledPreview } : {}),
         model: generation.model,
         fallbackUsed: generation.fallbackUsed,
         generatedAt,
@@ -1726,8 +1878,10 @@ export function wardrobeImportApi(options = {}) {
     };
     await atomicJson(importedFile, records);
     try {
-      const fileName = path.basename(new URL(removed.image, "http://localhost").pathname);
-      await rm(path.join(libraryAssetDir, fileName), { force: true });
+      const assets = [removed.preview, removed.image]
+        .filter(Boolean)
+        .map((asset) => path.basename(new URL(asset, "http://localhost").pathname));
+      await Promise.all(assets.map((fileName) => rm(path.join(libraryAssetDir, fileName), { force: true })));
     } catch (error) {
       records[index] = previous;
       await atomicJson(importedFile, records).catch(() => {});
@@ -2124,31 +2278,34 @@ export function wardrobeImportApi(options = {}) {
         const next = records.filter((record) => record.id !== id || record.userId !== user.id);
         if (next.length === records.length) return json(res, 404, { error: "Imported wardrobe item not found" });
         await atomicJson(importedFile, next);
-        const assets = new Set([
-          record.image,
-          record.thumbnail,
-          record.originalImage,
-          record.modeledImage,
-          ...modeledLooksForRecord(record).map((look) => look.image),
-        ].filter(Boolean).map((asset) => path.basename(new URL(asset, "http://localhost").pathname)));
+        const assets = new Set(importedRecordAssets(record)
+          .map((asset) => path.basename(new URL(asset, "http://localhost").pathname)));
         await Promise.all([...assets].map((fileName) => rm(path.join(libraryAssetDir, fileName), { force: true })));
         return json(res, 200, { deleted: true, id });
       }
       const libraryAssetMatch = url.pathname.match(/^\/api\/import\/library\/([\w.-]+)$/i);
       if (libraryAssetMatch && req.method === "GET") {
         const records = await loadImported();
-        const allowed = records.some((record) => record.userId === user.id && [
-          record.image,
-          record.thumbnail,
-          record.modeledImage,
-          record.originalImage,
-          ...modeledLooksForRecord(record).map((look) => look.image),
-        ].filter(Boolean).some((asset) => path.basename(new URL(asset, "http://localhost").pathname) === libraryAssetMatch[1]));
+        const allowed = records.some((record) => record.userId === user.id && importedRecordAssets(record)
+          .some((asset) => path.basename(new URL(asset, "http://localhost").pathname) === libraryAssetMatch[1]));
         if (!allowed) throw apiError("Wardrobe image not found.", 404, "wardrobe_image_not_found");
         const file = path.join(libraryAssetDir, path.basename(libraryAssetMatch[1]));
-        await stat(file);
-        res.setHeader("Content-Type", "image/png");
-        res.setHeader("Cache-Control", "private, no-store");
+        const details = await stat(file);
+        const isOptimized = file.endsWith(".webp");
+        const etag = `"${details.size.toString(16)}-${Math.trunc(details.mtimeMs).toString(16)}"`;
+        res.setHeader("Content-Type", imageMime(file));
+        res.setHeader("Content-Length", details.size);
+        res.setHeader("ETag", etag);
+        res.setHeader(
+          "Cache-Control",
+          isOptimized
+            ? "private, max-age=31536000, immutable"
+            : "private, no-store",
+        );
+        if (req.headers["if-none-match"] === etag) {
+          res.statusCode = 304;
+          return res.end();
+        }
         return res.end(await readFile(file));
       }
       const assetMatch = url.pathname.match(/^\/api\/import\/assets\/([a-f0-9-]{36})\/([\w.-]+)$/i);
@@ -2282,9 +2439,10 @@ export function wardrobeImportApi(options = {}) {
         const startGarment = stageName === "crop" && decision === "approve" && job.stages.garment.status === "pending";
         if ((stageName === "garment" || stageName === "modeled") && decision === "approve") job.status = "complete";
         await saveJob(job);
+        let importedRecord = null;
         if (decision === "approve" && stageName !== "crop") {
           try {
-            await persistImported(job, stageName === "modeled");
+            importedRecord = await persistImported(job, stageName === "modeled");
           } catch (error) {
             job.stages[stageName].status = previousStatus;
             job.stages[stageName].decision = previousDecision;
@@ -2296,6 +2454,7 @@ export function wardrobeImportApi(options = {}) {
         if (decision === "reject") await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
         if (startGarment) void generate(job, "garment");
         const response = publicJob(job);
+        if (importedRecord) response.importedRecord = publicImportedRecord(importedRecord, user.id);
         if (job.status === "complete") await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
         return json(res, 200, response);
       }
@@ -2324,6 +2483,7 @@ export function wardrobeImportApi(options = {}) {
       await mkdir(jobsDir, { recursive: true });
       await mkdir(libraryAssetDir, { recursive: true });
       await initializeUsers();
+      await backfillLibraryVariants();
       const ids = await readdir(jobsDir).catch(() => []);
       for (const id of ids) {
         const job = await loadJob(id);
