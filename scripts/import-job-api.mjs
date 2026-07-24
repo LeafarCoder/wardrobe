@@ -32,6 +32,7 @@ const USER_ID = /^(?:default|[a-f0-9-]{36})$/i;
 const TAR_BLOCK_SIZE = 512;
 const IMAGE_VARIANT_VERSION = 1;
 const IMAGE_VARIANTS = {
+  avatar: { width: 192, height: 192, quality: 76, alphaQuality: 92 },
   thumbnail: { width: 320, height: 320, quality: 80, alphaQuality: 100 },
   preview: { width: 1040, height: 1040, quality: 82, alphaQuality: 100 },
 };
@@ -612,7 +613,16 @@ async function normalizeImage(bytes) {
   return sharp(bytes).rotate().toColorspace("srgb").png().toBuffer();
 }
 
-async function prepareProviderImage(bytes, maxEdge = 2048) {
+function boundedEnvironmentInteger(name, fallback, minimum, maximum) {
+  const parsed = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
+}
+
+export async function prepareProviderImage(
+  bytes,
+  maxEdge = boundedEnvironmentInteger("WARDROBE_AI_REFERENCE_MAX_EDGE", 1536, 768, 2048),
+) {
+  const jpegQuality = boundedEnvironmentInteger("WARDROBE_AI_REFERENCE_JPEG_QUALITY", 84, 70, 92);
   const image = sharp(bytes).rotate().toColorspace("srgb");
   const metadata = await image.metadata();
   const resized = image.resize(maxEdge, maxEdge, {
@@ -627,7 +637,7 @@ async function prepareProviderImage(bytes, maxEdge = 2048) {
     };
   }
   return {
-    data: await resized.jpeg({ quality: 90, chromaSubsampling: "4:4:4", mozjpeg: true }).toBuffer(),
+    data: await resized.jpeg({ quality: jpegQuality, chromaSubsampling: "4:2:0", mozjpeg: true }).toBuffer(),
     mime: "image/jpeg",
     extension: ".jpg",
   };
@@ -1382,6 +1392,10 @@ export function wardrobeImportApi(options = {}) {
 
   const profileReferenceDir = (userId) => path.join(profilesDir, userId, "references");
   const profileReferenceUrl = (userId, fileName) => `${USERS_ROOT}/${userId}/references/${encodeURIComponent(fileName)}`;
+  const profileReferenceAssetNames = (reference = {}) => [
+    reference.fileName,
+    reference.avatarFileName,
+  ].filter(Boolean);
   const cleanProfileText = (value, maxLength) => typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 
   const normalizeProfile = (input = {}, existing = {}) => {
@@ -1414,6 +1428,9 @@ export function wardrobeImportApi(options = {}) {
     referenceImages: (profile.referenceImages || []).map((reference) => ({
       ...reference,
       url: profileReferenceUrl(profile.id, reference.fileName),
+      avatarUrl: reference.avatarFileName
+        ? profileReferenceUrl(profile.id, reference.avatarFileName)
+        : undefined,
     })),
   });
 
@@ -1458,19 +1475,64 @@ export function wardrobeImportApi(options = {}) {
         const prepared = await prepareProviderImage(source.data);
         const id = randomUUID();
         const fileName = `${id}${prepared.extension}`;
-        await writeFile(path.join(referenceDir, fileName), prepared.data);
-        references.push({
+        const avatarFileName = imageVariantFileName(fileName, "avatar");
+        const reference = {
           id,
           name: cleanProfileText(image?.name, 120) || `Reference ${index + 1}`,
           fileName,
+          avatarFileName,
           mime: prepared.mime,
-        });
+        };
+        references.push(reference);
+        const sourceFile = path.join(referenceDir, fileName);
+        await writeFile(sourceFile, prepared.data);
+        await writeImageVariant(
+          sourceFile,
+          path.join(referenceDir, avatarFileName),
+          "avatar",
+        );
       }
     } catch (error) {
-      await Promise.all(references.map((reference) => rm(path.join(referenceDir, reference.fileName), { force: true })));
+      await Promise.all(references.flatMap((reference) => profileReferenceAssetNames(reference)
+        .map((fileName) => rm(path.join(referenceDir, fileName), { force: true }))));
       throw error;
     }
     return references;
+  }
+
+  async function backfillProfileReferenceAvatars() {
+    const store = await loadUsersStore();
+    if (!store) return;
+    let changed = 0;
+    let generated = 0;
+    for (const profile of store.users) {
+      const referenceDir = profileReferenceDir(profile.id);
+      for (const reference of profile.referenceImages || []) {
+        const avatarFileName = imageVariantFileName(reference.fileName, "avatar");
+        const sourceFile = path.join(referenceDir, reference.fileName);
+        const avatarFile = path.join(referenceDir, avatarFileName);
+        try {
+          const sourceDetails = await stat(sourceFile);
+          const avatarDetails = await stat(avatarFile).catch((error) => {
+            if (error.code === "ENOENT") return null;
+            throw error;
+          });
+          if (!avatarDetails || avatarDetails.mtimeMs < sourceDetails.mtimeMs) {
+            await writeImageVariant(sourceFile, avatarFile, "avatar");
+            generated += 1;
+          }
+          if (reference.avatarFileName !== avatarFileName) {
+            reference.avatarFileName = avatarFileName;
+            changed += 1;
+          }
+        } catch (error) {
+          console.warn(`[wardrobe] Could not optimize ${profile.name || profile.id} profile avatar: ${error.message}`);
+        }
+      }
+    }
+    if (changed) await saveUsersStore(store);
+    const referenceCount = store.users.reduce((total, profile) => total + (profile.referenceImages?.length || 0), 0);
+    console.info(`[wardrobe] Profile avatar optimization ready for ${referenceCount} reference photo${referenceCount === 1 ? "" : "s"}${generated ? ` (${generated} thumbnail${generated === 1 ? "" : "s"} created)` : ""}.`);
   }
 
   async function loadProfileReferenceImages(profile) {
@@ -2170,12 +2232,21 @@ export function wardrobeImportApi(options = {}) {
       if (referenceMatch && req.method === "GET") {
         const store = await loadUsersStore();
         const profile = store.users.find((user) => user.id === referenceMatch[1]);
-        const reference = profile?.referenceImages?.find((candidate) => candidate.fileName === referenceMatch[2]);
+        const reference = profile?.referenceImages?.find((candidate) => profileReferenceAssetNames(candidate).includes(referenceMatch[2]));
         if (!profile || !reference) throw apiError("Reference photo not found.", 404, "reference_not_found");
-        const file = path.join(profileReferenceDir(profile.id), reference.fileName);
-        await stat(file);
-        res.setHeader("Content-Type", reference.mime || (file.endsWith(".jpg") ? "image/jpeg" : "image/png"));
-        res.setHeader("Cache-Control", "private, no-store");
+        const fileName = referenceMatch[2];
+        const file = path.join(profileReferenceDir(profile.id), fileName);
+        const details = await stat(file);
+        const isAvatar = fileName === reference.avatarFileName;
+        const etag = `"${details.size.toString(16)}-${Math.trunc(details.mtimeMs).toString(16)}"`;
+        res.setHeader("Content-Type", isAvatar ? "image/webp" : reference.mime || imageMime(file));
+        res.setHeader("Content-Length", details.size);
+        res.setHeader("ETag", etag);
+        res.setHeader("Cache-Control", isAvatar ? "private, max-age=31536000, immutable" : "private, no-store");
+        if (req.headers["if-none-match"] === etag) {
+          res.statusCode = 304;
+          return res.end();
+        }
         return res.end(await readFile(file));
       }
       const profileMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})$/i);
@@ -2197,10 +2268,8 @@ export function wardrobeImportApi(options = {}) {
         store.users[index] = profile;
         await saveUsersStore(store);
         if (replacingReferences) {
-          await Promise.all((existing.referenceImages || []).map((reference) => rm(
-            path.join(profileReferenceDir(existing.id), reference.fileName),
-            { force: true },
-          )));
+          await Promise.all((existing.referenceImages || []).flatMap((reference) => profileReferenceAssetNames(reference)
+            .map((fileName) => rm(path.join(profileReferenceDir(existing.id), fileName), { force: true }))));
         }
         return json(res, 200, { currentUserId: store.currentUserId, user: publicProfile(profile) });
       }
@@ -2509,6 +2578,7 @@ export function wardrobeImportApi(options = {}) {
       await mkdir(jobsDir, { recursive: true });
       await mkdir(libraryAssetDir, { recursive: true });
       await initializeUsers();
+      await backfillProfileReferenceAvatars();
       await backfillLibraryVariants();
       const ids = await readdir(jobsDir).catch(() => []);
       for (const id of ids) {

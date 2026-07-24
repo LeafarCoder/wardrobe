@@ -1159,7 +1159,7 @@ function ProfileAvatar({ user, size = "medium" }) {
   const reference = user?.referenceImages?.[0];
   return (
     <span className={`profile-avatar is-${size}`}>
-      {reference ? <img src={reference.url} alt="" /> : <UserCircle size={size === "large" ? 40 : 24} weight="light" aria-hidden="true" />}
+      {reference ? <img src={reference.avatarUrl || reference.url} alt="" /> : <UserCircle size={size === "large" ? 40 : 24} weight="light" aria-hidden="true" />}
     </span>
   );
 }

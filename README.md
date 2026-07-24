@@ -127,10 +127,12 @@ When the primary image model returns a content-policy refusal such as `PROHIBITE
 | `OPENROUTER_ZDR` | `true` |
 | `OPENROUTER_IMAGE_PROVIDER` | Automatic |
 | `WARDROBE_AI_CONCURRENCY` | `2` |
+| `WARDROBE_AI_REFERENCE_MAX_EDGE` | `1536` |
+| `WARDROBE_AI_REFERENCE_JPEG_QUALITY` | `84` |
 
 `OPENROUTER_ZDR=true` restricts the analysis request to zero-data-retention routes. With Google image models, Wardrobe also pins modeled-image requests to `google-vertex/global`, rather than Google AI Studio. The default Seedream fallback is pinned to OpenRouter's current `seed` ZDR endpoint. The Klein exception is limited to the garment stage and must be enabled explicitly with `OPENROUTER_ALLOW_NON_ZDR_GARMENT=true`. If you choose another fallback model, review the live [OpenRouter ZDR endpoint list](https://openrouter.ai/api/v1/endpoints/zdr) and update or clear `OPENROUTER_IMAGE_FALLBACK_PROVIDER`.
 
-Wardrobe downsizes provider-bound reference images to a maximum 2048-pixel edge and keeps at most `WARDROBE_AI_CONCURRENCY` image generations in flight. Primary models that expose normalized dimensions stay at 1K; Klein currently chooses its own output dimensions because its OpenRouter endpoint does not advertise `resolution` or `aspect_ratio`. Safety fallbacks start at 2K. If OpenRouter reports that a concrete size is below an upstream route's minimum, Wardrobe retries the same model at the next supported resolution tier instead of showing the raw provider error.
+Wardrobe downsizes provider-bound reference images to a maximum 1536-pixel edge and recompresses photos at JPEG quality 84 before upload. Both values are configurable, with safe bounds, through `WARDROBE_AI_REFERENCE_MAX_EDGE` and `WARDROBE_AI_REFERENCE_JPEG_QUALITY`. It also keeps at most `WARDROBE_AI_CONCURRENCY` image generations in flight. Primary models that expose normalized dimensions stay at 1K; Gemini 3.1 Flash Lite Image supports only 1K, and Klein currently chooses its own output dimensions because its OpenRouter endpoint does not advertise `resolution` or `aspect_ratio`. Safety fallbacks start at 2K. If OpenRouter reports that a concrete size is below an upstream route's minimum, Wardrobe retries the same model at the next supported resolution tier instead of showing the raw provider error.
 
 ### Direct OpenAI settings
 
@@ -148,7 +150,7 @@ Existing OpenAI configuration remains supported:
 
 Your database, user profiles, import jobs, originals, and generated assets stay in the local `data/` directory. AI processing is not fully local: the imported photo and garment crop are sent to OpenRouter or OpenAI. The current user's reference photos and profile styling context are sent only when that user explicitly requests a modeled look. API keys stay on the local Vite server and are never exposed to the browser bundle.
 
-Wardrobe keeps every original image intact and automatically creates lightweight WebP derivatives beside it: 320-pixel garment thumbnails for the gallery and 1040-pixel previews for the item panel. Existing libraries are backfilled once at startup, while new garments and modeled looks are optimized as they are saved. Only the derivatives receive long-lived private browser caching; originals remain uncached and are still included in personal-data exports. No environment variable is required.
+Wardrobe keeps every original garment and modeled image intact and automatically creates lightweight WebP derivatives beside it: 320-pixel garment thumbnails for the gallery, 1040-pixel previews for the item panel, and 192-pixel profile avatars. Existing libraries and profile references are backfilled once at startup, while new garments, modeled looks, and avatars are optimized as they are saved. Only the derivatives receive long-lived private browser caching; originals remain uncached and are still included in personal-data exports.
 
 Other settings:
 
