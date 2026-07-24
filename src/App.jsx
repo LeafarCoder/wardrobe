@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CaretDown, CaretLeft, CaretRight, Check, DownloadSimple, LockKey, PencilSimple, Plus, Sparkle, SpinnerGap, Trash, UploadSimple, UserCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
@@ -497,13 +497,23 @@ function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleSta
   );
 }
 
-function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDeleteModeled }) {
-  const closeButtonRef = useRef(null);
+function ItemViewer({
+  item,
+  onClose,
+  onSave,
+  onDelete,
+  onGenerateModeled,
+  onDeleteModeled,
+  onDirtyChange,
+  blockedSwitchSignal,
+}) {
   const deleteLookButtonRef = useRef(null);
   const deleteCancelButtonRef = useRef(null);
   const imageRef = useRef(null);
   const samplingCanvasRef = useRef(null);
   const shakeTimerRef = useRef(null);
+  const activeItemIdRef = useRef(item.id);
+  activeItemIdRef.current = item.id;
   const [sampling, setSampling] = useState(null);
   const [sampleStatus, setSampleStatus] = useState("");
   const [palette, setPalette] = useState(item.palette || []);
@@ -511,7 +521,7 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
   const [shaking, setShaking] = useState(false);
   const [closeBlocked, setCloseBlocked] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
-  const [generatingModeled, setGeneratingModeled] = useState(false);
+  const [generatingModeledFor, setGeneratingModeledFor] = useState(null);
   const [deletingModeled, setDeletingModeled] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState(null);
   const [generationError, setGenerationError] = useState("");
@@ -520,6 +530,7 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
   const [modeledIndex, setModeledIndex] = useState(Math.max(0, modeledLooks.length - 1));
   const activeModeledIndex = modeledLooks.length ? Math.min(modeledIndex, modeledLooks.length - 1) : 0;
   const activeModeledLook = modeledLooks[activeModeledIndex] || null;
+  const generatingModeled = generatingModeledFor === item.id;
   const hasModeledImage = Boolean(activeModeledLook);
   const hasOriginalImage = Boolean(item.originalImage);
   const hasHeroImage = hasModeledImage || hasOriginalImage;
@@ -574,11 +585,8 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
     };
 
     document.addEventListener("keydown", onKeyDown);
-    document.body.classList.add("viewer-open");
-    closeButtonRef.current?.focus({ preventScroll: true });
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      document.body.classList.remove("viewer-open");
       clearTimeout(shakeTimerRef.current);
     };
   }, [deleteCandidate, deletingModeled, requestClose, sampling]);
@@ -589,16 +597,23 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
 
   useEffect(() => {
     if (!isDirty) setCloseBlocked(false);
-  }, [isDirty]);
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
 
   useEffect(() => {
+    if (blockedSwitchSignal) nudgeUnsaved();
+  }, [blockedSwitchSignal, nudgeUnsaved]);
+
+  useLayoutEffect(() => {
     setSampling(null);
+    samplingCanvasRef.current = null;
     setSampleStatus("");
     setPalette(item.palette || []);
     setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
     setShowOriginal(false);
     setModeledIndex(Math.max(0, itemModeledLooks(item).length - 1));
     setDeleteCandidate(null);
+    setCloseBlocked(false);
     setGenerationError("");
   }, [item]);
 
@@ -651,14 +666,17 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
       nudgeUnsaved();
       return;
     }
-    setGeneratingModeled(true);
+    const targetItemId = item.id;
+    setGeneratingModeledFor(targetItemId);
     setGenerationError("");
     try {
-      await onGenerateModeled(item.id);
+      await onGenerateModeled(targetItemId);
     } catch (requestError) {
-      setGenerationError(readableError(requestError));
+      if (activeItemIdRef.current === targetItemId) {
+        setGenerationError(readableError(requestError));
+      }
     } finally {
-      setGeneratingModeled(false);
+      setGeneratingModeledFor((current) => current === targetItemId ? null : current);
     }
   };
 
@@ -744,10 +762,10 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
   );
 
   return (
-    <div className="viewer-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
+    <>
     <div className="viewer-entry" aria-hidden={deleteCandidate ? "true" : undefined}>
-    <aside className={`viewer editing${hasHeroImage ? " has-hero-image" : ""}${shaking ? " shake" : ""}`} role="dialog" aria-modal="true" aria-label="Selected wardrobe item">
-      <button className="viewer-icon-close" type="button" onClick={requestClose} aria-label="Close viewer" ref={closeButtonRef}>
+    <aside className={`viewer editing${hasHeroImage ? " has-hero-image" : ""}${shaking ? " shake" : ""}`} aria-label="Selected wardrobe item">
+      <button className="viewer-icon-close" type="button" onClick={requestClose} aria-label="Close viewer">
         <X size={24} weight="light" aria-hidden="true" />
       </button>
 
@@ -861,7 +879,7 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
           sampleStatus={sampleStatus}
         />
 
-        {closeBlocked && <p className="unsaved-notice" role="status">Save or cancel changes before closing.</p>}
+        {closeBlocked && <p className="unsaved-notice" role="status">Save or cancel changes before leaving this item.</p>}
 
         <div className="viewer-actions">
           <button className="delete-button" type="button" onClick={() => onDelete(item.id)}>
@@ -931,7 +949,7 @@ function ItemViewer({ item, onClose, onSave, onDelete, onGenerateModeled, onDele
         </section>
       </div>
     )}
-    </div>
+    </>
   );
 }
 
@@ -1134,6 +1152,8 @@ export function App() {
   const [draggedId, setDraggedId] = useState(null);
   const [dropTargetId, setDropTargetId] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const [viewerDirty, setViewerDirty] = useState(false);
+  const [blockedSwitchSignal, setBlockedSwitchSignal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const suppressOpenAfterDrag = useRef(false);
@@ -1152,6 +1172,8 @@ export function App() {
       setCurrentUserId(null);
       setItems([]);
       setSelectedId(null);
+      setViewerDirty(false);
+      setBlockedSwitchSignal(0);
     };
     window.addEventListener("wardrobe:unauthorized", onUnauthorized);
     return () => window.removeEventListener("wardrobe:unauthorized", onUnauthorized);
@@ -1177,6 +1199,8 @@ export function App() {
     setError("");
     setItems([]);
     setSelectedId(null);
+    setViewerDirty(false);
+    setBlockedSwitchSignal(0);
     fetch(`/api/import/wardrobe?user=${encodeURIComponent(currentUserId)}`, { cache: "no-store" })
       .then((response) => {
         if (!response.ok) {
@@ -1302,7 +1326,6 @@ export function App() {
 
   const chooseType = (typeId) => {
     setActiveType(typeId);
-    setSelectedId(null);
   };
 
   const saveOrganizationMode = async (mode) => {
@@ -1393,8 +1416,20 @@ export function App() {
   };
 
   const openItem = (id) => {
-    if (!suppressOpenAfterDrag.current) setSelectedId(id);
+    if (suppressOpenAfterDrag.current) return;
+    if (viewerDirty && selectedId && id !== selectedId) {
+      setBlockedSwitchSignal((current) => current + 1);
+      return;
+    }
+    setBlockedSwitchSignal(0);
+    setSelectedId(id);
   };
+
+  const closeViewer = useCallback(() => {
+    setViewerDirty(false);
+    setBlockedSwitchSignal(0);
+    setSelectedId(null);
+  }, []);
 
   const saveItem = async (updatedItem) => {
     setItems((current) => current.map((item) => item.id === updatedItem.id ? updatedItem : item));
@@ -1432,7 +1467,7 @@ export function App() {
     removePersistedEdit(id, currentUserId);
     if (id.startsWith("import-")) removePersistedDeletedItem(id, currentUserId);
     else persistDeletedItem(id, currentUserId);
-    setSelectedId(null);
+    closeViewer();
   };
 
   const selectUser = async (userId) => {
@@ -1441,6 +1476,7 @@ export function App() {
       await profileApi("/api/users/current", { method: "PUT", body: JSON.stringify({ userId }) });
       setCurrentUserId(userId);
       setActiveType("all");
+      closeViewer();
     } catch (requestError) {
       setError(requestError.message);
     }
@@ -1538,7 +1574,7 @@ export function App() {
       setUsers([]);
       setCurrentUserId(null);
       setItems([]);
-      setSelectedId(null);
+      closeViewer();
     }
   };
 
@@ -1658,7 +1694,18 @@ export function App() {
         )}
       </main>
 
-      {selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} onGenerateModeled={generateModeledLook} onDeleteModeled={deleteModeledLook} />}
+      {selectedItem && (
+        <ItemViewer
+          item={selectedItem}
+          onClose={closeViewer}
+          onSave={saveItem}
+          onDelete={deleteItem}
+          onGenerateModeled={generateModeledLook}
+          onDeleteModeled={deleteModeledLook}
+          onDirtyChange={setViewerDirty}
+          blockedSwitchSignal={blockedSwitchSignal}
+        />
+      )}
       {currentUser && (
         <WardrobeImportFlow
           key={`${currentUser.id}:${currentUser.updatedAt}`}
