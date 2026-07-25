@@ -44,8 +44,9 @@ export const STORE_OPTIONS = Object.freeze([
   {
     id: "COS",
     label: "COS",
-    portugal: "https://www.cos.com/en_eur/search.html?q={query}",
-    international: "https://www.cos.com/en_usd/search.html?q={query}",
+    portugal: "https://www.cos.com/en-eu/search?search={query}",
+    international: "https://www.cos.com/en-eu/search?search={query}",
+    searchLanguage: "en",
   },
   {
     id: "Uniqlo",
@@ -96,9 +97,37 @@ export function compactStoreSearchQuery(value) {
   return terms.slice(0, 4).join(" ");
 }
 
+const PORTUGUESE_PRODUCT_SEARCHES = Object.freeze([
+  [/óculos\s+de\s+sol/giu, "sunglasses"],
+  [/roupa\s+interior\s+térmica/giu, "thermal underwear"],
+  [/sobretudo/giu, "overcoat"],
+  [/casaco/giu, "jacket"],
+  [/calças/giu, "trousers"],
+  [/camisola\s+de\s+malha/giu, "knit sweater"],
+  [/camisola/giu, "sweater"],
+  [/camisa/giu, "shirt"],
+  [/vestido/giu, "dress"],
+  [/sapatos/giu, "shoes"],
+  [/botas/giu, "boots"],
+  [/luvas/giu, "gloves"],
+  [/cachecol/giu, "scarf"],
+  [/gorro/giu, "beanie"],
+]);
+
+export function englishStoreSearchQuery(value) {
+  let query = compactStoreSearchQuery(value);
+  for (const [pattern, replacement] of PORTUGUESE_PRODUCT_SEARCHES) {
+    query = query.replace(pattern, replacement);
+  }
+  return compactStoreSearchQuery(query);
+}
+
 export function storeSearchUrl(storeId, query, context = {}) {
   const store = STORE_OPTIONS.find((candidate) => candidate.id === storeId);
-  const normalizedQuery = compactStoreSearchQuery(query).slice(0, 100);
+  const queryValue = store?.searchLanguage === "en"
+    ? context.englishQuery || englishStoreSearchQuery(query)
+    : query;
+  const normalizedQuery = compactStoreSearchQuery(queryValue).slice(0, 100);
   if (!store || !normalizedQuery) return "";
   const inPortugal = context.language === "pt-PT"
     || /\bportugal\b/i.test(String(context.city || ""))

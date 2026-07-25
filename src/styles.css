@@ -2678,10 +2678,19 @@ button { font: inherit; }
   box-shadow: 0 14px 34px rgba(43, 37, 29, .1);
 }
 
+.media-preview-dialog__viewport .product-stage__content {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
 .media-preview-dialog__image {
   display: block;
-  width: auto !important;
-  height: auto !important;
+  width: 100% !important;
+  height: 100% !important;
   min-width: 0;
   min-height: 0;
   max-width: 100% !important;
@@ -2808,6 +2817,15 @@ button { font: inherit; }
 .garment-delete-dialog__image img {
   width: min(82%, 300px);
   height: min(82%, 230px);
+}
+
+.look-delete-dialog__image.product-stage--animated .product-stage__light {
+  animation: delete-confirmation-light-drift 4.5s ease-in-out infinite alternate;
+}
+
+@keyframes delete-confirmation-light-drift {
+  from { opacity: .5; transform: translate3d(-7%, 2%, 0) scale(1.02); }
+  to { opacity: .95; transform: translate3d(7%, -3%, 0) scale(1.1); }
 }
 
 .look-delete-dialog__body {
@@ -4737,6 +4755,17 @@ button { font: inherit; }
   line-height: 1.35;
 }
 
+.item-facet-field__empty {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 9px;
+  font-style: italic;
+  line-height: 1.35;
+}
+
 .editable-tag {
   display: inline-flex;
   align-items: center;
@@ -5036,10 +5065,17 @@ button { font: inherit; }
 .planner-input-with-icon:focus-within { border-color: var(--ink); color: var(--ink); }
 
 .planner-date-row {
+  position: relative;
+  z-index: 2;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 16px;
+}
+
+.planner-date-row:has(.day-date-picker.is-open) { z-index: 20; }
+.planner-date-row .day-date-picker__popover {
+  width: min(300px, calc(200% + 10px));
 }
 
 .planner-generate {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   compactStoreSearchQuery,
   DEFAULT_PREFERRED_STORES,
+  englishStoreSearchQuery,
   normalizePreferredStores,
   preferredStoreOptions,
   storeSearchUrl,
@@ -37,6 +38,18 @@ test("uses Bershka's path search instead of its gender-gated search parameter", 
   });
   assert.equal(url, "https://www.bershka.com/pt/q/roupa%20interior%20t%C3%A9rmica");
   assert.equal(url.includes("searchTerm"), false);
+});
+
+test("uses COS's EU route and an English product query", () => {
+  assert.equal(englishStoreSearchQuery("óculos de sol"), "sunglasses");
+  assert.equal(
+    storeSearchUrl("COS", "óculos de sol", { language: "pt-PT" }),
+    "https://www.cos.com/en-eu/search?search=sunglasses",
+  );
+  assert.equal(
+    storeSearchUrl("COS", "óculos de sol", { language: "pt-PT", englishQuery: "round sunglasses" }),
+    "https://www.cos.com/en-eu/search?search=round%20sunglasses",
+  );
 });
 
 test("keeps retailer queries concise and removes parenthetical alternatives", () => {

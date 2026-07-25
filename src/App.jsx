@@ -454,14 +454,10 @@ function GalleryItem({
       aria-pressed={selected}
       data-testid={`wardrobe-item-${item.id}`}
     >
-      <ProductStage
-        as="span"
+      <span
         className="gallery-item__media"
-        interactive
-        animated
         style={hasTileBackground ? {
-          "--product-stage-center": backgroundStyle.color,
-          "--product-stage-edge": backgroundStyle.color,
+          backgroundColor: backgroundStyle.color,
         } : undefined}
       >
         <OptimizedImage
@@ -480,7 +476,7 @@ function GalleryItem({
             ))}
           </span>
         )}
-      </ProductStage>
+      </span>
       {detailsVisible && (
         <span className="gallery-item__details">
           {visibleFields.has("name") && <strong>{item.name || type}</strong>}
@@ -1013,7 +1009,11 @@ function ItemEditor({
         <div className="garment-details-grid">
           <div className="field details-field">
             <span>{tr("Tags")}</span>
-            <TagEditor tags={draft.tags} onChange={(tags) => setDraft((current) => ({ ...current, tags }))} />
+            <TagEditor
+              tags={draft.tags}
+              onChange={(tags) => setDraft((current) => ({ ...current, tags }))}
+              emptyLabel={tr("Nothing selected yet.")}
+            />
           </div>
           <div className="field item-facet-field">
             <span>{tr("Garment sizes")} <small>{tr("optional")}</small></span>
@@ -1023,6 +1023,7 @@ function ItemEditor({
               placeholder="M, EU 40, W32…"
               inputLabel={tr("Add garment size")}
               addLabel={tr("Add garment size")}
+              emptyLabel={tr("Nothing selected yet.")}
             />
           </div>
           <div className="field item-facet-field">
@@ -1035,6 +1036,7 @@ function ItemEditor({
               addLabel={tr("Add garment fit")}
               suggestions={GARMENT_FIT_SUGGESTIONS}
               suggestionListId="wardrobe-garment-fit-suggestions"
+              emptyLabel={tr("Nothing selected yet.")}
             />
           </div>
           <div className="field item-facet-field">
@@ -1047,10 +1049,12 @@ function ItemEditor({
               addLabel={tr("Add garment material")}
               suggestions={MATERIAL_SUGGESTIONS}
               suggestionListId="wardrobe-material-suggestions"
+              emptyLabel={tr("Nothing selected yet.")}
             />
           </div>
           <fieldset className="field item-season-field">
             <legend>{tr("Season")} <small>{tr("optional")}</small></legend>
+            {!draft.seasons.length && <p className="item-facet-field__empty">{tr("Nothing selected yet.")}</p>}
             <div>
               {SEASON_OPTIONS.map((season) => (
                 <label key={season.id}>
@@ -2378,7 +2382,7 @@ function ItemViewer({
           >
             <X size={22} weight="light" aria-hidden="true" />
           </button>
-          <ProductStage className="look-delete-dialog__image" staticStage>
+          <ProductStage className="look-delete-dialog__image" animated>
             <OptimizedImage
               src={modeledLookSource(deleteCandidate.look)}
               alt={tr("{name} modeled look to delete", { name: draft.name || type })}
@@ -2433,7 +2437,7 @@ function ItemViewer({
           >
             <X size={22} weight="light" aria-hidden="true" />
           </button>
-          <ProductStage className="look-delete-dialog__image garment-delete-dialog__image" staticStage>
+          <ProductStage className="look-delete-dialog__image garment-delete-dialog__image" animated>
             <OptimizedImage
               src={item.imagePreview || item.image}
               alt={tr("{name} garment to delete", { name: draft.name || type })}
@@ -3703,6 +3707,7 @@ function PlannerStoreSearch({ item, user, plan }) {
               language: user.language,
               city: user.city,
               location: plan.input.location,
+              englishQuery: item.searchQuery,
             });
             return (
               <a
@@ -3895,6 +3900,7 @@ function WardrobePlanner({
                 <span>{tr("Ends")}</span>
                 <DayDatePicker
                   required
+                  align="end"
                   min={draft.startDate}
                   value={draft.endDate}
                   onChange={(endDate) => setDraft({ ...draft, endDate })}

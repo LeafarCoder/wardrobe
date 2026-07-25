@@ -346,6 +346,7 @@ export function normalizeWardrobePlans(value = {}) {
         }, 12),
         missingItems: normalizeItems(result.missingItems, (item) => ({
           name: cleanText(item.name, 100),
+          searchQuery: cleanText(item.searchQuery, 100),
           category: cleanText(item.category, 60),
           reason: cleanText(item.reason, 260),
           priority: ["essential", "useful", "optional"].includes(item.priority) ? item.priority : "useful",

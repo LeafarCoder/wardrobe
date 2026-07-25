@@ -167,7 +167,7 @@ test("normalizes saved planner results for personal-data portability", () => {
       },
       recommendedItems: [{ itemId: importedId, reason: "Works for dinner and daytime." }],
       outfitIdeas: [{ name: "Dinner", itemIds: [importedId], note: "Add a light jacket." }],
-      missingItems: [{ name: "Packable rain shell", category: "outerwear", reason: "No waterproof layer found.", priority: "useful" }],
+      missingItems: [{ name: "Packable rain shell", searchQuery: "packable rain jacket", category: "outerwear", reason: "No waterproof layer found.", priority: "useful" }],
       packingNotes: ["Check the live forecast before leaving."],
       disclaimer: "Seasonal expectations are not a live forecast.",
     },
@@ -176,6 +176,7 @@ test("normalizes saved planner results for personal-data portability", () => {
   assert.equal(plan.result.expectedWeather.conditions.length, 2);
   assert.equal(plan.result.outfitIdeas[0].itemIds[0], importedId);
   assert.equal(plan.result.missingItems[0].priority, "useful");
+  assert.equal(plan.result.missingItems[0].searchQuery, "packable rain jacket");
 });
 
 test("keeps multiple generated outfit images inside saved wardrobe plans", () => {

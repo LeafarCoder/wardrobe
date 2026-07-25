@@ -48,6 +48,11 @@
   animation: day-date-picker-in 140ms ease-out both;
 }
 
+.day-date-picker.is-align-end .day-date-picker__popover {
+  right: 0;
+  left: auto;
+}
+
 .day-date-picker__popover.is-down { top: calc(100% + 7px); }
 .day-date-picker__popover.is-up { bottom: calc(100% + 7px); }
 

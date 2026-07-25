@@ -197,6 +197,10 @@ function cameraAccessError(error) {
   if (!navigator.mediaDevices?.getUserMedia) {
     return tr("This browser does not support camera capture. Choose an image from the device instead.");
   }
+  const permissionsPolicy = document.permissionsPolicy || document.featurePolicy;
+  if (permissionsPolicy?.allowsFeature && !permissionsPolicy.allowsFeature("camera")) {
+    return tr("Camera access is disabled by this site’s security policy. Reload the page after the app is updated.");
+  }
   if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
     return tr("Camera access was not allowed. Allow camera access in the browser, then try again.");
   }

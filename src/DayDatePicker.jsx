@@ -44,6 +44,7 @@ export function DayDatePicker({
   onChange,
   ariaLabel = tr("Choose date"),
   required = false,
+  align = "start",
 }) {
   const locale = useLocale();
   const rootRef = useRef(null);
@@ -147,7 +148,7 @@ export function DayDatePicker({
       : `${longMonth} ${displayYear}`;
 
   return (
-    <div className={`day-date-picker${open ? " is-open" : ""}`} ref={rootRef}>
+    <div className={`day-date-picker is-align-${align}${open ? " is-open" : ""}`} ref={rootRef}>
       <button
         className="day-date-picker__trigger"
         ref={triggerRef}

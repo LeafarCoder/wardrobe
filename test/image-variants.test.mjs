@@ -174,8 +174,42 @@ test("asks the generator for transparency and explicitly rejects neutral substit
     tags: ["leather strap"],
   }, "#00ffff");
 
-  assert.match(prompt, /real transparent PNG alpha/i);
-  assert.match(prompt, /Never substitute white, gray, beige, cream/i);
+  assert.match(prompt, /PNG with real transparency/i);
+  assert.match(prompt, /Every pixel outside the product silhouette.*must have alpha 0/i);
+  assert.match(prompt, /White, off-white, beige, cream, gray.*is still an opaque background and is forbidden/i);
+  assert.match(prompt, /four corners/i);
+  assert.match(prompt, /enclosed gaps between handles, arms, legs, or accessories/i);
+  assert.match(prompt, /checked programmatically and will be rejected if its canvas remains opaque/i);
+});
+
+test("keeps a separately detected scarf out of an outerwear reconstruction", () => {
+  const prompt = buildGarmentPrompt({
+    name: "red wool coat",
+    part: "wholebody_up",
+    color: "#d51f35",
+    tags: ["wool", "buttoned"],
+  }, "#00ffff", {
+    otherDetectedItems: [
+      {
+        name: "red black and white plaid scarf",
+        part: "accessories_up",
+        tags: ["scarf", "plaid", "fringed"],
+      },
+      {
+        name: "red beret",
+        part: "accessories_up",
+        tags: ["hat"],
+      },
+    ],
+  });
+
+  assert.match(prompt, /SEPARATELY DETECTED PRODUCTS — ABSOLUTE EXCLUSION LIST/i);
+  assert.match(prompt, /red black and white plaid scarf/i);
+  assert.match(prompt, /red beret/i);
+  assert.match(prompt, /a scarf crossing a coat's collar, lapels, neckline, or chest remains a separate scarf/i);
+  assert.match(prompt, /do not reproduce its fabric, checks, fringes, knot, folds, colors, or silhouette/i);
+  assert.match(prompt, /reconstruct only the target product's natural surface hidden underneath it/i);
+  assert.match(prompt, /Return exactly the requested target and none of the separately detected products/i);
 });
 
 test("uses versioned WebP filenames for cache-safe image variants", () => {
