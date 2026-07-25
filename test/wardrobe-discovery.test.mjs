@@ -104,7 +104,7 @@ test("groups garments by type, brand, and purchase year while preserving item or
   const items = [
     { id: "one", name: "First", part: "upperbody", brand: "Zara", purchaseMonth: "2024-05" },
     { id: "two", name: "Second", part: "lowerbody", brand: "", purchaseMonth: "" },
-    { id: "three", name: "Third", part: "upperbody", brand: "Zara", purchaseMonth: "2025-01" },
+    { id: "three", name: "Third", part: "upperbody", brand: "Zara", purchaseMonth: "2025" },
   ];
   const byType = groupWardrobeItems(items, "type", {
     typeGroups: [
@@ -121,7 +121,7 @@ test("groups garments by type, brand, and purchase year while preserving item or
   assert.deepEqual(byBrand[0].items.map((item) => item.id), ["one", "three"]);
 
   const byYear = groupWardrobeItems(items, "purchase-year");
-  assert.deepEqual(byYear.map((section) => section.label), ["2025", "2024", "Unknown purchase year"]);
+  assert.deepEqual(byYear.map((section) => section.label), ["2025", "2024", "Unknown acquisition year"]);
 });
 
 test("normalizes portable per-user wardrobe display preferences", () => {
@@ -178,7 +178,7 @@ test("normalizes saved planner results for personal-data portability", () => {
   assert.equal(plan.result.missingItems[0].priority, "useful");
 });
 
-test("keeps generated outfit images inside saved wardrobe plans", () => {
+test("keeps multiple generated outfit images inside saved wardrobe plans", () => {
   const [plan] = normalizeWardrobePlans([{
     id: "trip-look",
     input: { location: "Paris, France" },
@@ -187,17 +187,26 @@ test("keeps generated outfit images inside saved wardrobe plans", () => {
         name: "Museum afternoon",
         itemIds: ["shirt", "trousers"],
         note: "Quiet tailoring",
-        modeledLook: {
-          id: "look-1",
-          image: "/api/import/library/trip-look.png",
-          preview: "/api/import/library/trip-look-preview.webp",
-          model: "example/image-model",
-          generatedAt: "2026-07-24T12:00:00.000Z",
-        },
+        modeledLooks: [
+          {
+            id: "look-1",
+            image: "/api/import/library/trip-look.png",
+            preview: "/api/import/library/trip-look-preview.webp",
+            model: "example/image-model",
+            generatedAt: "2026-07-24T12:00:00.000Z",
+          },
+          {
+            id: "look-2",
+            image: "/api/import/library/trip-look-2.png",
+            model: "example/image-model",
+            generatedAt: "2026-07-24T12:05:00.000Z",
+          },
+        ],
       }],
     },
   }]);
 
-  assert.equal(plan.result.outfitIdeas[0].modeledLook.id, "look-1");
-  assert.equal(plan.result.outfitIdeas[0].modeledLook.preview, "/api/import/library/trip-look-preview.webp");
+  assert.deepEqual(plan.result.outfitIdeas[0].modeledLooks.map((look) => look.id), ["look-1", "look-2"]);
+  assert.equal(plan.result.outfitIdeas[0].modeledLooks[0].preview, "/api/import/library/trip-look-preview.webp");
+  assert.equal(plan.result.outfitIdeas[0].modeledLook.id, "look-2");
 });

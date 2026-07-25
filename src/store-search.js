@@ -32,8 +32,8 @@ export const STORE_OPTIONS = Object.freeze([
   {
     id: "Bershka",
     label: "Bershka",
-    portugal: "https://www.bershka.com/pt/search?searchTerm={query}",
-    international: "https://www.bershka.com/us/search?searchTerm={query}",
+    portugal: "https://www.bershka.com/pt/q/{query}",
+    international: "https://www.bershka.com/us/q/{query}",
   },
   {
     id: "Stradivarius",
@@ -80,9 +80,25 @@ export function preferredStoreOptions(value = []) {
   return ids.map((id) => STORE_OPTIONS.find((store) => store.id === id)).filter(Boolean);
 }
 
+export function compactStoreSearchQuery(value) {
+  const terms = String(value || "")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\s+(?:\/|\||—|–|-)\s+.*/u, " ")
+    .replace(/[,:;]+/g, " ")
+    .trim()
+    .split(/\s+/u)
+    .filter(Boolean);
+  if (
+    terms.length >= 3
+    && /^(?:accessories|accessory|bottoms|footwear|jackets?|outerwear|shoes|tops|underwear)$/i.test(terms.at(-1))
+  ) terms.pop();
+  return terms.slice(0, 4).join(" ");
+}
+
 export function storeSearchUrl(storeId, query, context = {}) {
   const store = STORE_OPTIONS.find((candidate) => candidate.id === storeId);
-  const normalizedQuery = String(query || "").trim().slice(0, 180);
+  const normalizedQuery = compactStoreSearchQuery(query).slice(0, 100);
   if (!store || !normalizedQuery) return "";
   const inPortugal = context.language === "pt-PT"
     || /\bportugal\b/i.test(String(context.city || ""))

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowCounterClockwise, ArrowsLeftRight, Camera, Check, Clipboard, CoatHanger, Crop, Dress, FolderOpen, Handbag, ImageSquare, Pants, Plus, Sneaker, SpinnerGap, Trash, TShirt, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
 import { formatNumber, getLocale, tr } from "./i18n.js";
 import { LightSelect } from "./LightSelect.jsx";
+import { ProductStage } from "./ProductStage.jsx";
 import "./import-flow.css";
 
 const API = "/api/import/jobs";
@@ -433,11 +434,13 @@ function ImportQueueCard({ job, draft, selected, busy, deferred, confirmDelete, 
 
   return (
     <article className={`import-card is-${status.tone}${selected ? " is-selected" : ""}`}>
-      <img
-        className="import-card__image"
-        src={job.stages?.garment?.assetUrl || job.stages?.garment?.failedAssetUrl || job.stages?.crop?.assetUrl || job.originalAssetUrl}
-        alt=""
-      />
+      <ProductStage className="import-card__stage" interactive animated>
+        <img
+          className="import-card__image"
+          src={job.stages?.garment?.assetUrl || job.stages?.garment?.failedAssetUrl || job.stages?.crop?.assetUrl || job.originalAssetUrl}
+          alt=""
+        />
+      </ProductStage>
       <div className="import-card__body">
         <h3 className="import-card__title">{itemName}</h3>
         <p className="import-card__detail import-card__detail--status" data-tone={status.tone}>
@@ -727,7 +730,11 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
       )}
       {isCrop
         ? <ManualCropEditor job={job} busy={busy} onSave={onCropSave} />
-        : <img className="import-editor__preview" src={asset} alt={tr(isGarment ? "Extracted garment" : "Generated modeled look")} />}
+        : (
+          <ProductStage className="import-editor__preview-stage" interactive animated>
+            <img className="import-editor__preview" src={asset} alt={tr(isGarment ? "Extracted garment" : "Generated modeled look")} />
+          </ProductStage>
+        )}
       <div className="import-fields">
         <p className="import-editor__stage">{tr(isCrop ? "Detected item" : isGarment ? "Garment image" : "Modeled image")}</p>
         {isCrop ? <p className="import-card__detail">{tr("Duplicate matching is complete. Check that the box contains only the intended garment, adjust it if needed, then continue.")}</p> : isGarment ? (
@@ -755,7 +762,7 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
         {!isCrop && <div className="import-field import-regenerate-field">
           <label htmlFor={`regenerate-${job.id}-${stage}`}>{tr("Regeneration direction")} <span>{tr("optional")}</span></label>
           <textarea id={`regenerate-${job.id}-${stage}`} rows="3" value={regenPrompt} onChange={(event) => setRegenPrompt(event.target.value)} placeholder={tr(isGarment ? "Example: preserve the original zipper and remove the retail tag" : "Example: use a quiet evening street and show the full garment")} />
-          {isGarment && <small>{tr("Regenerate calls the image model again using the current crop and your direction. It uses AI credits but does not change the crop.")}</small>}
+          {isGarment && <small>{tr("Regenerate calls the image model again using the current crop and your direction. It uses AI credits but does not change the crop. Write the correction in any language; it overrides conflicting visual clues.")}</small>}
         </div>}
         <div className="import-actions">
           <button className="import-button" disabled={busy} onClick={() => onAction("reject")}><Trash size={14} /> {tr("Reject")}</button>

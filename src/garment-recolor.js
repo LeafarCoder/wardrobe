@@ -294,7 +294,12 @@ export function recolorGarmentPixels(pixels, sourceColor, targetColor, alternate
     if (pixels[index + 3] < 8) continue;
     const original = rgbToOklab(pixels[index], pixels[index + 1], pixels[index + 2]);
     const pixel = labToLch(original);
-    const weight = selectionWeight(pixel, source, alternate, context);
+    const baseWeight = selectionWeight(pixel, source, alternate, context);
+    const threshold = clamp(Number(context.threshold) || 100, 40, 160);
+    const exponent = threshold >= 100
+      ? 1 - (((threshold - 100) / 60) * 0.58)
+      : 1 + (((100 - threshold) / 60) * 1.25);
+    const weight = clamp(Math.pow(baseWeight, exponent));
     if (weight < 0.015) continue;
     const replacement = recoloredPixel(pixel, source, target);
     const blended = {

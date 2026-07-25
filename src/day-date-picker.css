@@ -1,0 +1,192 @@
+.day-date-picker {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.day-date-picker.is-open { z-index: 130; }
+
+.day-date-picker__trigger {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 9px 10px;
+  background: rgba(255, 255, 255, .18);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.day-date-picker__trigger .is-placeholder { color: var(--muted); letter-spacing: .025em; }
+.day-date-picker__trigger > svg { flex: 0 0 auto; color: var(--muted); }
+.day-date-picker__trigger:hover,
+.day-date-picker__trigger:focus-visible,
+.day-date-picker.is-open .day-date-picker__trigger {
+  border-color: var(--ink);
+  background: rgba(255, 255, 255, .42);
+  outline: none;
+}
+
+.day-date-picker__popover {
+  position: absolute;
+  left: 0;
+  z-index: 100;
+  width: min(300px, calc(100vw - 44px));
+  overflow: hidden;
+  border: 1px solid rgba(25, 25, 25, .42);
+  border-radius: 12px;
+  background: #faf7f1;
+  color-scheme: light;
+  box-shadow: 0 20px 54px rgba(31, 29, 25, .22);
+  animation: day-date-picker-in 140ms ease-out both;
+}
+
+.day-date-picker__popover.is-down { top: calc(100% + 7px); }
+.day-date-picker__popover.is-up { bottom: calc(100% + 7px); }
+
+.day-date-picker__header {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 42px 1fr 42px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding: 4px;
+}
+
+.day-date-picker__header button,
+.day-date-picker__days button,
+.day-date-picker__months button,
+.day-date-picker__years button,
+.day-date-picker__footer button {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.day-date-picker__header > button:not(.day-date-picker__period) {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+
+.day-date-picker__period {
+  min-height: 38px;
+  border-radius: 8px !important;
+  font-size: 13px !important;
+  font-weight: 620 !important;
+  text-transform: capitalize;
+}
+
+.day-date-picker__header button:hover,
+.day-date-picker__header button:focus-visible,
+.day-date-picker__days button:hover,
+.day-date-picker__days button:focus-visible,
+.day-date-picker__months button:hover,
+.day-date-picker__months button:focus-visible,
+.day-date-picker__years button:hover,
+.day-date-picker__years button:focus-visible {
+  background: #ece5d9;
+  outline: none;
+}
+
+.day-date-picker__calendar { padding: 10px 12px 12px; }
+.day-date-picker__weekdays,
+.day-date-picker__days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+
+.day-date-picker__weekdays span {
+  display: grid;
+  min-height: 26px;
+  place-items: center;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 620;
+  text-transform: uppercase;
+}
+
+.day-date-picker__days button,
+.day-date-picker__days i {
+  min-width: 0;
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.day-date-picker__days button[data-selected="true"],
+.day-date-picker__months button[data-selected="true"],
+.day-date-picker__years button[data-selected="true"] {
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 620;
+}
+
+.day-date-picker__days button:disabled {
+  cursor: default;
+  opacity: .23;
+}
+
+.day-date-picker__months,
+.day-date-picker__years {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  padding: 12px;
+}
+
+.day-date-picker__months button,
+.day-date-picker__years button {
+  min-height: 38px;
+  border-radius: 9px;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.day-date-picker__footer {
+  min-height: 45px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding: 5px 8px;
+}
+
+.day-date-picker__footer:has(> button:only-child) { justify-content: flex-end; }
+
+.day-date-picker__footer button {
+  border-radius: 7px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.day-date-picker__footer button:hover,
+.day-date-picker__footer button:focus-visible {
+  background: #ece5d9;
+  color: var(--ink);
+  outline: none;
+}
+
+@keyframes day-date-picker-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .day-date-picker__popover { animation: none; }
+}

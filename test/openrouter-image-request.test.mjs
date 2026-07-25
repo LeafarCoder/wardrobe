@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   analysisPrompt,
+  buildGarmentPrompt,
   buildPlannedOutfitPrompt,
   editWithSafetyFallback,
+  garmentSemanticMismatch,
   modeledModelForReferenceCount,
   openRouterHeaders,
   openRouterImageRequest,
@@ -12,6 +14,48 @@ import {
   providerResponseError,
   wardrobePlanPrompt,
 } from "../scripts/import-job-api.mjs";
+
+test("makes a Portuguese bracelet correction override watch-like crop ambiguity", () => {
+  const prompt = buildGarmentPrompt({
+    name: "Pulseira de prata",
+    part: "accessories_up",
+    color: "#c0c0c0",
+    tags: ["brilhante", "acessório"],
+  }, "#00ff00", {
+    hasContextReference: true,
+    userDirection: "Não é para gerar um relógio. É uma pulseira de prata com várias peças.",
+  });
+
+  assert.match(prompt, /bracelet or wrist chain/i);
+  assert.match(prompt, /not a watch or timepiece/i);
+  assert.match(prompt, /USER CORRECTION — AUTHORITATIVE AND HIGHEST PRIORITY/);
+  assert.match(prompt, /Não é para gerar um relógio/);
+  assert.doesNotMatch(prompt, /face or body, case, crown, strap/i);
+  assert.equal(garmentSemanticMismatch(
+    { name: "Pulseira de prata", part: "accessories_up" },
+    [{ name: "Silver wristwatch", part: "accessories_up", tags: ["watch", "dial"] }],
+  ), "generated a watch instead of a bracelet");
+});
+
+test("keeps women's pointed high heels from becoming men's dress shoes", () => {
+  const metadata = {
+    name: "Sapatos pretos de salto",
+    part: "shoes",
+    color: "#000000",
+    tags: ["sapatos", "salto alto", "scarpin"],
+  };
+  const prompt = buildGarmentPrompt(metadata, "#00ff00", {
+    userDirection: "These are women's shoes with a pointy front and a high heel.",
+  });
+
+  assert.match(prompt, /women's high-heeled footwear/i);
+  assert.match(prompt, /pointed toe/i);
+  assert.match(prompt, /Do not create a men's Oxford/i);
+  assert.equal(garmentSemanticMismatch(
+    metadata,
+    [{ name: "Black Oxford shoe", part: "shoes", tags: ["lace-up", "menswear"] }],
+  ), "generated men's or flat dress footwear instead of a high heel");
+});
 
 test("grounds a planned modeled outfit in every garment, place, date, and occasion", () => {
   const prompt = buildPlannedOutfitPrompt(
@@ -187,6 +231,10 @@ test("puts the locally validated planner shape in the prompt", () => {
     assert.match(prompt, new RegExp(`\"${key}\"`));
   }
   assert.match(prompt, /Return only one valid JSON object/i);
+  assert.match(prompt, /exactly one individually purchasable garment or accessory/i);
+  assert.match(prompt, /gloves, a scarf, and a beanie as three separate entries/i);
+  assert.match(prompt, /normally two to four words/i);
+  assert.match(prompt, /do not add its category/i);
 });
 
 test("asks AI-generated wardrobe copy to use the person's language", () => {

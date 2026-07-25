@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  compactStoreSearchQuery,
   DEFAULT_PREFERRED_STORES,
   normalizePreferredStores,
   preferredStoreOptions,
@@ -28,6 +29,27 @@ test("opens a Portugal retailer search for Portuguese profiles and locations", (
   });
   assert.match(url, /^https:\/\/www\.zara\.com\/pt\/pt\/search/);
   assert.match(url, /casaco%20imperme%C3%A1vel/);
+});
+
+test("uses Bershka's path search instead of its gender-gated search parameter", () => {
+  const url = storeSearchUrl("Bershka", "roupa interior térmica", {
+    language: "pt-PT",
+  });
+  assert.equal(url, "https://www.bershka.com/pt/q/roupa%20interior%20t%C3%A9rmica");
+  assert.equal(url.includes("searchTerm"), false);
+});
+
+test("keeps retailer queries concise and removes parenthetical alternatives", () => {
+  assert.equal(
+    compactStoreSearchQuery("Sobretudo pesado (Parka ou lã) outerwear"),
+    "Sobretudo pesado",
+  );
+  assert.equal(compactStoreSearchQuery("Roupa interior térmica underwear"), "Roupa interior térmica");
+  assert.equal(compactStoreSearchQuery("thermal underwear"), "thermal underwear");
+  assert.equal(
+    compactStoreSearchQuery("camisolas de malha vermelho muito quente inverno"),
+    "camisolas de malha vermelho",
+  );
 });
 
 test("returns no link for an unknown store or empty recommendation", () => {

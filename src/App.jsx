@@ -4,12 +4,20 @@ import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { BrandIcon } from "./BrandIcon.jsx";
 import { CITY_SUGGESTIONS } from "./city-suggestions.js";
 import { GarmentColorPreview } from "./GarmentColorPreview.jsx";
+import { DayDatePicker } from "./DayDatePicker.jsx";
 import { formatDate, getLocale, LANGUAGE_OPTIONS, setLocale, tr, useLocale } from "./i18n.js";
 import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
 import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
+import { ProductStage } from "./ProductStage.jsx";
 import { AI_TASKS, formatAiCost, normalizeAiPreferences } from "./ai-preferences.js";
 import { garmentVariationColors, normalizeHexColor } from "./garment-recolor.js";
+import {
+  GARMENT_VARIANT_THRESHOLD_DEFAULT,
+  GARMENT_VARIANT_THRESHOLD_MAX,
+  GARMENT_VARIANT_THRESHOLD_MIN,
+  garmentColorVariants,
+} from "./garment-variants.js";
 import {
   preferredStoreOptions,
   STORE_OPTIONS,
@@ -73,7 +81,7 @@ const GROUP_MODES = [
   { id: "color", label: "Colors", icon: Palette },
   { id: "type", label: "Garment type", icon: TShirt },
   { id: "brand", label: "Brand", icon: Tag },
-  { id: "purchase-year", label: "Purchase year", icon: CalendarBlank },
+  { id: "purchase-year", label: "Acquisition year", icon: CalendarBlank },
 ];
 const SORT_MODE_IDS = new Set(SORT_MODES.map((mode) => mode.id));
 const GROUP_MODE_IDS = new Set(GROUP_MODES.map((mode) => mode.id));
@@ -112,6 +120,8 @@ function editableItem(item) {
     brand: item.brand || "",
     purchaseMonth: normalizePurchaseMonth(item.purchaseMonth) || "",
     purchasePrice: normalizePurchasePrice(item.purchasePrice) ?? "",
+    secondHand: Boolean(item.secondHand),
+    acquiredFree: Boolean(item.acquiredFree),
     tags: [...(item.tags || [])],
     sizes: normalizeGarmentFacetList(item.sizes),
     fits: normalizeGarmentFacetList(item.fits),
@@ -143,6 +153,18 @@ function itemSourcePhotos(item) {
     boundingBox: item.boundingBox || null,
     focusBox: item.originalFocusBox || null,
   }] : [];
+}
+
+function itemColorVersions(item) {
+  return [{
+    id: null,
+    image: item.image,
+    preview: item.imagePreview || item.image,
+    thumbnail: item.thumbnail || item.imagePreview || item.image,
+    primaryColor: item.color || null,
+    secondaryColor: item.secondaryColor || null,
+    original: true,
+  }, ...garmentColorVariants(item)];
 }
 
 function modeledLookSource(look) {
@@ -223,7 +245,9 @@ function persistEdit(item, userId) {
     secondaryColor: item.secondaryColor || null,
     brand: item.brand || "",
     purchaseMonth: normalizePurchaseMonth(item.purchaseMonth),
-    purchasePrice: normalizePurchasePrice(item.purchasePrice),
+    purchasePrice: item.acquiredFree ? null : normalizePurchasePrice(item.purchasePrice),
+    secondHand: Boolean(item.secondHand),
+    acquiredFree: Boolean(item.acquiredFree),
     tags: item.tags || [],
     sizes: normalizeGarmentFacetList(item.sizes),
     fits: normalizeGarmentFacetList(item.fits),
@@ -430,9 +454,15 @@ function GalleryItem({
       aria-pressed={selected}
       data-testid={`wardrobe-item-${item.id}`}
     >
-      <span
+      <ProductStage
+        as="span"
         className="gallery-item__media"
-        style={hasTileBackground ? { "--gallery-tile-background": backgroundStyle.color } : undefined}
+        interactive
+        animated
+        style={hasTileBackground ? {
+          "--product-stage-center": backgroundStyle.color,
+          "--product-stage-edge": backgroundStyle.color,
+        } : undefined}
       >
         <OptimizedImage
           src={item.thumbnail || item.image}
@@ -450,7 +480,7 @@ function GalleryItem({
             ))}
           </span>
         )}
-      </span>
+      </ProductStage>
       {detailsVisible && (
         <span className="gallery-item__details">
           {visibleFields.has("name") && <strong>{item.name || type}</strong>}
@@ -887,13 +917,14 @@ function ItemEditor({
   setDraft,
   onEditColors,
   currency,
-  colorPreview,
+  colorVersions,
 }) {
   const currencyOption = CURRENCY_OPTIONS.find((option) => option.id === currency) || CURRENCY_OPTIONS[0];
   const purchaseSummary = [
     formatMonthYear(draft.purchaseMonth),
-    draft.purchasePrice !== "" ? `${currencyOption.symbol}${draft.purchasePrice}` : "",
-  ].filter(Boolean).join(" · ") || tr("Date and price");
+    draft.acquiredFree ? tr("Free") : draft.purchasePrice !== "" ? `${currencyOption.symbol}${draft.purchasePrice}` : "",
+    draft.secondHand ? tr("Second-hand") : "",
+  ].filter(Boolean).join(" · ") || tr("Date and origin");
   const detailsCount = [
     ...draft.tags,
     ...draft.sizes,
@@ -910,12 +941,12 @@ function ItemEditor({
           <span className="garment-section-swatches" aria-label={tr("Saved garment colors")}>
             <i style={{ backgroundColor: draft.color }} />
             {draft.secondaryColor && <i style={{ backgroundColor: draft.secondaryColor }} />}
-            <span>{tr("Saved colors and preview")}</span>
+            <span>{tr("Saved garment colors")}</span>
           </span>
         )}
         defaultOpen
       >
-        {colorPreview}
+        {colorVersions}
         <fieldset className="color-field">
           <legend className="sr-only">{tr("Saved colors")}</legend>
           <CompactSavedColors
@@ -926,17 +957,17 @@ function ItemEditor({
         </fieldset>
       </GarmentEditorSection>
 
-      <GarmentEditorSection title={tr("Purchase")} summary={purchaseSummary}>
+      <GarmentEditorSection title={tr("Acquisition")} summary={purchaseSummary}>
         <div className="garment-purchase-grid">
           <label className="field">
-            <span>{tr("Purchase date")} <small>{tr("optional")}</small></span>
+            <span>{tr("Acquisition date")} <small>{tr("optional")}</small></span>
             <MonthYearPicker
               value={draft.purchaseMonth}
               onChange={(purchaseMonth) => setDraft((current) => ({ ...current, purchaseMonth }))}
-              aria-label={tr("Purchase month and year")}
+              aria-label={tr("Acquisition year or month")}
             />
           </label>
-          <fieldset className="field purchase-price-field">
+          <fieldset className={`field purchase-price-field${draft.acquiredFree ? " is-disabled" : ""}`}>
             <legend>{tr("Purchase price")} <small>{tr("optional")}</small></legend>
             <div>
               <input
@@ -946,12 +977,35 @@ function ItemEditor({
                 step="0.01"
                 inputMode="decimal"
                 value={draft.purchasePrice}
+                disabled={draft.acquiredFree}
                 onChange={(event) => setDraft((current) => ({ ...current, purchasePrice: event.target.value }))}
                 aria-label={tr("Purchase price")}
               />
               <span className="purchase-price-currency" title={currencyOption.label}>{currencyOption.symbol}</span>
             </div>
           </fieldset>
+          <div className="garment-acquisition-options">
+            <label>
+              <input
+                type="checkbox"
+                checked={draft.secondHand}
+                onChange={(event) => setDraft((current) => ({ ...current, secondHand: event.target.checked }))}
+              />
+              <span>{tr("Acquired second-hand")}</span>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={draft.acquiredFree}
+                onChange={(event) => setDraft((current) => ({
+                  ...current,
+                  acquiredFree: event.target.checked,
+                  purchasePrice: event.target.checked ? "" : current.purchasePrice,
+                }))}
+              />
+              <span>{tr("Received for free")}</span>
+            </label>
+          </div>
         </div>
       </GarmentEditorSection>
 
@@ -1021,92 +1075,171 @@ function ItemEditor({
   );
 }
 
-function ColorVariationControls({
+function ColorVersionAction({ count, onClick, disabled }) {
+  return (
+    <button className="color-version-action" type="button" onClick={onClick} disabled={disabled}>
+      <Palette size={17} aria-hidden="true" />
+      <span>{tr(count ? "Create another color version" : "Create a color version")}</span>
+      {count > 0 && <small>{tr("{count} saved", { count })}</small>}
+    </button>
+  );
+}
+
+function VariantColorPane({
+  label,
+  sourceColor,
+  alternateColor,
+  value,
+  threshold,
   garment,
-  primaryColor,
-  secondaryColor,
-  channel,
-  onChannelChange,
-  targetColor,
-  onTargetChange,
-  busy,
-  error,
+  onChange,
+  onThresholdChange,
+  disabled = false,
 }) {
-  const sourceColor = channel === "secondary" ? secondaryColor : primaryColor;
-  const alternateColor = channel === "secondary" ? primaryColor : secondaryColor;
   const variations = useMemo(
-    () => garmentVariationColors(sourceColor, alternateColor, 5, garment),
+    () => garmentVariationColors(sourceColor, alternateColor, 6, garment),
     [alternateColor, garment, sourceColor],
   );
-  const customColor = normalizeHexColor(targetColor) || normalizeHexColor(sourceColor) || "#6b655d";
-
+  const selected = normalizeHexColor(value) || normalizeHexColor(sourceColor) || "#6b655d";
   return (
-    <section className="color-variation" aria-label={tr("Local color preview")}>
-      <div className="color-variation__heading">
+    <section className={`variant-color-pane${disabled ? " is-disabled" : ""}`}>
+      <div className="variant-color-pane__heading">
         <div>
-          <strong>{tr("Color preview")}</strong>
-          <p>{tr("Local preview only—your saved garment stays unchanged.")}</p>
+          <span>{label}</span>
+          <strong>{selected.toUpperCase()}</strong>
         </div>
-        {busy && <span>{tr("Rendering…")}</span>}
-      </div>
-      {secondaryColor && (
-        <div className="color-variation__channels" role="group" aria-label={tr("Garment color to preview")}>
-          {[
-            { id: "primary", label: "Primary", color: primaryColor },
-            { id: "secondary", label: "Secondary", color: secondaryColor },
-          ].map((option) => (
-            <button
-              type="button"
-              className={channel === option.id ? "active" : ""}
-              onClick={() => {
-                onChannelChange(option.id);
-                onTargetChange(null);
-              }}
-              aria-pressed={channel === option.id}
-              key={option.id}
-            >
-              <i style={{ backgroundColor: option.color }} aria-hidden="true" />
-              {tr(option.label)}
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="color-variation__swatches">
-        <button
-          className={!targetColor ? "active original" : "original"}
-          type="button"
-          onClick={() => onTargetChange(null)}
-          aria-pressed={!targetColor}
-          aria-label={tr("Show original garment color")}
-          title={tr("Original")}
-        >
-          <i style={{ backgroundColor: sourceColor }} aria-hidden="true" />
-        </button>
-        {variations.map((variation) => (
-          <button
-            className={normalizeHexColor(targetColor) === variation.color ? "active" : ""}
-            type="button"
-            onClick={() => onTargetChange(variation.color)}
-            aria-pressed={normalizeHexColor(targetColor) === variation.color}
-            aria-label={tr("Preview {color}", { color: tr(variation.label) })}
-            title={tr(variation.label)}
-            key={variation.color}
-          >
-            <i style={{ backgroundColor: variation.color }} aria-hidden="true" />
-          </button>
-        ))}
-        <label className={targetColor && !variations.some((variation) => variation.color === normalizeHexColor(targetColor)) ? "active" : ""} title={tr("Choose another preview color")}>
-          <input
-            type="color"
-            value={customColor}
-            onChange={(event) => onTargetChange(event.target.value)}
-            aria-label={tr("Choose a custom preview color")}
-          />
-          <span>+</span>
+        <label className="variant-color-pane__picker" style={{ "--variant-color": selected }}>
+          <input type="color" value={selected} disabled={disabled} onChange={(event) => onChange(event.target.value)} aria-label={tr("Choose {label}", { label })} />
+          <PencilSimple size={14} aria-hidden="true" />
         </label>
       </div>
-      {error && <p className="color-variation__error" role="alert">{error}</p>}
+      <div className="variant-color-pane__swatches">
+        <button type="button" className={selected === normalizeHexColor(sourceColor) ? "active" : ""} disabled={disabled} onClick={() => onChange(sourceColor)} title={tr("Original")}>
+          <i style={{ backgroundColor: sourceColor }} />
+        </button>
+        {variations.map((variation) => (
+          <button type="button" className={selected === variation.color ? "active" : ""} disabled={disabled} onClick={() => onChange(variation.color)} title={tr(variation.label)} key={variation.color}>
+            <i style={{ backgroundColor: variation.color }} />
+          </button>
+        ))}
+      </div>
+      <label className="variant-threshold">
+        <span>
+          <span>{tr("Color reach")}</span>
+          <strong>{threshold}%</strong>
+        </span>
+        <input
+          type="range"
+          min={GARMENT_VARIANT_THRESHOLD_MIN}
+          max={GARMENT_VARIANT_THRESHOLD_MAX}
+          step="5"
+          value={threshold}
+          disabled={disabled}
+          onChange={(event) => onThresholdChange(Number(event.target.value))}
+        />
+        <small>{tr("Lower values protect nearby colors. Higher values include more shades and textured pixels.")}</small>
+      </label>
+      {disabled && <p>{tr("Add a saved secondary color before creating a secondary-color version.")}</p>}
     </section>
+  );
+}
+
+function GarmentVariantStudio({ item, garment, onClose, onCreate }) {
+  const closeRef = useRef(null);
+  const renderedCanvas = useRef(null);
+  const [primaryColor, setPrimaryColor] = useState(item.color);
+  const [secondaryColor, setSecondaryColor] = useState(item.secondaryColor || null);
+  const [primaryThreshold, setPrimaryThreshold] = useState(GARMENT_VARIANT_THRESHOLD_DEFAULT);
+  const [secondaryThreshold, setSecondaryThreshold] = useState(GARMENT_VARIANT_THRESHOLD_DEFAULT);
+  const [rendering, setRendering] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    closeRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  const save = async () => {
+    if (!renderedCanvas.current || rendering || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onCreate({
+        imageDataUrl: renderedCanvas.current.toDataURL("image/png"),
+        primaryColor,
+        secondaryColor,
+        primaryThreshold,
+        secondaryThreshold,
+      });
+      onClose();
+    } catch (requestError) {
+      setError(readableError(requestError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="variant-studio-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !saving && onClose()}>
+      <section className="variant-studio" role="dialog" aria-modal="true" aria-labelledby="variant-studio-title">
+        <header>
+          <div>
+            <p>{tr("Garment versions")}</p>
+            <h2 id="variant-studio-title">{tr("Create a color version")}</h2>
+            <span>{tr("Adjust each saved color independently, then save this as another version of the same garment.")}</span>
+          </div>
+          <button ref={closeRef} type="button" onClick={onClose} disabled={saving} aria-label={tr("Close color version editor")}><X size={22} /></button>
+        </header>
+        <div className="variant-studio__body">
+          <VariantColorPane
+            label={tr("Primary color")}
+            sourceColor={item.color}
+            alternateColor={item.secondaryColor}
+            value={primaryColor}
+            threshold={primaryThreshold}
+            garment={garment}
+            onChange={setPrimaryColor}
+            onThresholdChange={setPrimaryThreshold}
+          />
+          <ProductStage className="variant-studio__garment" animated>
+            <GarmentColorPreview
+              src={item.image}
+              alt={tr("New garment color version")}
+              sourceColor={item.color}
+              targetColor={primaryColor}
+              secondarySourceColor={item.secondaryColor}
+              secondaryTargetColor={secondaryColor}
+              primaryThreshold={primaryThreshold}
+              secondaryThreshold={secondaryThreshold}
+              context={garment}
+              onRenderingChange={setRendering}
+              onRendered={(canvas) => { renderedCanvas.current = canvas; }}
+              onError={setError}
+            />
+            {rendering && <span className="variant-studio__rendering"><SpinnerGap size={16} /> {tr("Rendering…")}</span>}
+          </ProductStage>
+          <VariantColorPane
+            label={tr("Secondary color")}
+            sourceColor={item.secondaryColor || "#d8d0c2"}
+            alternateColor={item.color}
+            value={secondaryColor}
+            threshold={secondaryThreshold}
+            garment={{ ...garment, channel: "secondary" }}
+            onChange={setSecondaryColor}
+            onThresholdChange={setSecondaryThreshold}
+            disabled={!item.secondaryColor}
+          />
+        </div>
+        {error && <p className="variant-studio__error" role="alert">{error}</p>}
+        <footer>
+          <button className="secondary-button" type="button" onClick={onClose} disabled={saving}>{tr("Cancel")}</button>
+          <button className="primary-button" type="button" onClick={save} disabled={saving || rendering}>
+            {saving ? <SpinnerGap size={15} /> : <Check size={15} weight="bold" />}
+            {tr(saving ? "Saving…" : "Create version")}
+          </button>
+        </footer>
+      </section>
+    </div>
   );
 }
 
@@ -1117,6 +1250,7 @@ function ItemViewer({
   onSave,
   onDelete,
   onGenerateModeled,
+  onCreateVariant,
   onDeleteModeled,
   onDirtyChange,
   blockedSwitchSignal,
@@ -1149,6 +1283,8 @@ function ItemViewer({
   const [sourceCropVisible, setSourceCropVisible] = useState(false);
   const [sourceImageFrame, setSourceImageFrame] = useState(null);
   const [colorEditorOpen, setColorEditorOpen] = useState(false);
+  const [variantStudioOpen, setVariantStudioOpen] = useState(false);
+  const [modeledVariantPickerOpen, setModeledVariantPickerOpen] = useState(false);
   const [sourcePhotoIndex, setSourcePhotoIndex] = useState(0);
   const [generatingModeledFor, setGeneratingModeledFor] = useState(null);
   const [deletingModeled, setDeletingModeled] = useState(false);
@@ -1157,11 +1293,11 @@ function ItemViewer({
   const [deletingGarment, setDeletingGarment] = useState(false);
   const [nameEditing, setNameEditing] = useState(false);
   const [viewerToast, setViewerToast] = useState(null);
-  const [variationChannel, setVariationChannel] = useState("primary");
-  const [variationColor, setVariationColor] = useState(null);
-  const [variationRendering, setVariationRendering] = useState(false);
-  const [variationError, setVariationError] = useState("");
   const type = tr(TYPE_MAP[item.part]?.singular || "Wardrobe item");
+  const colorVersions = useMemo(() => itemColorVersions(item), [item]);
+  const [colorVersionIndex, setColorVersionIndex] = useState(0);
+  const activeColorVersionIndex = Math.min(colorVersionIndex, Math.max(0, colorVersions.length - 1));
+  const activeColorVersion = colorVersions[activeColorVersionIndex] || colorVersions[0];
   const modeledLooks = useMemo(() => itemModeledLooks(item), [item]);
   const sourcePhotos = useMemo(() => itemSourcePhotos(item), [item]);
   const [modeledIndex, setModeledIndex] = useState(Math.max(0, modeledLooks.length - 1));
@@ -1215,8 +1351,8 @@ function ItemViewer({
 
   const isDirty = useMemo(() => {
     const normalizedTags = (tags) => tags.map((tag) => tag.trim()).filter(Boolean);
-    const draftPrice = normalizePurchasePrice(draft.purchasePrice);
-    const itemPrice = normalizePurchasePrice(item.purchasePrice);
+    const draftPrice = draft.acquiredFree ? null : normalizePurchasePrice(draft.purchasePrice);
+    const itemPrice = item.acquiredFree ? null : normalizePurchasePrice(item.purchasePrice);
     return JSON.stringify({
       name: draft.name.trim(),
       part: draft.part,
@@ -1225,6 +1361,8 @@ function ItemViewer({
       brand: draft.brand.trim(),
       purchaseMonth: normalizePurchaseMonth(draft.purchaseMonth),
       purchasePrice: draftPrice,
+      secondHand: Boolean(draft.secondHand),
+      acquiredFree: Boolean(draft.acquiredFree),
       tags: normalizedTags(draft.tags),
       sizes: normalizedTags(draft.sizes),
       fits: normalizedTags(draft.fits),
@@ -1238,6 +1376,8 @@ function ItemViewer({
       brand: (item.brand || "").trim(),
       purchaseMonth: normalizePurchaseMonth(item.purchaseMonth),
       purchasePrice: itemPrice,
+      secondHand: Boolean(item.secondHand),
+      acquiredFree: Boolean(item.acquiredFree),
       tags: normalizedTags(item.tags || []),
       sizes: normalizedTags(item.sizes || []),
       fits: normalizedTags(item.fits || []),
@@ -1270,7 +1410,11 @@ function ItemViewer({
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === "Escape") {
-        if (colorEditorOpen) {
+        if (variantStudioOpen) {
+          setVariantStudioOpen(false);
+        } else if (modeledVariantPickerOpen) {
+          setModeledVariantPickerOpen(false);
+        } else if (colorEditorOpen) {
           setColorEditorOpen(false);
           setSampling(null);
         } else if (garmentDeleteOpen) {
@@ -1303,7 +1447,7 @@ function ItemViewer({
       document.removeEventListener("keydown", onKeyDown);
       clearTimeout(shakeTimerRef.current);
     };
-  }, [colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, mediaPreviewOpen, requestClose, sampling, sourcePhotoOpen]);
+  }, [colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, mediaPreviewOpen, modeledVariantPickerOpen, requestClose, sampling, sourcePhotoOpen, variantStudioOpen]);
 
   useEffect(() => {
     if (deleteCandidate) deleteCancelButtonRef.current?.focus({ preventScroll: true });
@@ -1326,7 +1470,7 @@ function ItemViewer({
   }, [colorEditorOpen]);
 
   useEffect(() => {
-    if (!sourcePhotoOpen && !colorEditorOpen && !mediaPreviewOpen) return undefined;
+    if (!sourcePhotoOpen && !colorEditorOpen && !mediaPreviewOpen && !variantStudioOpen && !modeledVariantPickerOpen) return undefined;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -1334,16 +1478,12 @@ function ItemViewer({
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [colorEditorOpen, mediaPreviewOpen, sourcePhotoOpen]);
+  }, [colorEditorOpen, mediaPreviewOpen, modeledVariantPickerOpen, sourcePhotoOpen, variantStudioOpen]);
 
   useEffect(() => {
     if (!isDirty) setCloseBlocked(false);
     onDirtyChange?.(isDirty);
   }, [isDirty, onDirtyChange]);
-
-  useEffect(() => {
-    if (sampling && variationColor) setVariationColor(null);
-  }, [sampling, variationColor]);
 
   useEffect(() => {
     if (blockedSwitchSignal) nudgeUnsaved(true);
@@ -1377,14 +1517,16 @@ function ItemViewer({
     setDeleteCandidate(null);
     setGarmentDeleteOpen(false);
     setDeletingGarment(false);
+    setVariantStudioOpen(false);
+    setModeledVariantPickerOpen(false);
     setCloseBlocked(false);
     setNameEditing(false);
     setViewerToast(null);
-    setVariationChannel("primary");
-    setVariationColor(null);
-    setVariationRendering(false);
-    setVariationError("");
   }, [item]);
+
+  useLayoutEffect(() => {
+    setColorVersionIndex(0);
+  }, [item.id]);
 
   useLayoutEffect(() => {
     if (!sourcePhotoOpen) return undefined;
@@ -1419,7 +1561,7 @@ function ItemViewer({
   };
 
   const saveEditing = () => {
-    const purchasePrice = normalizePurchasePrice(draft.purchasePrice);
+    const purchasePrice = draft.acquiredFree ? null : normalizePurchasePrice(draft.purchasePrice);
     onSave({
       ...item,
       ...draft,
@@ -1427,6 +1569,8 @@ function ItemViewer({
       brand: draft.brand.trim(),
       purchaseMonth: normalizePurchaseMonth(draft.purchaseMonth),
       purchasePrice,
+      secondHand: Boolean(draft.secondHand),
+      acquiredFree: Boolean(draft.acquiredFree),
       tags: draft.tags.map((tag) => tag.trim()).filter(Boolean),
       sizes: draft.sizes.map((value) => value.trim()).filter(Boolean),
       fits: draft.fits.map((value) => value.trim()).filter(Boolean),
@@ -1457,7 +1601,7 @@ function ItemViewer({
     setSampling(null);
   };
 
-  const generateModeledLook = async () => {
+  const generateModeledLook = async (variantId = null) => {
     if (deletingModeled) return;
     if (isDirty) {
       setViewerToast({
@@ -1471,7 +1615,8 @@ function ItemViewer({
     setGeneratingModeledFor(targetItemId);
     setViewerToast(null);
     try {
-      await onGenerateModeled(targetItemId);
+      await onGenerateModeled(targetItemId, variantId);
+      setModeledVariantPickerOpen(false);
     } catch (requestError) {
       if (activeItemIdRef.current === targetItemId) {
         setViewerToast({
@@ -1482,6 +1627,21 @@ function ItemViewer({
     } finally {
       setGeneratingModeledFor((current) => current === targetItemId ? null : current);
     }
+  };
+
+  const requestGenerateModeledLook = () => {
+    if (colorVersions.length > 1) {
+      setModeledVariantPickerOpen(true);
+      return;
+    }
+    generateModeledLook();
+  };
+
+  const rotateColorVersion = (direction) => {
+    if (colorVersions.length < 2) return;
+    setColorVersionIndex((current) => (
+      (Math.min(current, colorVersions.length - 1) + direction + colorVersions.length) % colorVersions.length
+    ));
   };
 
   const rotateModeledLook = (direction) => {
@@ -1626,7 +1786,6 @@ function ItemViewer({
 
   const openColorEditor = () => {
     setSampleStatus("");
-    setVariationColor(null);
     setColorEditorOpen(true);
   };
 
@@ -1671,26 +1830,31 @@ function ItemViewer({
       }}
     >
       <GarmentColorPreview
-        src={item.imagePreview || item.image}
+        src={activeColorVersion.preview || activeColorVersion.image}
         alt={tr("Selected {type}", { type: type.toLocaleLowerCase(getLocale()) })}
-        sourceColor={variationChannel === "secondary" ? draft.secondaryColor : draft.color}
-        alternateColor={variationChannel === "secondary" ? draft.color : draft.secondaryColor}
-        targetColor={variationColor}
+        sourceColor={activeColorVersion.primaryColor || draft.color}
+        alternateColor={activeColorVersion.secondaryColor || draft.secondaryColor}
+        targetColor={null}
         context={{
           name: draft.name || type,
           part: draft.part || item.part,
           tags: draft.tags || item.tags,
           materials: draft.materials || item.materials,
-          channel: variationChannel,
+          channel: "primary",
         }}
         onSourceReady={handleGarmentSourceReady}
-        onRenderingChange={setVariationRendering}
-        onError={setVariationError}
         onClick={(event) => {
           if (sampling) handleImageClick(event);
           else openMediaPreview("garment");
         }}
       />
+      {colorVersions.length > 1 && (
+        <div className="garment-version-nav" aria-label={tr("Garment color versions")}>
+          <button type="button" onClick={(event) => { event.stopPropagation(); rotateColorVersion(-1); }} aria-label={tr("Previous garment version")}><CaretLeft size={18} /></button>
+          <span>{tr("{current} of {total}", { current: activeColorVersionIndex + 1, total: colorVersions.length })}</span>
+          <button type="button" onClick={(event) => { event.stopPropagation(); rotateColorVersion(1); }} aria-label={tr("Next garment version")}><CaretRight size={18} /></button>
+        </div>
+      )}
       {sampling && <span className="sample-hint">{tr("Click garment to sample")}</span>}
     </div>
   );
@@ -1774,7 +1938,7 @@ function ItemViewer({
       className={`modeled-generate-action${generatingModeled ? " is-busy" : ""}`}
       type="button"
       disabled={generatingModeled || deletingModeled}
-      onClick={generateModeledLook}
+      onClick={requestGenerateModeledLook}
       aria-label={tr(hasModeledImage ? "Create another style look" : "Create a style look")}
       title={tr(hasModeledImage ? "Create another style look" : "Create a style look")}
     >
@@ -1785,7 +1949,7 @@ function ItemViewer({
 
   return (
     <>
-    <div className="viewer-entry" aria-hidden={deleteCandidate || garmentDeleteOpen || sourcePhotoOpen || mediaPreviewOpen || colorEditorOpen ? "true" : undefined}>
+    <div className="viewer-entry" aria-hidden={deleteCandidate || garmentDeleteOpen || sourcePhotoOpen || mediaPreviewOpen || colorEditorOpen || variantStudioOpen || modeledVariantPickerOpen ? "true" : undefined}>
     <aside className={`viewer editing${hasHeroImage ? " has-hero-image" : ""}${shaking ? " shake" : ""}`} aria-label={tr("Selected wardrobe item")}>
       <button className="viewer-icon-close" type="button" onClick={requestClose} aria-label={tr("Close viewer")}>
         <X size={24} weight="light" aria-hidden="true" />
@@ -1863,26 +2027,11 @@ function ItemViewer({
           setDraft={setDraft}
           onEditColors={openColorEditor}
           currency={currency}
-          colorPreview={(
-            <ColorVariationControls
-              garment={{
-                name: draft.name,
-                part: item.part,
-                tags: draft.tags,
-                materials: draft.materials,
-              }}
-              primaryColor={draft.color}
-              secondaryColor={draft.secondaryColor}
-              channel={variationChannel}
-              onChannelChange={setVariationChannel}
-              targetColor={variationColor}
-              onTargetChange={(color) => {
-                setSampling(null);
-                setVariationError("");
-                setVariationColor(color);
-              }}
-              busy={variationRendering}
-              error={variationError}
+          colorVersions={(
+            <ColorVersionAction
+              count={colorVersions.length - 1}
+              disabled={!item.id.startsWith("import-")}
+              onClick={() => setVariantStudioOpen(true)}
             />
           )}
         />
@@ -1940,6 +2089,41 @@ function ItemViewer({
         onKeyDown={keepSourcePhotoFocus}
       />
     )}
+    {variantStudioOpen && (
+      <GarmentVariantStudio
+        item={item}
+        garment={{ name: draft.name, part: draft.part || item.part, tags: draft.tags, materials: draft.materials }}
+        onClose={() => setVariantStudioOpen(false)}
+        onCreate={async (input) => {
+          const updated = await onCreateVariant(item.id, input);
+          setColorVersionIndex(itemColorVersions(updated).length - 1);
+        }}
+      />
+    )}
+    {modeledVariantPickerOpen && (
+      <div className="variant-picker-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setModeledVariantPickerOpen(false)}>
+        <section className="variant-picker" role="dialog" aria-modal="true" aria-labelledby="variant-picker-title">
+          <header>
+            <div><p>{tr("Create a style look")}</p><h2 id="variant-picker-title">{tr("Which garment version should be used?")}</h2></div>
+            <button type="button" onClick={() => setModeledVariantPickerOpen(false)} aria-label={tr("Close garment version chooser")}><X size={21} /></button>
+          </header>
+          <div className="variant-picker__grid">
+            {colorVersions.map((version, index) => (
+              <button type="button" disabled={generatingModeled} onClick={() => generateModeledLook(version.id)} key={version.id || "original"}>
+                <ProductStage className="variant-picker__image" staticStage>
+                  <OptimizedImage src={version.thumbnail || version.preview || version.image} alt="" sizes="180px" />
+                </ProductStage>
+                <span>{tr(version.original ? "Original" : "Color version {number}", { number: index })}</span>
+                <small>
+                  <i style={{ backgroundColor: version.primaryColor }} />
+                  {version.secondaryColor && <i style={{ backgroundColor: version.secondaryColor }} />}
+                </small>
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
+    )}
     {mediaPreviewOpen && (
       <div
         className="source-photo-overlay media-preview-overlay"
@@ -1969,7 +2153,7 @@ function ItemViewer({
             </button>
           </header>
           <div className={`media-preview-dialog__body${mediaPreviewOpen === "modeled" && modeledLooks.length > 1 ? " has-carousel" : ""}`}>
-            <div className="media-preview-dialog__viewport">
+            <ProductStage className="media-preview-dialog__viewport" interactive animated>
               {mediaPreviewOpen === "modeled" ? (
                 <OptimizedImage
                   key={activeModeledLook.id}
@@ -1985,19 +2169,18 @@ function ItemViewer({
               ) : (
                 <GarmentColorPreview
                   className="media-preview-dialog__image"
-                  src={item.image || item.imagePreview}
+                  src={activeColorVersion.image || activeColorVersion.preview}
                   alt={tr("Enlarged garment image for {name}", { name: draft.name || type })}
-                  sourceColor={variationChannel === "secondary" ? draft.secondaryColor : draft.color}
-                  alternateColor={variationChannel === "secondary" ? draft.color : draft.secondaryColor}
-                  targetColor={variationColor}
+                  sourceColor={activeColorVersion.primaryColor || draft.color}
+                  alternateColor={activeColorVersion.secondaryColor || draft.secondaryColor}
+                  targetColor={null}
                   context={{
                     name: draft.name || type,
                     part: draft.part || item.part,
                     tags: draft.tags || item.tags,
                     materials: draft.materials || item.materials,
-                    channel: variationChannel,
+                    channel: "primary",
                   }}
-                  onError={setVariationError}
                 />
               )}
               {mediaPreviewOpen === "modeled" && modeledLooks.length > 1 && (
@@ -2023,7 +2206,7 @@ function ItemViewer({
                   </span>
                 </>
               )}
-            </div>
+            </ProductStage>
             {mediaPreviewOpen === "modeled" && modeledLooks.length > 1 && (
               <aside className="media-preview-dialog__gallery" aria-label={tr("Modeled look gallery")}>
                 {modeledLooks.map((look, index) => (
@@ -2195,7 +2378,7 @@ function ItemViewer({
           >
             <X size={22} weight="light" aria-hidden="true" />
           </button>
-          <div className="look-delete-dialog__image">
+          <ProductStage className="look-delete-dialog__image" staticStage>
             <OptimizedImage
               src={modeledLookSource(deleteCandidate.look)}
               alt={tr("{name} modeled look to delete", { name: draft.name || type })}
@@ -2205,7 +2388,7 @@ function ItemViewer({
               priority
               reveal
             />
-          </div>
+          </ProductStage>
           <div className="look-delete-dialog__body">
             <p className="look-delete-dialog__eyebrow">{tr("Delete look")}</p>
             <h2 id="look-delete-title">{tr("Are you sure you want to delete this look?")}</h2>
@@ -2250,7 +2433,7 @@ function ItemViewer({
           >
             <X size={22} weight="light" aria-hidden="true" />
           </button>
-          <div className="look-delete-dialog__image garment-delete-dialog__image">
+          <ProductStage className="look-delete-dialog__image garment-delete-dialog__image" staticStage>
             <OptimizedImage
               src={item.imagePreview || item.image}
               alt={tr("{name} garment to delete", { name: draft.name || type })}
@@ -2260,7 +2443,7 @@ function ItemViewer({
               priority
               reveal
             />
-          </div>
+          </ProductStage>
           <div className="look-delete-dialog__body">
             <p className="look-delete-dialog__eyebrow">{tr("Delete garment")}</p>
             <h2 id="garment-delete-title">{tr("Are you sure you want to delete this garment?")}</h2>
@@ -3491,7 +3674,7 @@ function PlannerStoreSearch({ item, user, plan }) {
   const [expanded, setExpanded] = useState(false);
   const preferred = preferredStoreOptions(user.preferredStores);
   const stores = expanded ? STORE_OPTIONS : preferred;
-  const query = [item.name, item.category].filter(Boolean).join(" ");
+  const query = item.name;
   return (
     <div className={`planner-store-search${open ? " is-open" : ""}`}>
       <button
@@ -3542,6 +3725,11 @@ function PlannerStoreSearch({ item, user, plan }) {
   );
 }
 
+function plannerModeledLooks(outfit = {}) {
+  if (Array.isArray(outfit.modeledLooks) && outfit.modeledLooks.length) return outfit.modeledLooks;
+  return outfit.modeledLook ? [outfit.modeledLook] : [];
+}
+
 function WardrobePlanner({
   user,
   items,
@@ -3551,6 +3739,7 @@ function WardrobePlanner({
   onClose,
   onGenerate,
   onGenerateOutfit,
+  onAddOutfitIdeas,
   onDelete,
   onOpenItem,
 }) {
@@ -3568,11 +3757,16 @@ function WardrobePlanner({
   const [deletingPlanId, setDeletingPlanId] = useState(null);
   const [generatingOutfitKey, setGeneratingOutfitKey] = useState("");
   const [outfitErrors, setOutfitErrors] = useState({});
+  const [outfitImageIndices, setOutfitImageIndices] = useState({});
+  const [outfitLightbox, setOutfitLightbox] = useState(null);
+  const [addingIdeas, setAddingIdeas] = useState(false);
+  const [ideasError, setIdeasError] = useState("");
   const plans = user.wardrobePlans || [];
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) || plans[0] || null;
   const itemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const submit = async (event) => {
     event.preventDefault();
+    if (!draft.startDate || !draft.endDate) return;
     const plan = await onGenerate(draft);
     if (plan) setSelectedPlanId(plan.id);
   };
@@ -3596,12 +3790,38 @@ function WardrobePlanner({
     setGeneratingOutfitKey(key);
     setOutfitErrors((current) => ({ ...current, [key]: "" }));
     try {
-      await onGenerateOutfit(selectedPlan.id, outfitIndex);
+      const result = await onGenerateOutfit(selectedPlan.id, outfitIndex);
+      const nextIndex = Math.max(0, (result?.modeledLooks?.length || 1) - 1);
+      setOutfitImageIndices((current) => ({ ...current, [key]: nextIndex }));
     } catch (requestError) {
       setOutfitErrors((current) => ({ ...current, [key]: readableError(requestError) }));
     } finally {
       setGeneratingOutfitKey("");
     }
+  };
+  const addOutfitIdeas = async () => {
+    if (!selectedPlan || addingIdeas) return;
+    setAddingIdeas(true);
+    setIdeasError("");
+    try {
+      await onAddOutfitIdeas(selectedPlan.id);
+    } catch (requestError) {
+      setIdeasError(readableError(requestError));
+    } finally {
+      setAddingIdeas(false);
+    }
+  };
+  const moveOutfitImage = (key, total, direction) => {
+    setOutfitImageIndices((current) => ({
+      ...current,
+      [key]: ((current[key] || 0) + direction + total) % total,
+    }));
+  };
+  const moveLightbox = (direction) => {
+    setOutfitLightbox((current) => current ? {
+      ...current,
+      index: (current.index + direction + current.looks.length) % current.looks.length,
+    } : current);
   };
   return (
     <div
@@ -3649,8 +3869,29 @@ function WardrobePlanner({
             <label><span>{tr("Name")} <small>{tr("optional")}</small></span><input value={draft.title} maxLength="100" onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder={tr(draft.kind === "trip" ? "Lisbon weekend" : "Summer wedding")} /></label>
             <label><span>{tr("Location")}</span><div className="planner-input-with-icon"><MapPin size={16} aria-hidden="true" /><input required value={draft.location} maxLength="120" onChange={(event) => setDraft({ ...draft, location: event.target.value })} placeholder={tr("City and country")} /></div></label>
             <div className="planner-date-row">
-              <label><span>{tr("Starts")}</span><input required type="date" value={draft.startDate} onChange={(event) => setDraft({ ...draft, startDate: event.target.value, endDate: draft.endDate < event.target.value ? event.target.value : draft.endDate })} /></label>
-              <label><span>{tr("Ends")}</span><input required type="date" min={draft.startDate} value={draft.endDate} onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} /></label>
+              <label>
+                <span>{tr("Starts")}</span>
+                <DayDatePicker
+                  required
+                  value={draft.startDate}
+                  onChange={(startDate) => setDraft({
+                    ...draft,
+                    startDate,
+                    endDate: !startDate || draft.endDate < startDate ? startDate : draft.endDate,
+                  })}
+                  ariaLabel={tr("Choose start date")}
+                />
+              </label>
+              <label>
+                <span>{tr("Ends")}</span>
+                <DayDatePicker
+                  required
+                  min={draft.startDate}
+                  value={draft.endDate}
+                  onChange={(endDate) => setDraft({ ...draft, endDate })}
+                  ariaLabel={tr("Choose end date")}
+                />
+              </label>
             </div>
             <label><span>{tr("Plans and dress code")} <small>{tr("optional")}</small></span><textarea rows="5" maxLength="500" value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder={tr("Outdoor dinners, business meetings, lots of walking…")} /></label>
             {error && <p className="planner-error">{error}</p>}
@@ -3690,9 +3931,9 @@ function WardrobePlanner({
           <div className="planner-result">
             {!selectedPlan ? (
               <div className="planner-empty">
-                <CloudSun size={34} weight="light" aria-hidden="true" />
-                <h3>{tr("Weather-aware ideas from your wardrobe")}</h3>
-                <p>{tr("Add a location and dates. The planner will use seasonal climate expectations, your style profile, and the clothes you own.")}</p>
+                <SuitcaseRolling size={34} weight="light" aria-hidden="true" />
+                <h3>{tr("Build a plan for your trip or event")}</h3>
+                <p>{tr("Choose a place, dates, and plans to create outfit ideas from your wardrobe and see what may be missing.")}</p>
               </div>
             ) : (
               <>
@@ -3726,20 +3967,50 @@ function WardrobePlanner({
                 )}
                 {!!selectedPlan.result.outfitIdeas.length && (
                   <section className="planner-section">
-                    <h4>{tr("Outfit ideas")}</h4>
+                    <div className="planner-section__heading">
+                      <h4>{tr("Outfit ideas")}</h4>
+                      {selectedPlan.input.kind === "trip" && (
+                        <button type="button" onClick={addOutfitIdeas} disabled={addingIdeas}>
+                          {addingIdeas
+                            ? <SpinnerGap className="modeled-request__spinner" size={14} aria-hidden="true" />
+                            : <Plus size={14} aria-hidden="true" />}
+                          {tr(addingIdeas ? "Finding more ideas…" : "Add more outfit ideas")}
+                        </button>
+                      )}
+                    </div>
+                    {!!ideasError && <p className="planner-ideas-error">{ideasError}</p>}
                     <div className="planner-outfits">
                       {selectedPlan.result.outfitIdeas.map((outfit, outfitIndex) => {
                         const generationKey = `${selectedPlan.id}:${outfitIndex}`;
                         const generating = generatingOutfitKey === generationKey;
+                        const looks = plannerModeledLooks(outfit);
+                        const imageIndex = Math.min(outfitImageIndices[generationKey] || 0, Math.max(0, looks.length - 1));
+                        const activeLook = looks[imageIndex];
                         return (
-                        <article className={outfit.modeledLook ? "has-modeled-look" : ""} key={`${selectedPlan.id}-${outfit.name}`}>
-                          {outfit.modeledLook && (
-                            <OptimizedImage
-                              className="planner-outfit-image"
-                              src={outfit.modeledLook.preview || outfit.modeledLook.image}
-                              alt={tr("Modeled outfit: {name}", { name: outfit.name })}
-                              sizes="(max-width: 860px) 80vw, 360px"
-                            />
+                        <article className={activeLook ? "has-modeled-look" : ""} key={`${selectedPlan.id}-${outfit.name}`}>
+                          {activeLook && (
+                            <div className="planner-outfit-media">
+                              <button
+                                type="button"
+                                className="planner-outfit-image-button"
+                                onClick={() => setOutfitLightbox({ name: outfit.name, looks, index: imageIndex })}
+                                aria-label={tr("Open enlarged modeled outfit: {name}", { name: outfit.name })}
+                              >
+                                <OptimizedImage
+                                  className="planner-outfit-image"
+                                  src={activeLook.preview || activeLook.image}
+                                  alt={tr("Modeled outfit: {name}", { name: outfit.name })}
+                                  sizes="(max-width: 860px) 80vw, 360px"
+                                />
+                              </button>
+                              {looks.length > 1 && (
+                                <>
+                                  <button type="button" className="planner-outfit-media__arrow previous" onClick={() => moveOutfitImage(generationKey, looks.length, -1)} aria-label={tr("Previous image")}><CaretLeft size={17} aria-hidden="true" /></button>
+                                  <button type="button" className="planner-outfit-media__arrow next" onClick={() => moveOutfitImage(generationKey, looks.length, 1)} aria-label={tr("Next image")}><CaretRight size={17} aria-hidden="true" /></button>
+                                  <span className="planner-outfit-media__count">{imageIndex + 1} / {looks.length}</span>
+                                </>
+                              )}
+                            </div>
                           )}
                           <div className="planner-outfit-copy">
                             <strong>{outfit.name}</strong>
@@ -3767,7 +4038,7 @@ function WardrobePlanner({
                             {generating
                               ? <SpinnerGap className="modeled-request__spinner" size={15} aria-hidden="true" />
                               : <Sparkle size={15} weight="fill" aria-hidden="true" />}
-                            {tr(generating ? "Creating outfit…" : outfit.modeledLook ? "Create again" : "Create modeled look")}
+                            {tr(generating ? "Creating outfit…" : activeLook ? "Create another image" : "Create modeled look")}
                           </button>
                           {!!outfitErrors[generationKey] && <p className="planner-outfit-error">{outfitErrors[generationKey]}</p>}
                         </article>
@@ -3800,6 +4071,44 @@ function WardrobePlanner({
           </div>
         </div>
       </section>
+      {outfitLightbox && (
+        <div
+          className="planner-look-lightbox"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setOutfitLightbox(null);
+          }}
+        >
+          <section role="dialog" aria-modal="true" aria-label={tr("Modeled outfit gallery: {name}", { name: outfitLightbox.name })}>
+            <header>
+              <div><p>{tr("Modeled outfit")}</p><h3>{outfitLightbox.name}</h3></div>
+              <button type="button" onClick={() => setOutfitLightbox(null)} aria-label={tr("Close enlarged image")}><X size={22} aria-hidden="true" /></button>
+            </header>
+            <ProductStage className="planner-look-lightbox__stage" staticStage>
+              <OptimizedImage
+                src={outfitLightbox.looks[outfitLightbox.index].image}
+                alt={tr("Modeled outfit: {name}", { name: outfitLightbox.name })}
+                sizes="90vw"
+              />
+              {outfitLightbox.looks.length > 1 && (
+                <>
+                  <button type="button" className="previous" onClick={() => moveLightbox(-1)} aria-label={tr("Previous image")}><CaretLeft size={24} aria-hidden="true" /></button>
+                  <button type="button" className="next" onClick={() => moveLightbox(1)} aria-label={tr("Next image")}><CaretRight size={24} aria-hidden="true" /></button>
+                </>
+              )}
+            </ProductStage>
+            {outfitLightbox.looks.length > 1 && (
+              <div className="planner-look-lightbox__thumbs">
+                {outfitLightbox.looks.map((look, index) => (
+                  <button type="button" className={index === outfitLightbox.index ? "active" : ""} onClick={() => setOutfitLightbox({ ...outfitLightbox, index })} key={look.id}>
+                    <OptimizedImage src={look.preview || look.image} alt={tr("View image {number}", { number: index + 1 })} sizes="72px" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -3907,6 +4216,8 @@ export function App() {
                   brand: item.brand,
                   purchaseMonth: item.purchaseMonth,
                   purchasePrice: item.purchasePrice,
+                  secondHand: item.secondHand,
+                  acquiredFree: item.acquiredFree,
                   tags: item.tags,
                   sizes: item.sizes,
                   fits: item.fits,
@@ -4276,6 +4587,8 @@ export function App() {
           brand: updatedItem.brand,
           purchaseMonth: updatedItem.purchaseMonth,
           purchasePrice: updatedItem.purchasePrice,
+          secondHand: updatedItem.secondHand,
+          acquiredFree: updatedItem.acquiredFree,
           tags: updatedItem.tags,
           sizes: updatedItem.sizes,
           fits: updatedItem.fits,
@@ -4389,9 +4702,19 @@ export function App() {
       : [...current, newItem]);
   }, []);
 
-  const generateModeledLook = async (id) => {
+  const createColorVariant = async (id, input) => {
+    const updated = await profileApi(`/api/import/wardrobe/${id}/variants?user=${encodeURIComponent(currentUserId)}`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    return updated;
+  };
+
+  const generateModeledLook = async (id, variantId = null) => {
     const generated = await profileApi(`/api/import/wardrobe/${id}/modeled?user=${encodeURIComponent(currentUserId)}`, {
       method: "POST",
+      body: JSON.stringify({ variantId }),
     });
     setItems((current) => current.map((item) => item.id === generated.id ? { ...item, ...generated } : item));
     return generated;
@@ -4445,7 +4768,22 @@ export function App() {
         { method: "POST" },
       );
       setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
-      return result.modeledLook;
+      return result;
+    } catch (requestError) {
+      setPlannerError(readableError(requestError));
+      throw requestError;
+    }
+  };
+
+  const addPlannedOutfitIdeas = async (planId) => {
+    setPlannerError("");
+    try {
+      const result = await profileApi(
+        `/api/import/planner/${encodeURIComponent(planId)}/ideas?user=${encodeURIComponent(currentUserId)}`,
+        { method: "POST" },
+      );
+      setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+      return result.plan;
     } catch (requestError) {
       setPlannerError(readableError(requestError));
       throw requestError;
@@ -4652,6 +4990,7 @@ export function App() {
           onSave={saveItem}
           onDelete={deleteItem}
           onGenerateModeled={generateModeledLook}
+          onCreateVariant={createColorVariant}
           onDeleteModeled={deleteModeledLook}
           onDirtyChange={setViewerDirty}
           blockedSwitchSignal={blockedSwitchSignal}
@@ -4708,6 +5047,7 @@ export function App() {
           onClose={() => !plannerBusy && setPlannerOpen(false)}
           onGenerate={generateWardrobePlan}
           onGenerateOutfit={generatePlannedOutfitLook}
+          onAddOutfitIdeas={addPlannedOutfitIdeas}
           onDelete={deleteWardrobePlan}
           onOpenItem={(id) => {
             if (selectedId === id) closeViewer();

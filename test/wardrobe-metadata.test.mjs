@@ -15,6 +15,7 @@ import { buildModeledPrompt } from "../scripts/import-job-api.mjs";
 test("normalizes portable garment purchase metadata", () => {
   assert.equal(normalizeBrand("  Massimo Dutti  "), "Massimo Dutti");
   assert.equal(normalizePurchaseMonth("2025-02"), "2025-02");
+  assert.equal(normalizePurchaseMonth("2025"), "2025");
   assert.equal(normalizePurchaseMonth("2025-13"), null);
   assert.equal(normalizePurchaseMonth("February 2025"), null);
   assert.equal(normalizePurchasePrice("79.90"), 79.9);
@@ -24,15 +25,16 @@ test("normalizes portable garment purchase metadata", () => {
   assert.equal(normalizePurchaseCurrency("unsupported"), "EUR");
 });
 
-test("sort values put known purchase months chronologically before unknown dates", () => {
+test("sort values put known acquisition years and months chronologically before unknown dates", () => {
   const items = [
     { id: "unknown", purchaseMonth: null },
     { id: "newer", purchaseMonth: "2025-02" },
+    { id: "year-only", purchaseMonth: "2025" },
     { id: "older", purchaseMonth: "2021-11" },
   ];
   assert.deepEqual(
     items.sort((first, second) => purchaseMonthValue(first) - purchaseMonthValue(second)).map((item) => item.id),
-    ["older", "newer", "unknown"],
+    ["older", "year-only", "newer", "unknown"],
   );
 });
 

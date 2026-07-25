@@ -240,14 +240,14 @@ export function groupWardrobeItems(items = [], mode = "none", options = {}) {
     const groups = new Map();
     for (const item of source) {
       const match = typeof item.purchaseMonth === "string"
-        ? item.purchaseMonth.trim().match(/^(\d{4})-\d{2}$/)
+        ? item.purchaseMonth.trim().match(/^(\d{4})(?:-\d{2})?$/)
         : null;
       const year = match?.[1] || "";
       const key = year || "__unknown";
       if (!groups.has(key)) {
         groups.set(key, {
           id: `purchase-year-${key}`,
-          label: year || "Unknown purchase year",
+          label: year || "Unknown acquisition year",
           year: year ? Number(year) : null,
           items: [],
         });
@@ -296,6 +296,20 @@ export function normalizeWardrobePlans(value = {}) {
         item && typeof item === "object" && !Array.isArray(item) ? [mapper(item)] : []
       )).slice(0, maxItems)
     );
+    const normalizeModeledLooks = (outfit) => {
+      const candidates = Array.isArray(outfit.modeledLooks) && outfit.modeledLooks.length
+        ? outfit.modeledLooks
+        : outfit.modeledLook ? [outfit.modeledLook] : [];
+      const looks = normalizeItems(candidates, (look) => ({
+        id: cleanText(look.id, 80),
+        image: cleanText(look.image, 500),
+        preview: cleanText(look.preview, 500) || null,
+        model: cleanText(look.model, 180) || null,
+        fallbackUsed: Boolean(look.fallbackUsed),
+        generatedAt: cleanText(look.generatedAt, 40) || null,
+      }), 12).filter((look) => look.id && look.image);
+      return looks;
+    };
     return [{
       id,
       createdAt: cleanText(plan.createdAt, 40) || null,
@@ -318,24 +332,18 @@ export function normalizeWardrobePlans(value = {}) {
           itemId: cleanText(item.itemId, 100),
           reason: cleanText(item.reason, 240),
         }), 30),
-        outfitIdeas: normalizeItems(result.outfitIdeas, (item) => ({
-          name: cleanText(item.name, 100),
-          itemIds: normalizeItemIds(item.itemIds),
-          note: cleanText(item.note, 300),
-          ...(item.modeledLook && typeof item.modeledLook === "object" && !Array.isArray(item.modeledLook)
-            && cleanText(item.modeledLook.id, 80) && cleanText(item.modeledLook.image, 500)
-            ? {
-                modeledLook: {
-                  id: cleanText(item.modeledLook.id, 80),
-                  image: cleanText(item.modeledLook.image, 500),
-                  preview: cleanText(item.modeledLook.preview, 500) || null,
-                  model: cleanText(item.modeledLook.model, 180) || null,
-                  fallbackUsed: Boolean(item.modeledLook.fallbackUsed),
-                  generatedAt: cleanText(item.modeledLook.generatedAt, 40) || null,
-                },
-              }
-            : {}),
-        }), 12),
+        outfitIdeas: normalizeItems(result.outfitIdeas, (item) => {
+          const modeledLooks = normalizeModeledLooks(item);
+          return {
+            name: cleanText(item.name, 100),
+            itemIds: normalizeItemIds(item.itemIds),
+            note: cleanText(item.note, 300),
+            ...(modeledLooks.length ? {
+              modeledLooks,
+              modeledLook: modeledLooks.at(-1),
+            } : {}),
+          };
+        }, 12),
         missingItems: normalizeItems(result.missingItems, (item) => ({
           name: cleanText(item.name, 100),
           category: cleanText(item.category, 60),

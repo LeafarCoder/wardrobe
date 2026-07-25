@@ -749,7 +749,14 @@ button.import-source-option:focus-visible,
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.38);
 }
-.import-card__image { width: 88px; aspect-ratio: 4 / 5; object-fit: contain; background: var(--import-ivory); border-radius: 10px; }
+.import-card__stage {
+  width: 88px;
+  aspect-ratio: 4 / 5;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+}
+.import-card__image { width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
 .import-card__body { min-width: 0; }
 .import-card__title { margin: 0 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; }
 .import-card__detail { margin: 0; color: var(--import-muted); font-size: 12px; }
@@ -812,7 +819,15 @@ button.import-source-option:focus-visible,
   font-size: 10px;
   line-height: 1.4;
 }
-.import-editor__preview { width: 100%; max-height: 360px; object-fit: contain; background: var(--import-ivory); border-radius: 16px; }
+.import-editor__preview-stage {
+  width: 100%;
+  min-height: 280px;
+  max-height: 360px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+}
+.import-editor__preview { width: 100%; height: 100%; max-height: 360px; object-fit: contain; border-radius: inherit; }
 .import-crop-editor { min-width: 0; display: grid; align-content: start; gap: 10px; }
 .import-crop-canvas {
   position: relative;

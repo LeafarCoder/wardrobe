@@ -30,16 +30,21 @@ export function GarmentColorPreview({
   sourceColor,
   alternateColor,
   targetColor,
+  secondarySourceColor,
+  secondaryTargetColor,
+  primaryThreshold = 100,
+  secondaryThreshold = 100,
   context = {},
   className = "",
   onClick,
   onSourceReady,
   onRenderingChange,
+  onRendered,
   onError,
 }) {
   const canvasRef = useRef(null);
-  const callbackRef = useRef({ onSourceReady, onRenderingChange, onError });
-  callbackRef.current = { onSourceReady, onRenderingChange, onError };
+  const callbackRef = useRef({ onSourceReady, onRenderingChange, onRendered, onError });
+  callbackRef.current = { onSourceReady, onRenderingChange, onRendered, onError };
   const contextKey = JSON.stringify({
     name: context.name || "",
     part: context.part || "",
@@ -51,7 +56,7 @@ export function GarmentColorPreview({
   useEffect(() => {
     let cancelled = false;
     const render = async () => {
-      callbackRef.current.onRenderingChange?.(Boolean(targetColor));
+      callbackRef.current.onRenderingChange?.(Boolean(targetColor || secondaryTargetColor));
       try {
         const bitmap = await loadBitmap(src);
         if (cancelled || !canvasRef.current) return;
@@ -66,17 +71,46 @@ export function GarmentColorPreview({
         const normalizedSource = normalizeHexColor(sourceColor);
         const normalizedTarget = normalizeHexColor(targetColor);
         const normalizedAlternate = normalizeHexColor(alternateColor);
-        if (normalizedSource && normalizedTarget && normalizedSource !== normalizedTarget) {
-          const key = [src, normalizedSource, normalizedAlternate || "", normalizedTarget, contextKey].join("|");
+        const normalizedSecondarySource = normalizeHexColor(secondarySourceColor);
+        const normalizedSecondaryTarget = normalizeHexColor(secondaryTargetColor);
+        if (
+          (normalizedSource && normalizedTarget && normalizedSource !== normalizedTarget)
+          || (normalizedSecondarySource && normalizedSecondaryTarget && normalizedSecondarySource !== normalizedSecondaryTarget)
+        ) {
+          const key = [
+            src,
+            normalizedSource || "",
+            normalizedAlternate || "",
+            normalizedTarget || "",
+            primaryThreshold,
+            normalizedSecondarySource || "",
+            normalizedSecondaryTarget || "",
+            secondaryThreshold,
+            contextKey,
+          ].join("|");
           let recolored = RECOLOR_CACHE.get(key);
           if (!recolored) {
             recolored = context.getImageData(0, 0, canvas.width, canvas.height);
-            recolorGarmentPixels(recolored.data, normalizedSource, normalizedTarget, normalizedAlternate, JSON.parse(contextKey));
+            if (normalizedSource && normalizedTarget && normalizedSource !== normalizedTarget) {
+              recolorGarmentPixels(recolored.data, normalizedSource, normalizedTarget, normalizedSecondarySource || normalizedAlternate, {
+                ...JSON.parse(contextKey),
+                channel: "primary",
+                threshold: primaryThreshold,
+              });
+            }
+            if (normalizedSecondarySource && normalizedSecondaryTarget && normalizedSecondarySource !== normalizedSecondaryTarget) {
+              recolorGarmentPixels(recolored.data, normalizedSecondarySource, normalizedSecondaryTarget, normalizedSource, {
+                ...JSON.parse(contextKey),
+                channel: "secondary",
+                threshold: secondaryThreshold,
+              });
+            }
             rememberRecolor(key, recolored);
           }
           if (cancelled) return;
           context.putImageData(recolored, 0, 0);
         }
+        callbackRef.current.onRendered?.(canvas);
         callbackRef.current.onError?.("");
       } catch (error) {
         if (!cancelled) callbackRef.current.onError?.(error.message || tr("The color preview could not be rendered."));
@@ -88,7 +122,7 @@ export function GarmentColorPreview({
     return () => {
       cancelled = true;
     };
-  }, [alternateColor, contextKey, sourceColor, src, targetColor]);
+  }, [alternateColor, contextKey, primaryThreshold, secondarySourceColor, secondaryTargetColor, secondaryThreshold, sourceColor, src, targetColor]);
 
   return (
     <canvas

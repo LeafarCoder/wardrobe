@@ -160,7 +160,7 @@ export function normalizeBrand(value) {
 }
 
 export function normalizePurchaseMonth(value) {
-  if (typeof value !== "string" || !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(value)) return null;
+  if (typeof value !== "string" || !/^\d{4}(?:-(?:0[1-9]|1[0-2]))?$/.test(value)) return null;
   const year = Number(value.slice(0, 4));
   return year >= 1900 && year <= new Date().getUTCFullYear() + 1 ? value : null;
 }
@@ -181,7 +181,7 @@ export function normalizePurchaseCurrency(value, fallback = "EUR") {
 export function purchaseMonthValue(item) {
   const normalized = normalizePurchaseMonth(item?.purchaseMonth);
   if (!normalized) return Number.POSITIVE_INFINITY;
-  const [year, month] = normalized.split("-").map(Number);
+  const [year, month = 1] = normalized.split("-").map(Number);
   return Date.UTC(year, month - 1, 1);
 }
 

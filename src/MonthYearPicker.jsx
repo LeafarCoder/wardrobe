@@ -12,11 +12,11 @@ function clampYear(year) {
 }
 
 function parsedMonth(value) {
-  const match = typeof value === "string" && value.match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  const match = typeof value === "string" && value.match(/^(\d{4})(?:-(0[1-9]|1[0-2]))?$/);
   if (!match) return null;
   const year = Number(match[1]);
   if (year < MIN_YEAR || year > new Date().getFullYear() + 1) return null;
-  return { year, month: Number(match[2]) };
+  return { year, month: match[2] ? Number(match[2]) : null };
 }
 
 function yearPageFor(year) {
@@ -26,6 +26,7 @@ function yearPageFor(year) {
 export function formatMonthYear(value, locale = getLocale()) {
   const parsed = parsedMonth(value);
   if (!parsed) return "";
+  if (!parsed.month) return String(parsed.year);
   return new Intl.DateTimeFormat(locale, {
     month: "long",
     year: "numeric",
@@ -33,7 +34,7 @@ export function formatMonthYear(value, locale = getLocale()) {
   }).format(new Date(Date.UTC(parsed.year, parsed.month - 1, 1)));
 }
 
-export function MonthYearPicker({ value, onChange, ariaLabel = tr("Purchase month and year") }) {
+export function MonthYearPicker({ value, onChange, ariaLabel = tr("Acquisition year or month") }) {
   const locale = useLocale();
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
@@ -47,7 +48,7 @@ export function MonthYearPicker({ value, onChange, ariaLabel = tr("Purchase mont
   const [choosingYear, setChoosingYear] = useState(false);
   const [yearPageStart, setYearPageStart] = useState(yearPageFor(initialYear));
   const [placement, setPlacement] = useState("down");
-  const placeholder = locale === "pt-PT" ? "AAAA-MM" : "YYYY-MM";
+  const placeholder = locale === "pt-PT" ? "AAAA ou AAAA-MM" : "YYYY or YYYY-MM";
   const formattedValue = formatMonthYear(value, locale);
   const monthLabels = useMemo(() => (
     Array.from({ length: 12 }, (_, month) => new Intl.DateTimeFormat(locale, {
@@ -218,6 +219,9 @@ export function MonthYearPicker({ value, onChange, ariaLabel = tr("Purchase mont
           <div className="month-year-picker__footer">
             <button type="button" onClick={() => { onChange(""); close(true); }}>
               {tr("Clear date")}
+            </button>
+            <button type="button" onClick={() => { onChange(String(displayYear)); close(true); }}>
+              {tr("Use year only")}
             </button>
             <button
               type="button"

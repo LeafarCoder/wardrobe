@@ -98,11 +98,18 @@ test("collects saved planner outfit images for private access and deletion", () 
     result: {
       outfitIdeas: [{
         name: "City walk",
-        modeledLook: {
-          id: "look-one",
-          image: "/api/import/library/plan-look.png",
-          preview: "/api/import/library/plan-look-preview.webp",
-        },
+        modeledLooks: [
+          {
+            id: "look-one",
+            image: "/api/import/library/plan-look.png",
+            preview: "/api/import/library/plan-look-preview.webp",
+          },
+          {
+            id: "look-two",
+            image: "/api/import/library/plan-look-two.png",
+            preview: "/api/import/library/plan-look-two-preview.webp",
+          },
+        ],
       }],
     },
   }]);
@@ -110,5 +117,7 @@ test("collects saved planner outfit images for private access and deletion", () 
   assert.deepEqual(assets, [
     "/api/import/library/plan-look.png",
     "/api/import/library/plan-look-preview.webp",
+    "/api/import/library/plan-look-two.png",
+    "/api/import/library/plan-look-two-preview.webp",
   ]);
 });
