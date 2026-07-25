@@ -25,9 +25,11 @@ import {
 } from "../src/wardrobe-discovery.js";
 import { garmentColorVariants, normalizeVariantThreshold } from "../src/garment-variants.js";
 import {
+  aiUsageActivities,
   migrateAiModelId,
   normalizeAiPreferences,
   operationGroup,
+  paginateAiActivities,
   summarizeAiUsage,
 } from "../src/ai-preferences.js";
 
@@ -657,6 +659,8 @@ function logAiCall({ provider, model, operation, response, result = {}, startedA
       uploadId: trace.uploadId || null,
       jobId: trace.jobId || null,
       garmentId: trace.garmentId || null,
+      planId: trace.planId || null,
+      planTitle: trace.planTitle || null,
       sourceFileName: trace.sourceFileName || null,
       createdAt: new Date().toISOString(),
     }).catch((error) => {
@@ -782,6 +786,9 @@ export function sourcePhotosForRecord(record = {}) {
       boundingBox: photo.boundingBox ? normalizeBoundingBox(photo.boundingBox) : null,
       focusBox: photo.focusBox ? normalizeBoundingBox(photo.focusBox) : null,
       importJobId: typeof photo.importJobId === "string" ? photo.importJobId : null,
+      // Kept so the AI activity log can show the photo an import actually came from.
+      importUploadId: typeof photo.importUploadId === "string" ? photo.importUploadId : null,
+      sourceFileName: typeof photo.sourceFileName === "string" ? photo.sourceFileName : null,
       addedAt: typeof photo.addedAt === "string" ? photo.addedAt : null,
     }];
   });
@@ -2319,13 +2326,13 @@ function parseWardrobePlan(outputText, provider, allowedItemIds) {
   return normalized;
 }
 
-async function openAIWardrobePlan({ provider, model, prompt, allowedItemIds }) {
+async function openAIWardrobePlan({ provider, model, prompt, allowedItemIds, trace: requestTrace = {} }) {
   const requestBody = JSON.stringify({
     model,
     input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
     text: { format: { type: "json_schema", name: "wardrobe_plan", strict: true, schema: WARDROBE_PLAN_SCHEMA } },
   });
-  const trace = { payloadBytes: Buffer.byteLength(requestBody) };
+  const trace = { ...requestTrace, payloadBytes: Buffer.byteLength(requestBody) };
   let response;
   const startedAt = Date.now();
   try {
@@ -2424,7 +2431,7 @@ function isRetryablePlannerModelError(error, provider) {
   ]).has(String(error?.code || ""));
 }
 
-async function openRouterWardrobePlanWithFallback({ provider, model, prompt, allowedItemIds }) {
+async function openRouterWardrobePlanWithFallback({ provider, model, prompt, allowedItemIds, trace = {} }) {
   const candidates = plannerModelCandidates(provider, model);
   let lastError;
   for (let index = 0; index < candidates.length; index += 1) {
@@ -2436,6 +2443,7 @@ async function openRouterWardrobePlanWithFallback({ provider, model, prompt, all
         prompt,
         allowedItemIds,
         trace: {
+          ...trace,
           route: index ? "planner-fallback" : "planner-primary",
           attempt: index + 1,
           ...(index ? { fallbackFrom: model } : {}),
@@ -2614,6 +2622,8 @@ export function wardrobeImportApi(options = {}) {
         uploadId: /^[a-f0-9-]{36}$/i.test(entry.uploadId || "") ? entry.uploadId : null,
         jobId: /^[a-f0-9-]{36}$/i.test(entry.jobId || "") ? entry.jobId : null,
         garmentId: entry.garmentId ? cleanLogValue(entry.garmentId).slice(0, 180) : null,
+        planId: /^[a-z0-9-]{1,80}$/i.test(entry.planId || "") ? entry.planId : null,
+        planTitle: entry.planTitle ? cleanLogValue(entry.planTitle).slice(0, 160) : null,
         sourceFileName: entry.sourceFileName ? cleanLogValue(entry.sourceFileName).slice(0, 220) : null,
         createdAt: entry.createdAt || new Date().toISOString(),
       });
@@ -2695,6 +2705,31 @@ export function wardrobeImportApi(options = {}) {
       readImportHistory(),
     ]);
     return summarizeAiUsage(ledger.entries, userId, history.uploads);
+  };
+
+  // Activities carry thumbnails, so they are built from the same user-scoped asset
+  // URLs the wardrobe grid uses rather than from raw stored paths.
+  const aiUsageActivityList = async (userId) => {
+    await Promise.all([
+      usageWriteQueue.catch(() => {}),
+      importHistoryWriteQueue.catch(() => {}),
+    ]);
+    const [ledger, history, garments, store] = await Promise.all([
+      readAiUsageLedger(),
+      readImportHistory(),
+      loadImported(userId),
+      loadUsersStore(),
+    ]);
+    const profile = store?.users.find((candidate) => candidate.id === userId);
+    if (!profile) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+    return aiUsageActivities(
+      ledger.entries.filter((entry) => entry?.userId === userId),
+      {
+        uploads: history.uploads.filter((upload) => upload?.userId === userId),
+        garments,
+        plans: publicProfile(profile).wardrobePlans,
+      },
+    );
   };
 
   const aiProvider = (userId = null) => {
@@ -3635,6 +3670,8 @@ export function wardrobeImportApi(options = {}) {
         operation: "modeled-plan",
         trace: {
           itemName: outfit.name,
+          planId,
+          planTitle: plan.input.title || plan.input.location,
           attempt: (outfit.modeledLooks?.length || (outfit.modeledLook ? 1 : 0)) + 1,
           personReferenceCount: personReferences.length,
         },
@@ -4148,13 +4185,36 @@ Interpret this correction semantically in whatever language it is written. It ov
         });
         return json(res, 200, { currentUserId: input.userId });
       }
+      const aiActivityMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/ai-usage\/activities$/i);
+      if (aiActivityMatch && req.method === "GET") {
+        const store = await loadUsersStore();
+        if (!store.users.some((user) => user.id === aiActivityMatch[1])) {
+          throw apiError("Wardrobe user not found.", 404, "user_not_found");
+        }
+        const activities = await aiUsageActivityList(aiActivityMatch[1]);
+        return json(res, 200, paginateAiActivities(activities, {
+          offset: url.searchParams.get("offset"),
+          limit: url.searchParams.get("limit"),
+        }));
+      }
       const aiUsageMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/ai-usage$/i);
       if (aiUsageMatch && req.method === "GET") {
         const store = await loadUsersStore();
         if (!store.users.some((user) => user.id === aiUsageMatch[1])) {
           throw apiError("Wardrobe user not found.", 404, "user_not_found");
         }
-        return json(res, 200, await aiUsageSummary(aiUsageMatch[1]));
+        const [summary, activities] = await Promise.all([
+          aiUsageSummary(aiUsageMatch[1]),
+          aiUsageActivityList(aiUsageMatch[1]),
+        ]);
+        // The dialog pages through activities, so the summary carries only the
+        // first page instead of every recorded request.
+        const { uploads, unlinkedRequests, recent, ...totals } = summary;
+        return json(res, 200, {
+          ...totals,
+          activityCount: activities.length,
+          ...paginateAiActivities(activities, { limit: 20 }),
+        });
       }
       const referenceMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/references\/([\w.-]+)$/i);
       if (referenceMatch && req.method === "GET") {
@@ -4264,14 +4324,19 @@ Interpret this correction semantically in whatever language it is written. It ov
         const allowedItemIds = new Set(records.map((record) => record.id));
         const generatePlan = provider.id === "openrouter" ? openRouterWardrobePlanWithFallback : openAIWardrobePlan;
         console.info(`[wardrobe] Planning ${kind} wardrobe with ${provider.label} / ${provider.plannerModel} for ${user.name} (${location}, ${startDate} to ${endDate})...`);
+        // The plan id is created before the call so the usage ledger can group this
+        // request, its retries, and any later outfit images under the same plan.
+        const planId = randomUUID();
+        const planTitle = title || location;
         const result = await withGenerationSlot(() => generatePlan({
           provider,
           model: provider.plannerModel,
           prompt,
           allowedItemIds,
+          trace: { planId, planTitle, itemName: planTitle },
         }));
         const plan = normalizeWardrobePlans([{
-          id: randomUUID(),
+          id: planId,
           createdAt: new Date().toISOString(),
           input: request,
           result,
@@ -4342,6 +4407,11 @@ Interpret this correction semantically in whatever language it is written. It ov
           model: provider.plannerModel,
           prompt,
           allowedItemIds,
+          trace: {
+            planId: plan.id,
+            planTitle: plan.input.title || plan.input.location,
+            itemName: plan.input.title || plan.input.location,
+          },
         }));
         const signature = (outfit) => [...new Set(outfit.itemIds)].sort().join("|");
         const existingSignatures = new Set(plan.result.outfitIdeas.map(signature));

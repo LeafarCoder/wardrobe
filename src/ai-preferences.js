@@ -112,6 +112,236 @@ export const AI_OPERATION_LABELS = {
   other: "Other AI",
 };
 
+export const AI_ACTIVITY_LABELS = {
+  import: "Imported photo",
+  modeled: "Modeled look",
+  planner: "Trip and event plan",
+  other: "Other AI activity",
+};
+
+const IMPORT_OPERATION_GROUPS = new Set(["analysis", "garment"]);
+
+export function publicAiRequest(entry) {
+  return {
+    id: entry.id,
+    operation: entry.operation,
+    operationGroup: entry.operationGroup,
+    label: AI_OPERATION_LABELS[entry.operationGroup] || AI_OPERATION_LABELS.other,
+    provider: entry.provider,
+    model: entry.model,
+    cost: Number.isFinite(entry.cost) ? entry.cost : null,
+    completed: Boolean(entry.completed),
+    status: entry.status,
+    durationMs: entry.durationMs,
+    itemName: entry.itemName || null,
+    jobId: entry.jobId || null,
+    garmentId: entry.garmentId || null,
+    planId: entry.planId || null,
+    fallbackFrom: entry.fallbackFrom || null,
+    upstream: entry.upstream || null,
+    inputTokens: Number.isFinite(entry.inputTokens) ? entry.inputTokens : null,
+    outputTokens: Number.isFinite(entry.outputTokens) ? entry.outputTokens : null,
+    totalTokens: Number.isFinite(entry.totalTokens) ? entry.totalTokens : null,
+    createdAt: entry.createdAt,
+  };
+}
+
+function costOf(entry) {
+  return Number.isFinite(entry?.cost) ? entry.cost : 0;
+}
+
+function newestTimestamp(entries = [], fallback = null) {
+  return entries.reduce(
+    (latest, entry) => (String(entry.createdAt) > String(latest || "") ? entry.createdAt : latest),
+    fallback,
+  );
+}
+
+function activityTotals(requests = []) {
+  return {
+    requestCount: requests.length,
+    unpricedRequestCount: requests.filter((entry) => !Number.isFinite(entry.cost)).length,
+    failedRequestCount: requests.filter((entry) => !entry.completed).length,
+    totalCost: requests.reduce((total, entry) => total + costOf(entry), 0),
+  };
+}
+
+// A single AI call is rarely meaningful on its own. Callers want to see the thing
+// they did — imported this photo, modeled this garment, planned this trip — with
+// every request it caused underneath it.
+export function aiUsageActivities(entries = [], {
+  uploads = [],
+  garments = [],
+  plans = [],
+} = {}) {
+  const garmentById = new Map(garments.map((garment) => [garment.id, garment]));
+  const planById = new Map(plans.map((plan) => [plan.id, plan]));
+  const uploadById = new Map(uploads.map((upload) => [upload.id, upload]));
+  const uploadByJob = new Map();
+  const uploadByGarment = new Map();
+  for (const upload of uploads) {
+    for (const item of Array.isArray(upload.items) ? upload.items : []) {
+      if (item?.jobId) uploadByJob.set(item.jobId, upload.id);
+      if (item?.garmentId) uploadByGarment.set(item.garmentId, upload.id);
+    }
+  }
+
+  const uploadRequests = new Map(uploads.map((upload) => [upload.id, []]));
+  const modeledRequests = new Map();
+  const plannerRequests = new Map();
+  const otherRequests = [];
+
+  for (const entry of entries) {
+    if (entry.operationGroup === "planner" || entry.operationGroup === "modeled") {
+      // A modeled look and a plan are their own activities even when they descend
+      // from an imported photo, so they are grouped before the upload is consulted.
+      const planKey = entry.planId || (entry.operationGroup === "planner" ? `planner:${entry.id}` : null);
+      if (planKey) {
+        const bucket = plannerRequests.get(planKey) || [];
+        bucket.push(entry);
+        plannerRequests.set(planKey, bucket);
+        continue;
+      }
+      const garmentKey = entry.garmentId || entry.jobId;
+      if (garmentKey) {
+        const bucket = modeledRequests.get(garmentKey) || [];
+        bucket.push(entry);
+        modeledRequests.set(garmentKey, bucket);
+        continue;
+      }
+      otherRequests.push(entry);
+      continue;
+    }
+    const uploadId = entry.uploadId
+      || uploadByJob.get(entry.jobId)
+      || uploadByGarment.get(entry.garmentId);
+    if (uploadId && uploadRequests.has(uploadId)) uploadRequests.get(uploadId).push(entry);
+    else if (IMPORT_OPERATION_GROUPS.has(entry.operationGroup) && entry.jobId) {
+      const bucket = uploadRequests.get(`job:${entry.jobId}`) || [];
+      bucket.push(entry);
+      uploadRequests.set(`job:${entry.jobId}`, bucket);
+    } else otherRequests.push(entry);
+  }
+
+  const activities = [];
+
+  for (const [uploadId, requests] of uploadRequests) {
+    const upload = uploadById.get(uploadId);
+    if (!upload && !requests.length) continue;
+    const items = Array.isArray(upload?.items) ? upload.items : [];
+    const acceptedItems = items.filter((item) => ["added", "merged"].includes(item.outcome));
+    const detailedItems = items.map((item) => {
+      const garment = item.garmentId ? garmentById.get(item.garmentId) : null;
+      return {
+        ...item,
+        image: garment?.thumbnail || garment?.imagePreview || garment?.image || null,
+      };
+    });
+    const sourceGarment = detailedItems.find((item) => item.image);
+    const uploadPhoto = garments
+      .flatMap((garment) => (Array.isArray(garment.sourcePhotos) ? garment.sourcePhotos : []))
+      .find((photo) => photo?.importUploadId === uploadId);
+    activities.push({
+      id: `import:${uploadId}`,
+      type: "import",
+      label: AI_ACTIVITY_LABELS.import,
+      title: upload?.fileName || "Uploaded image",
+      image: uploadPhoto?.preview || uploadPhoto?.image || sourceGarment?.image || null,
+      createdAt: upload?.createdAt || newestTimestamp(requests),
+      status: upload?.status || "complete",
+      detectedCount: Number.isInteger(upload?.detectedCount) ? upload.detectedCount : items.length,
+      garmentCount: acceptedItems.length,
+      createdGarmentCount: items.filter((item) => item.outcome === "added").length,
+      duplicateCount: items.filter((item) => item.duplicateStatus && item.duplicateStatus !== "none").length,
+      mergedCount: items.filter((item) => item.outcome === "merged").length,
+      unselectedCount: items.filter((item) => ["unselected", "deleted"].includes(item.outcome)).length,
+      items: detailedItems,
+      requests,
+      ...activityTotals(requests),
+    });
+  }
+
+  for (const [garmentId, requests] of modeledRequests) {
+    const garment = garmentById.get(garmentId);
+    activities.push({
+      id: `modeled:${garmentId}`,
+      type: "modeled",
+      label: AI_ACTIVITY_LABELS.modeled,
+      title: garment?.name || requests.find((entry) => entry.itemName)?.itemName || "Modeled look",
+      image: garment?.thumbnail || garment?.imagePreview || garment?.image || null,
+      createdAt: newestTimestamp(requests),
+      garmentId,
+      lookCount: requests.filter((entry) => entry.completed).length,
+      items: [],
+      requests,
+      ...activityTotals(requests),
+    });
+  }
+
+  for (const [planKey, requests] of plannerRequests) {
+    const plan = planById.get(planKey);
+    const outfitLooks = requests.filter((entry) => entry.operationGroup === "modeled");
+    const named = requests.find((entry) => entry.planTitle || entry.itemName);
+    activities.push({
+      id: `planner:${planKey}`,
+      type: "planner",
+      label: AI_ACTIVITY_LABELS.planner,
+      title: plan?.input?.title || plan?.input?.location || named?.planTitle || named?.itemName || "Wardrobe plan",
+      image: plan?.result?.outfitIdeas
+        ?.flatMap((outfit) => (outfit.modeledLooks?.length ? outfit.modeledLooks : outfit.modeledLook ? [outfit.modeledLook] : []))
+        .map((look) => look.preview || look.image)
+        .find(Boolean) || null,
+      createdAt: plan?.createdAt || newestTimestamp(requests),
+      planId: plan?.id || null,
+      planKind: plan?.input?.kind || "trip",
+      location: plan?.input?.location || null,
+      startDate: plan?.input?.startDate || null,
+      endDate: plan?.input?.endDate || null,
+      outfitCount: plan?.result?.outfitIdeas?.length || 0,
+      outfitLookCount: outfitLooks.length,
+      items: [],
+      requests,
+      ...activityTotals(requests),
+    });
+  }
+
+  if (otherRequests.length) {
+    activities.push({
+      id: "other",
+      type: "other",
+      label: AI_ACTIVITY_LABELS.other,
+      title: "Other and earlier requests",
+      image: null,
+      createdAt: newestTimestamp(otherRequests),
+      items: [],
+      requests: otherRequests,
+      ...activityTotals(otherRequests),
+    });
+  }
+
+  return activities
+    .map((activity) => ({
+      ...activity,
+      requests: [...activity.requests]
+        .sort((first, second) => String(first.createdAt).localeCompare(String(second.createdAt)))
+        .map(publicAiRequest),
+    }))
+    .sort((first, second) => String(second.createdAt).localeCompare(String(first.createdAt)));
+}
+
+export function paginateAiActivities(activities = [], { offset = 0, limit = 20 } = {}) {
+  const start = Math.max(0, Number.isFinite(Number(offset)) ? Math.trunc(Number(offset)) : 0);
+  const size = Math.max(1, Math.min(100, Number.isFinite(Number(limit)) ? Math.trunc(Number(limit)) : 20));
+  const page = activities.slice(start, start + size);
+  return {
+    activities: page,
+    offset: start,
+    limit: size,
+    total: activities.length,
+    nextOffset: start + page.length < activities.length ? start + page.length : null,
+  };
+}
+
 export function summarizeAiUsage(allEntries = [], userId, importHistory = []) {
   const entries = (Array.isArray(allEntries) ? allEntries : [])
     .filter((entry) => entry?.userId === userId)
@@ -136,22 +366,7 @@ export function summarizeAiUsage(allEntries = [], userId, importHistory = []) {
     if (uploadId && entriesByUpload.has(uploadId)) entriesByUpload.get(uploadId).push(entry);
     else unlinkedRequests.push(entry);
   }
-  const publicRequest = (entry) => ({
-    id: entry.id,
-    operation: entry.operation,
-    operationGroup: entry.operationGroup,
-    label: AI_OPERATION_LABELS[entry.operationGroup] || AI_OPERATION_LABELS.other,
-    provider: entry.provider,
-    model: entry.model,
-    cost: Number.isFinite(entry.cost) ? entry.cost : null,
-    completed: Boolean(entry.completed),
-    status: entry.status,
-    durationMs: entry.durationMs,
-    itemName: entry.itemName || null,
-    jobId: entry.jobId || null,
-    garmentId: entry.garmentId || null,
-    createdAt: entry.createdAt,
-  });
+  const publicRequest = publicAiRequest;
   const uploadDetails = uploads.map((upload) => {
     const requests = entriesByUpload.get(upload.id) || [];
     const items = Array.isArray(upload.items) ? upload.items : [];

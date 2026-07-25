@@ -2884,124 +2884,22 @@ function ProfileAiUsage({ user }) {
                 </div>
               </div>
               <button
-                className={`profile-ai-details-toggle${detailsOpen ? " is-open" : ""}`}
+                className="profile-ai-details-toggle"
                 type="button"
-                aria-expanded={detailsOpen}
-                onClick={() => setDetailsOpen((value) => !value)}
+                onClick={() => setDetailsOpen(true)}
               >
                 <span>
-                  <strong>{tr("Request details")}</strong>
-                  <small>{tr("See costs, models, and garment outcomes for every uploaded image.")}</small>
+                  <strong>{tr("Open the AI activity log")}</strong>
+                  <small>{tr("Every imported photo, modeled look, and trip plan with its own AI calls and costs.")}</small>
                 </span>
-                <CaretDown size={17} />
+                <ListBullets size={17} />
               </button>
               {detailsOpen && (
-                <div className="profile-ai-drilldown">
-                  {!usage.uploads?.length ? (
-                    <p className="profile-ai-drilldown__note">
-                      {tr("Past requests were recorded before upload details were linked. New imports will appear here with their filename and garment outcomes.")}
-                    </p>
-                  ) : (
-                    usage.uploads.map((upload, uploadIndex) => (
-                      <details className="profile-ai-upload" key={upload.id} open={uploadIndex === 0}>
-                        <summary>
-                          <span>
-                            <ImageSquare size={18} weight="light" />
-                            <span>
-                              <strong>{upload.fileName}</strong>
-                              <small>{formatDate(upload.createdAt, { dateStyle: "medium", timeStyle: "short" })}</small>
-                            </span>
-                          </span>
-                          <span>
-                            <small>{tr(upload.detectedCount === 1 ? "{count} detected garment" : "{count} detected garments", { count: upload.detectedCount })}</small>
-                            <strong>{formatAiCost(upload.totalCost)}</strong>
-                            <CaretDown size={15} />
-                          </span>
-                        </summary>
-                        <div className="profile-ai-upload__body">
-                          <div className="profile-ai-upload__metrics">
-                            <span><strong>{upload.requestCount}</strong>{tr("AI calls")}</span>
-                            <span><strong>{upload.createdGarmentCount}</strong>{tr("New garments")}</span>
-                            <span><strong>{upload.duplicateCount}</strong>{tr("Possible duplicates")}</span>
-                            <span><strong>{upload.mergedCount}</strong>{tr("Merged")}</span>
-                            <span><strong>{upload.unselectedCount}</strong>{tr("Not selected")}</span>
-                          </div>
-                          {!!upload.items?.length && (
-                            <div className="profile-ai-outcomes">
-                              <h5>{tr("Garment outcomes")}</h5>
-                              {upload.items.map((item) => (
-                                <p key={item.jobId}>
-                                  <span>{item.name}</span>
-                                  <strong>{tr({
-                                    added: "Added",
-                                    merged: "Merged",
-                                    unselected: "Not selected",
-                                    deleted: "Removed from import",
-                                    failed: "Needs attention",
-                                    generating: "Generating",
-                                    modeling: "Creating modeled look",
-                                    "duplicate-review": "Possible duplicate",
-                                    identified: "Identified",
-                                  }[item.outcome] || "In progress")}</strong>
-                                </p>
-                              ))}
-                            </div>
-                          )}
-                          <div className="profile-ai-requests">
-                            <h5>{tr("AI calls for this image")}</h5>
-                            {upload.requests?.length ? upload.requests.map((request) => (
-                              <article key={request.id}>
-                                <span className={`profile-ai-request-status${request.completed ? " is-complete" : " is-failed"}`} aria-hidden="true" />
-                                <span>
-                                  <strong>{tr(request.label)}</strong>
-                                  <small>{request.itemName || upload.fileName}</small>
-                                </span>
-                                <span title={request.model}>{request.model?.split("/").at(-1) || tr("Unknown model")}</span>
-                                <time>{formatDate(request.createdAt, { dateStyle: "short", timeStyle: "short" })}</time>
-                                <strong>{formatAiCost(request.cost)}</strong>
-                              </article>
-                            )) : (
-                              <p className="profile-ai-drilldown__note">{tr("No priced AI request is linked to this upload yet.")}</p>
-                            )}
-                          </div>
-                        </div>
-                      </details>
-                    ))
-                  )}
-                  {!!usage.unlinkedRequests?.length && (
-                    <details className="profile-ai-upload profile-ai-upload--unlinked">
-                      <summary>
-                        <span>
-                          <Sparkle size={18} weight="light" />
-                          <span>
-                            <strong>{tr("Other and earlier requests")}</strong>
-                            <small>{tr("Planner calls and requests recorded before upload linking")}</small>
-                          </span>
-                        </span>
-                        <span>
-                          <small>{tr(usage.unlinkedRequests.length === 1 ? "{count} call" : "{count} calls", { count: usage.unlinkedRequests.length })}</small>
-                          <CaretDown size={15} />
-                        </span>
-                      </summary>
-                      <div className="profile-ai-upload__body">
-                        <div className="profile-ai-requests">
-                          {usage.unlinkedRequests.map((request) => (
-                            <article key={request.id}>
-                              <span className={`profile-ai-request-status${request.completed ? " is-complete" : " is-failed"}`} aria-hidden="true" />
-                              <span>
-                                <strong>{tr(request.label)}</strong>
-                                <small>{request.itemName || tr("Not linked to an uploaded image")}</small>
-                              </span>
-                              <span title={request.model}>{request.model?.split("/").at(-1) || tr("Unknown model")}</span>
-                              <time>{formatDate(request.createdAt, { dateStyle: "short", timeStyle: "short" })}</time>
-                              <strong>{formatAiCost(request.cost)}</strong>
-                            </article>
-                          ))}
-                        </div>
-                      </div>
-                    </details>
-                  )}
-                </div>
+                <AiActivityLogDialog
+                  user={user}
+                  summary={usage}
+                  onClose={() => setDetailsOpen(false)}
+                />
               )}
             </>
           )}
@@ -3010,6 +2908,255 @@ function ProfileAiUsage({ user }) {
         <div className="profile-ai-usage__skeleton" aria-hidden="true" />
       )}
     </section>
+  );
+}
+
+const AI_ACTIVITY_ICONS = {
+  import: ImageSquare,
+  modeled: UserCircle,
+  planner: SuitcaseRolling,
+  other: Sparkle,
+};
+
+const AI_OUTCOME_LABELS = {
+  added: "Added",
+  merged: "Merged",
+  unselected: "Not selected",
+  deleted: "Removed from import",
+  failed: "Needs attention",
+  generating: "Generating",
+  modeling: "Creating modeled look",
+  "duplicate-review": "Possible duplicate",
+  identified: "Identified",
+};
+
+function AiActivityThumbnail({ image, title }) {
+  if (!image) return null;
+  return (
+    <OptimizedImage
+      className="ai-activity__thumbnail"
+      src={image}
+      alt={title}
+      loading="lazy"
+      decoding="async"
+    />
+  );
+}
+
+function AiActivityRequest({ request, fallbackName }) {
+  return (
+    <article>
+      <span className={`profile-ai-request-status${request.completed ? " is-complete" : " is-failed"}`} aria-hidden="true" />
+      <span>
+        <strong>{tr(request.label)}</strong>
+        <small>{request.itemName || fallbackName}</small>
+      </span>
+      <span title={request.model}>{request.model?.split("/").at(-1) || tr("Unknown model")}</span>
+      <time dateTime={request.createdAt}>
+        {formatDate(request.createdAt, { dateStyle: "short", timeStyle: "short" })}
+      </time>
+      <strong>{formatAiCost(request.cost)}</strong>
+    </article>
+  );
+}
+
+function AiActivityDetails({ activity }) {
+  if (activity.type === "import") {
+    return (
+      <div className="ai-activity__metrics">
+        <span><strong>{activity.requestCount}</strong>{tr("AI calls")}</span>
+        <span><strong>{activity.createdGarmentCount}</strong>{tr("New garments")}</span>
+        <span><strong>{activity.duplicateCount}</strong>{tr("Possible duplicates")}</span>
+        <span><strong>{activity.mergedCount}</strong>{tr("Merged")}</span>
+        <span><strong>{activity.unselectedCount}</strong>{tr("Not selected")}</span>
+      </div>
+    );
+  }
+  if (activity.type === "planner") {
+    return (
+      <div className="ai-activity__metrics">
+        <span><strong>{activity.requestCount}</strong>{tr("AI calls")}</span>
+        <span><strong>{activity.outfitCount}</strong>{tr("Outfit ideas")}</span>
+        <span><strong>{activity.outfitLookCount}</strong>{tr("Generated outfit images")}</span>
+      </div>
+    );
+  }
+  if (activity.type === "modeled") {
+    return (
+      <div className="ai-activity__metrics">
+        <span><strong>{activity.requestCount}</strong>{tr("AI calls")}</span>
+        <span><strong>{activity.lookCount}</strong>{tr("Looks created")}</span>
+      </div>
+    );
+  }
+  return null;
+}
+
+function AiActivityCard({ activity, defaultOpen }) {
+  const Icon = AI_ACTIVITY_ICONS[activity.type] || Sparkle;
+  const subtitle = activity.type === "planner" && activity.location
+    ? [activity.location, activity.startDate && activity.endDate
+      ? `${formatDate(activity.startDate, { dateStyle: "medium" })} – ${formatDate(activity.endDate, { dateStyle: "medium" })}`
+      : null].filter(Boolean).join(" · ")
+    : formatDate(activity.createdAt, { dateStyle: "medium", timeStyle: "short" });
+
+  return (
+    <details className="ai-activity" open={defaultOpen}>
+      <summary>
+        <span className="ai-activity__identity">
+          <span className={`ai-activity__mark is-${activity.type}`}>
+            {activity.image
+              ? <AiActivityThumbnail image={activity.image} title={activity.title} />
+              : <Icon size={19} weight="light" aria-hidden="true" />}
+          </span>
+          <span className="ai-activity__naming">
+            <small>{tr(activity.label)}</small>
+            <strong>{activity.title}</strong>
+            <small>{subtitle}</small>
+          </span>
+        </span>
+        <span className="ai-activity__totals">
+          <small>{tr(activity.requestCount === 1 ? "{count} call" : "{count} calls", { count: activity.requestCount })}</small>
+          <strong>{formatAiCost(activity.totalCost)}</strong>
+          <CaretDown size={15} aria-hidden="true" />
+        </span>
+      </summary>
+      <div className="ai-activity__body">
+        <AiActivityDetails activity={activity} />
+        {!!activity.items?.length && (
+          <div className="profile-ai-outcomes">
+            <h5>{tr("Garment outcomes")}</h5>
+            {activity.items.map((item) => (
+              <p key={item.jobId || item.garmentId || item.name}>
+                <span className="ai-activity__outcome-name">
+                  {item.image && <AiActivityThumbnail image={item.image} title={item.name} />}
+                  <span>{item.name}</span>
+                </span>
+                <strong>{tr(AI_OUTCOME_LABELS[item.outcome] || "In progress")}</strong>
+              </p>
+            ))}
+          </div>
+        )}
+        <div className="profile-ai-requests">
+          <h5>{tr("AI calls")}</h5>
+          {activity.requests?.length ? activity.requests.map((request) => (
+            <AiActivityRequest key={request.id} request={request} fallbackName={activity.title} />
+          )) : (
+            <p className="profile-ai-drilldown__note">{tr("No AI request is linked to this activity yet.")}</p>
+          )}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function AiActivityLogDialog({ user, summary, onClose }) {
+  const [activities, setActivities] = useState(summary.activities || []);
+  const [nextOffset, setNextOffset] = useState(summary.nextOffset ?? null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const closeButtonRef = useRef(null);
+  const scrollRef = useRef(null);
+
+  useEffect(() => { closeButtonRef.current?.focus(); }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const loadMore = useCallback(async () => {
+    if (nextOffset === null || loading) return;
+    setLoading(true);
+    try {
+      const page = await profileApi(`/api/users/${user.id}/ai-usage/activities?offset=${nextOffset}&limit=20`);
+      setActivities((current) => {
+        const seen = new Set(current.map((activity) => activity.id));
+        return [...current, ...(page.activities || []).filter((activity) => !seen.has(activity.id))];
+      });
+      setNextOffset(page.nextOffset ?? null);
+      setError(null);
+    } catch (requestError) {
+      setError(readableError(requestError));
+    } finally {
+      setLoading(false);
+    }
+  }, [nextOffset, loading, user.id]);
+
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller || nextOffset === null) return undefined;
+    // Fetch the next page slightly before the list runs out. This also covers the
+    // case where the first page is shorter than the dialog and never scrolls.
+    const nearEnd = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 260;
+    const check = () => { if (nearEnd()) void loadMore(); };
+    check();
+    scroller.addEventListener("scroll", check, { passive: true });
+    return () => scroller.removeEventListener("scroll", check);
+  }, [loadMore, nextOffset]);
+
+  const total = summary.activityCount ?? activities.length;
+
+  return (
+    <div
+      className="source-photo-overlay"
+      role="presentation"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <section
+        className="ai-activity-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ai-activity-title"
+      >
+        <header className="ai-activity-dialog__header">
+          <div>
+            <p>{tr("AI activity")}</p>
+            <h2 id="ai-activity-title">{tr("Every AI request for {name}", { name: user.name })}</h2>
+          </div>
+          <button
+            ref={closeButtonRef}
+            className="source-photo-dialog__close"
+            type="button"
+            onClick={onClose}
+            aria-label={tr("Close the AI activity log")}
+          >
+            <X size={23} weight="light" aria-hidden="true" />
+          </button>
+        </header>
+        <div className="ai-activity-dialog__summary">
+          <article><span>{tr("Recorded spend")}</span><strong>{formatAiCost(summary.totalCost)}</strong><small>USD</small></article>
+          <article><span>{tr("AI requests")}</span><strong>{summary.requestCount}</strong><small>{tr("for this person")}</small></article>
+          <article><span>{tr("Activities")}</span><strong>{total}</strong><small>{tr("imports, looks, and plans")}</small></article>
+          <article><span>{tr("Average per accepted garment")}</span><strong>{formatAiCost(summary.averageCostPerGarment)}</strong><small>{tr("{count} garments added or merged", { count: summary.acceptedGarmentCount || 0 })}</small></article>
+        </div>
+        <div className="ai-activity-dialog__body" ref={scrollRef}>
+          {!activities.length ? (
+            <p className="profile-ai-drilldown__note">
+              {tr("No AI activity has been recorded for this person yet.")}
+            </p>
+          ) : (
+            activities.map((activity, index) => (
+              <AiActivityCard key={activity.id} activity={activity} defaultOpen={index === 0} />
+            ))
+          )}
+          {error && <p className="profile-ai-usage__error" role="alert">{error}</p>}
+          {nextOffset !== null && (
+            <div className="ai-activity-dialog__more">
+              {loading ? (
+                <span className="ai-activity-dialog__loading">
+                  <SpinnerGap size={17} aria-hidden="true" />
+                  {tr("Loading more activity…")}
+                </span>
+              ) : (
+                <button type="button" onClick={() => void loadMore()}>{tr("Load more")}</button>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
