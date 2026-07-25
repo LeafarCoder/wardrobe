@@ -38,7 +38,7 @@ button { font: inherit; }
     var(--paper);
 }
 
-.password-gate > form {
+.password-gate__panel {
   width: min(430px, 100%);
   border: 1px solid var(--ink);
   padding: 42px;
@@ -56,7 +56,7 @@ button { font: inherit; }
   border-radius: 50%;
 }
 
-.password-gate form > p:first-of-type {
+.password-gate__panel > p:first-of-type {
   margin: 0 0 9px;
   color: var(--muted);
   font-size: 10px;
@@ -73,56 +73,38 @@ button { font: inherit; }
   line-height: .98;
 }
 
-.password-gate > form > label {
-  display: grid;
-  gap: 8px;
-}
-
-.password-gate > form > label > span {
-  font-size: 11px;
-  font-weight: 540;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-}
-
-.password-gate > form > label > input {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  padding: 13px 14px;
-  background: rgba(255, 255, 255, .32);
-  color: var(--ink);
-  font: inherit;
-}
-
-.password-gate > form > label > input:focus {
-  border-color: var(--ink);
-  outline: 1px solid var(--ink);
-  outline-offset: 2px;
-}
-
 .password-gate .password-gate__language {
   width: min(220px, 100%);
   margin: -18px 0 28px auto;
 }
 
-.password-gate > form > button[type="submit"] {
+.password-gate__google {
   width: 100%;
-  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   border: 1px solid var(--ink);
-  padding: 13px 16px;
+  padding: 15px 16px;
   background: var(--ink);
   color: var(--paper);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -.01em;
   cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
 }
 
-.password-gate > form > button[type="submit"]:disabled {
+.password-gate__google svg { flex: 0 0 auto; }
+
+.password-gate__google:disabled {
   opacity: .48;
   cursor: default;
 }
 
-.password-gate > form > button[type="submit"]:not(:disabled):hover,
-.password-gate > form > button[type="submit"]:not(:disabled):focus-visible {
+.password-gate__google:not(:disabled):hover,
+.password-gate__google:not(:disabled):focus-visible {
   background: var(--accent);
   outline: none;
 }
