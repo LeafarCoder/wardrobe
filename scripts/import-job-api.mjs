@@ -1548,11 +1548,13 @@ Composition: Centered straight-on product view. Keep the entire product inside t
 
 Background transparency — mandatory output contract: Return a PNG with real transparency. Every pixel outside the product silhouette, including the four corners, the space around sleeves and straps, and enclosed gaps between handles, arms, legs, or accessories, must have alpha 0. White, off-white, beige, cream, gray, or a visually plain studio canvas is still an opaque background and is forbidden. Do not leave rectangular panels, pale patches, halos, paper texture, cutout residue, floor, wall, vignette, gradient, reflection, or shadow around or behind the product.
 
-If this image model cannot emit alpha transparency, use the perfectly flat, absolutely uniform solid ${chromaKey} chroma-key color edge-to-edge instead. The chroma color must touch every canvas edge and fill every space not occupied by the product, with no antialiased white or beige intermediate background. The result is checked programmatically and will be rejected if its canvas remains opaque.
+Never draw a checkerboard. The gray-and-white checkered squares that image editors display behind a cut-out are how software visualizes alpha; they are not how alpha is stored. Painting those squares, in any color, size, or opacity, produces a fully opaque image, is not transparency, and is rejected.
+
+If this image model cannot emit alpha transparency, use the perfectly flat, absolutely uniform solid ${chromaKey} chroma-key color edge-to-edge instead. The chroma color must touch every canvas edge and fill every space not occupied by the product, with no antialiased white or beige intermediate background, and no squares, tiles, or pattern of any kind. The result is checked programmatically and will be rejected if its canvas remains opaque.
 
 Lighting: Neutral diffuse product lighting contained on the garment only.
 
-Avoid: ${direction.reject}; person, body, skin, hair, hand, wrist, mannequin, hanger, props, other products, retail tags, cast shadow, contact shadow, reflection, watermark, caption, border, background variation, or chroma spill.
+Avoid: ${direction.reject}; person, body, skin, hair, hand, wrist, mannequin, hanger, props, other products, retail tags, cast shadow, contact shadow, reflection, watermark, caption, border, checkerboard or checkered squares, background variation, or chroma spill.
 
 Critical: Use no ${chromaKey} anywhere in the product. Produce exactly one complete ${name} with a crisp, separable outer silhouette. Re-check the product subtype and every user correction before returning the image.`;
 }
@@ -1839,6 +1841,17 @@ export async function processChromaBackground(bytes, key, options = {}) {
       removeKeyedSpill(data, index, keyedChannels, neutralLevel);
     }
   }
+  // Counted before framing. frameTransparentGarment centres the cutout on a
+  // larger canvas, so its padding alone makes a fully opaque image look about
+  // 23% transparent — measuring after it would pass any background the model
+  // painted, including a fake transparency checkerboard.
+  let keyedTransparentPixels = 0;
+  let keyedTranslucentPixels = 0;
+  for (let index = 3; index < data.length; index += 4) {
+    if (data[index] <= 8) keyedTransparentPixels += 1;
+    else if (data[index] < 247) keyedTranslucentPixels += 1;
+  }
+  const keyedPixels = info.width * info.height;
   const keyedOutput = await sharp(data, { raw: info }).png().toBuffer();
   const framedOutput = await frameTransparentGarment(keyedOutput);
   const { data: framedData, info: framedInfo } = await sharp(framedOutput).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -1860,10 +1873,16 @@ export async function processChromaBackground(bytes, key, options = {}) {
   }
   const outputPixels = framedInfo.width * framedInfo.height;
   const transparency = {
-    transparentPixels: transparentOutputPixels,
-    transparentRatio: outputPixels ? transparentOutputPixels / outputPixels : 0,
-    translucentPixels: translucentOutputPixels,
-    translucentRatio: outputPixels ? translucentOutputPixels / outputPixels : 0,
+    transparentPixels: keyedTransparentPixels,
+    transparentRatio: keyedPixels ? keyedTransparentPixels / keyedPixels : 0,
+    translucentPixels: keyedTranslucentPixels,
+    translucentRatio: keyedPixels ? keyedTranslucentPixels / keyedPixels : 0,
+    // Kept for diagnostics only; never use these to judge whether the model
+    // actually produced a cutout.
+    framedTransparentPixels: transparentOutputPixels,
+    framedTransparentRatio: outputPixels ? transparentOutputPixels / outputPixels : 0,
+    framedTranslucentPixels: translucentOutputPixels,
+    framedTranslucentRatio: outputPixels ? translucentOutputPixels / outputPixels : 0,
   };
   return { bytes: output, verification, transparency, tolerance, edgeFallbackApplied };
 }

@@ -182,6 +182,76 @@ test("asks the generator for transparency and explicitly rejects neutral substit
   assert.match(prompt, /checked programmatically and will be rejected if its canvas remains opaque/i);
 });
 
+test("forbids painting the checkerboard that editors use to display transparency", () => {
+  const prompt = buildGarmentPrompt({
+    name: "Red beret",
+    part: "accessories_up",
+    color: "#be282d",
+    tags: ["wool"],
+  }, "#00ffff");
+
+  assert.match(prompt, /Never draw a checkerboard/i);
+  assert.match(prompt, /how software visualizes alpha; they are not how alpha is stored/i);
+  assert.match(prompt, /produces a fully opaque image, is not transparency, and is rejected/i);
+  assert.match(prompt, /checkerboard or checkered squares/i);
+  assert.match(prompt, /no squares, tiles, or pattern of any kind/i);
+});
+
+// The reported failure: three garments were saved with a checkerboard painted
+// into the image. Framing centres the cutout on a larger canvas, so measuring
+// transparency after it reported ~23% for a fully opaque image and the quality
+// gate accepted it.
+test("a painted transparency checkerboard counts as no transparency at all", async () => {
+  const size = 256;
+  const cell = 16;
+  const raw = Buffer.alloc(size * size * 3);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const index = ((y * size) + x) * 3;
+      if (Math.hypot(x - (size / 2), y - (size / 2)) < 60) {
+        raw[index] = 190; raw[index + 1] = 40; raw[index + 2] = 45;
+        continue;
+      }
+      const light = ((Math.floor(x / cell) + Math.floor(y / cell)) % 2) === 0;
+      const tone = light ? 255 : 204;
+      raw[index] = tone; raw[index + 1] = tone; raw[index + 2] = tone;
+    }
+  }
+  const painted = await sharp(raw, { raw: { width: size, height: size, channels: 3 } }).png().toBuffer();
+
+  const result = await processChromaBackground(painted, "#00ff00", { protectedColors: ["#be282d"] });
+
+  assert.equal(result.transparency.transparentRatio, 0);
+  assert.ok(
+    result.transparency.transparentRatio < 0.08,
+    "an opaque painted background must fail the garment transparency gate",
+  );
+  assert.ok(
+    result.transparency.framedTransparentRatio > 0.2,
+    "framing padding alone still looks transparent, which is why it cannot be the measure",
+  );
+});
+
+test("a real chroma-key cutout still reports the transparency it has", async () => {
+  const size = 256;
+  const raw = Buffer.alloc(size * size * 3);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const index = ((y * size) + x) * 3;
+      if (Math.hypot(x - (size / 2), y - (size / 2)) < 60) {
+        raw[index] = 190; raw[index + 1] = 40; raw[index + 2] = 45;
+      } else {
+        raw[index] = 0; raw[index + 1] = 255; raw[index + 2] = 0;
+      }
+    }
+  }
+  const keyed = await sharp(raw, { raw: { width: size, height: size, channels: 3 } }).png().toBuffer();
+
+  const result = await processChromaBackground(keyed, "#00ff00", { protectedColors: ["#be282d"] });
+
+  assert.ok(result.transparency.transparentRatio > 0.5);
+});
+
 test("keeps a separately detected scarf out of an outerwear reconstruction", () => {
   const prompt = buildGarmentPrompt({
     name: "red wool coat",
