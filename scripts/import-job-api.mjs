@@ -73,10 +73,24 @@ export function modeledModelForReferenceCount(provider = {}, referenceCount = 1)
     : provider.modeledModel;
 }
 
-export function providerWithProfilePreferences(provider = {}, profile = {}) {
+export function normalizeOpenRouterApiKey(value) {
+  const key = String(value ?? "").trim();
+  return /^sk-or-[A-Za-z0-9._-]{8,200}$/.test(key) ? key : "";
+}
+
+export function openRouterApiKeyHint(value) {
+  const key = normalizeOpenRouterApiKey(value);
+  return key ? `${key.slice(0, 11)}…${key.slice(-4)}` : "";
+}
+
+// The key belongs to whoever is signed in, not to the wardrobe being edited, so
+// an owner working inside somebody else's wardrobe spends their own credit.
+export function providerWithProfilePreferences(provider = {}, profile = {}, payer = null) {
+  const payerKey = normalizeOpenRouterApiKey((payer || profile)?.openRouterApiKey);
   const localizedProvider = {
     ...provider,
     responseLanguage: profile.language === "pt-PT" ? "pt-PT" : "en-US",
+    ...(provider.id === "openrouter" && payerKey ? { key: payerKey, keyOwner: "profile" } : {}),
   };
   if (provider.id !== "openrouter") return localizedProvider;
   const preferences = normalizeAiPreferences(profile.aiPreferences);
@@ -2962,6 +2976,11 @@ export function wardrobeImportApi(options = {}) {
       // wardrobe to another Google account.
       googleSubject: existing.googleSubject || null,
       email: normalizeEmail(existing.email) || null,
+      // Server-only. Absent from a request means "leave it as it is"; an empty
+      // string means the person cleared it.
+      openRouterApiKey: Object.hasOwn(input, "openRouterApiKey")
+        ? normalizeOpenRouterApiKey(input.openRouterApiKey)
+        : normalizeOpenRouterApiKey(existing.openRouterApiKey),
       name,
       age,
       city: cleanProfileText(input.city ?? existing.city, 120),
@@ -2987,8 +3006,12 @@ export function wardrobeImportApi(options = {}) {
     };
   };
 
-  const publicProfile = (profile) => ({
+  const publicProfile = ({ openRouterApiKey, ...profile }) => ({
     ...profile,
+    // The key never leaves the server; the browser only learns that one exists
+    // and enough of it to recognize which key is stored.
+    hasOpenRouterKey: Boolean(normalizeOpenRouterApiKey(openRouterApiKey)),
+    openRouterKeyHint: openRouterApiKeyHint(openRouterApiKey),
     wardrobePlans: normalizeWardrobePlans(profile.wardrobePlans).map((plan) => ({
       ...plan,
       result: {
@@ -3345,11 +3368,11 @@ export function wardrobeImportApi(options = {}) {
     }
   }
 
-  async function setupStatus(userId) {
+  async function setupStatus(userId, payerProfile = null) {
     const store = await loadUsersStore();
     const profile = store?.users.find((user) => user.id === userId);
     if (!profile) throw apiError("Wardrobe user not found.", 404, "user_not_found");
-    const provider = providerWithProfilePreferences(aiProvider(userId), profile);
+    const provider = providerWithProfilePreferences(aiProvider(userId), profile, payerProfile);
     const hasApiKey = Boolean(provider.key);
     const references = profile.referenceImages || [];
     const modelReferences = references.map((reference) => reference.name);
@@ -3741,7 +3764,7 @@ export function wardrobeImportApi(options = {}) {
     return record;
   }
 
-  async function generateImportedModeledLook(itemId, user, variantId = null) {
+  async function generateImportedModeledLook(itemId, user, variantId = null, payerProfile = null) {
     const lock = `library:${itemId}:modeled`;
     if (running.has(lock)) return running.get(lock);
     const task = (async () => {
@@ -3765,7 +3788,7 @@ export function wardrobeImportApi(options = {}) {
       const store = await loadUsersStore();
       const profile = store?.users.find((candidate) => candidate.id === user.id);
       if (!profile) throw apiError("The wardrobe profile for this item no longer exists.", 404, "user_not_found");
-      const provider = providerWithProfilePreferences(aiProvider(user.id), profile);
+      const provider = providerWithProfilePreferences(aiProvider(payerProfile?.id || user.id), profile, payerProfile);
       if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
       if (!provider.key) {
         throw apiError(
@@ -3849,7 +3872,7 @@ export function wardrobeImportApi(options = {}) {
     return task;
   }
 
-  async function generatePlannedOutfitLook(planId, outfitIndex, user) {
+  async function generatePlannedOutfitLook(planId, outfitIndex, user, payerProfile = null) {
     const normalizedOutfitIndex = Number(outfitIndex);
     if (!Number.isInteger(normalizedOutfitIndex) || normalizedOutfitIndex < 0 || normalizedOutfitIndex > 11) {
       throw apiError("That planned outfit could not be found.", 404, "planner_outfit_not_found");
@@ -3877,7 +3900,7 @@ export function wardrobeImportApi(options = {}) {
         throw apiError("One or more garments in this outfit are no longer in the wardrobe.", 409, "planner_outfit_garment_missing");
       }
 
-      const provider = providerWithProfilePreferences(aiProvider(user.id), profile);
+      const provider = providerWithProfilePreferences(aiProvider(payerProfile?.id || user.id), profile, payerProfile);
       if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
       if (!provider.key) {
         throw apiError(
@@ -4122,7 +4145,10 @@ export function wardrobeImportApi(options = {}) {
         const users = await loadUsersStore();
         const profile = users?.users.find((user) => user.id === current.userId);
         if (!profile) throw new Error("The wardrobe profile for this import no longer exists.");
-        const provider = providerWithProfilePreferences(aiProvider(current.userId), profile);
+        const billingProfile = users?.users.find((candidate) => (
+          candidate.id === (current.billingUserId || current.userId)
+        )) || profile;
+        const provider = providerWithProfilePreferences(aiProvider(current.billingUserId || current.userId), profile, billingProfile);
         if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
         if (!provider.key) throw apiError(`${provider.keyEnv} is not configured. Add it to .env, then restart the app.`, 503, `${provider.id}_key_missing`);
         const editImage = provider.id === "openrouter" ? openRouterEdit : openAIEdit;
@@ -4554,6 +4580,9 @@ Interpret this correction semantically in whatever language it is written. It ov
       // Everything below belongs to exactly one person: the signed-in one.
       const { user: signedInUser, identity: signedInIdentity, owner: isOwner, store: profileStore } = await selectedUser(req, url);
       const signedInUserId = signedInUser.id;
+      // AI spend always follows the signed-in account, so an owner working in
+      // somebody else's wardrobe uses their own OpenRouter key and credit.
+      const payerProfile = signedInIdentity;
       if (url.pathname === EXPORT_ROOT && req.method === "GET") {
         const date = new Date().toISOString().slice(0, 10);
         res.statusCode = 200;
@@ -4716,7 +4745,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         if ((end - start) / 86_400_000 > 90) {
           throw apiError("Plan trips of up to 90 days at a time.", 400, "planner_trip_too_long");
         }
-        const provider = providerWithProfilePreferences(aiProvider(user.id), user);
+        const provider = providerWithProfilePreferences(aiProvider(payerProfile?.id || user.id), user, payerProfile);
         if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
         if (!provider.key) {
           throw apiError(
@@ -4768,6 +4797,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           plannerOutfitMatch[1],
           Number(plannerOutfitMatch[2]),
           user,
+          payerProfile,
         );
         return json(res, 200, result);
       }
@@ -4796,7 +4826,7 @@ Interpret this correction semantically in whatever language it is written. It ov
             "planner_not_enough_variety",
           );
         }
-        const provider = providerWithProfilePreferences(aiProvider(user.id), profile);
+        const provider = providerWithProfilePreferences(aiProvider(payerProfile?.id || user.id), profile, payerProfile);
         if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
         if (!provider.key) {
           throw apiError(
@@ -4892,7 +4922,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         return json(res, 200, await loadImported(user.id));
       }
       if (url.pathname === "/api/import/config" && req.method === "GET") {
-        return json(res, 200, await setupStatus(user.id));
+        return json(res, 200, await setupStatus(user.id, payerProfile));
       }
       if (url.pathname === "/api/import/wardrobe/organization" && req.method === "PUT") {
         const input = await body(req, 256 * 1024);
@@ -4962,6 +4992,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           wardrobeItemMatch[1],
           user,
           typeof input.variantId === "string" ? input.variantId : null,
+          payerProfile,
         );
         return json(res, 200, publicImportedRecord(record, user.id));
       }
@@ -5100,7 +5131,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         return res.end(await readFile(file));
       }
       if (url.pathname === API_ROOT && req.method === "POST") {
-        const setup = await setupStatus(user.id);
+        const setup = await setupStatus(user.id, payerProfile);
         if (!setup.ready) {
           if (setup.configurationError) {
             return json(res, 503, { error: setup.configurationError, code: "invalid_ai_provider" });
@@ -5129,7 +5160,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           createdAt: new Date().toISOString(),
         }));
         const normalizedImage = await normalizeImage(image.data);
-        const provider = providerWithProfilePreferences(aiProvider(user.id), user);
+        const provider = providerWithProfilePreferences(aiProvider(payerProfile?.id || user.id), user, payerProfile);
         const analyzeImage = provider.id === "openrouter" ? openRouterAnalyze : openAIAnalyze;
         const analysisImage = await prepareProviderImage(normalizedImage, analysisMaxEdge());
         console.info(`[wardrobe] Analyzing import with ${provider.label} / ${provider.visionModel}...`);
@@ -5171,6 +5202,7 @@ Interpret this correction semantically in whatever language it is written. It ov
             uploadId,
             sourceFileName,
             userId: user.id,
+            billingUserId: payerProfile?.id || user.id,
             status: "active",
             metadata,
             suggestedBoundingBox: metadata.boundingBox,

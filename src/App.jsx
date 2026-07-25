@@ -3185,12 +3185,80 @@ function AiActivityLogDialog({ user, summary, onClose }) {
   );
 }
 
-function ProfileAiEditor({ value, user, onChange }) {
+function ProfileApiKeyEditor({ user, value, onChange }) {
+  const [editing, setEditing] = useState(false);
+  const stored = Boolean(user?.hasOpenRouterKey);
+  const pending = typeof value === "string";
+
+  return (
+    <section className="profile-api-key">
+      <div className="profile-tab-intro">
+        <div>
+          <h3>{tr("Your OpenRouter key")}</h3>
+          <p>{tr("Add your own key so every AI request in this wardrobe is billed to your own OpenRouter credit.")}</p>
+        </div>
+        <span className={stored && !pending ? "is-set" : ""}>
+          {stored && !pending
+            ? <><Check size={14} weight="bold" /> {user.openRouterKeyHint}</>
+            : <><WarningCircle size={14} /> {tr("Not set")}</>}
+        </span>
+      </div>
+      <ol className="profile-api-key__steps">
+        <li>
+          <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer noopener">
+            {tr("Open openrouter.ai/keys")}
+          </a>
+          <small>{tr("Opens in a new tab.")}</small>
+        </li>
+        <li>{tr("Sign in with your own OpenRouter account.")}</li>
+        <li>{tr("Create a new API key and copy it.")}</li>
+        <li>
+          {tr("Add credits to that account.")}
+          <small>{tr("Without credit, image generation fails with a payment error.")}</small>
+        </li>
+      </ol>
+      {stored && !editing && !pending ? (
+        <div className="profile-api-key__stored">
+          <span>{tr("A key is saved for this wardrobe.")}</span>
+          <button type="button" onClick={() => { setEditing(true); onChange(""); }}>{tr("Replace key")}</button>
+        </div>
+      ) : (
+        <label className="profile-api-key__field">
+          <span>{tr("API key")}</span>
+          <input
+            type="password"
+            autoComplete="off"
+            spellCheck="false"
+            placeholder="sk-or-v1-…"
+            value={pending ? value : ""}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          <small>{tr("Stored on the server only and never shown again after saving.")}</small>
+        </label>
+      )}
+      {(editing || pending) && stored && (
+        <button
+          className="profile-api-key__cancel"
+          type="button"
+          onClick={() => { setEditing(false); onChange(undefined); }}
+        >
+          {tr("Keep the saved key")}
+        </button>
+      )}
+      <p className="profile-api-key__note">
+        {tr("Until you add a key, requests use the server's shared key.")}
+      </p>
+    </section>
+  );
+}
+
+function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
   const preferences = normalizeAiPreferences(value);
   const update = (taskId, model) => onChange(normalizeAiPreferences({ ...preferences, [taskId]: model }));
 
   return (
     <div className="profile-ai-editor">
+      <ProfileApiKeyEditor user={user} value={apiKey} onChange={onApiKeyChange} />
       <div className="profile-tab-intro">
         <div>
           <h3>{tr("Choose a model for each job")}</h3>
@@ -3269,6 +3337,8 @@ function ProfileEditor({ user, busy, error, onClose, onSave }) {
     wardrobeDisplay: normalizeWardrobeDisplayPreferences(user?.wardrobeDisplay),
     aiPreferences: normalizeAiPreferences(user?.aiPreferences),
   });
+  // undefined means "leave the stored key alone"; a string is a pending change.
+  const [apiKeyDraft, setApiKeyDraft] = useState(undefined);
   const [files, setFiles] = useState([]);
   const [retainedReferenceIds, setRetainedReferenceIds] = useState(
     () => (user?.referenceImages || []).map((reference) => reference.id),
@@ -3361,6 +3431,9 @@ function ProfileEditor({ user, busy, error, onClose, onSave }) {
       ...draft,
       age: draft.age === "" ? null : Number(draft.age),
       ...referenceUpdate,
+      // Omitted entirely unless the person actually typed a new key, so saving
+      // any other tab never disturbs the stored one.
+      ...(typeof apiKeyDraft === "string" ? { openRouterApiKey: apiKeyDraft.trim() } : {}),
     });
   };
 
@@ -3553,6 +3626,8 @@ function ProfileEditor({ user, busy, error, onClose, onSave }) {
                 value={draft.aiPreferences}
                 user={user}
                 onChange={(aiPreferences) => setDraft({ ...draft, aiPreferences })}
+                apiKey={apiKeyDraft}
+                onApiKeyChange={setApiKeyDraft}
               />
             </section>
           )}
@@ -4978,6 +5053,23 @@ export function App() {
       throw requestError;
     }
   };
+
+  // Cmd/Ctrl + . opens the profile editor, matching the settings shortcut most
+  // desktop apps use. Ignored while typing so it cannot interrupt an edit.
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key !== "." || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+      const target = event.target;
+      const typing = target instanceof HTMLElement
+        && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+      if (typing || !currentUser?.id) return;
+      event.preventDefault();
+      setProfileError("");
+      setProfileEditor((current) => (current ? null : currentUser.id));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [currentUser?.id]);
 
   const logout = async () => {
     try {
