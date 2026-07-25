@@ -2552,7 +2552,7 @@ function InfoTooltip({ label, children, className = "" }) {
   );
 }
 
-function ProfileMenu({ currentUser, onEdit, onExport, onLogout }) {
+function ProfileMenu({ users, currentUser, onSelect, onEdit, onExport, onLogout }) {
   const detailsRef = useRef(null);
   const closeMenu = () => { if (detailsRef.current) detailsRef.current.open = false; };
 
@@ -2596,6 +2596,22 @@ function ProfileMenu({ currentUser, onEdit, onExport, onLogout }) {
             <PencilSimple size={15} aria-hidden="true" />
           </button>
         </div>
+        {users.length > 1 && (
+          <div className="profile-menu__users">
+            {users.map((user) => (
+              <button
+                className={user.id === currentUser?.id ? "is-current" : ""}
+                type="button"
+                key={user.id}
+                onClick={() => { onSelect(user.id); closeMenu(); }}
+              >
+                <ProfileAvatar user={user} />
+                <span><strong>{user.name}</strong><small>{user.email || user.fashionStyle || ""}</small></span>
+                {user.id === currentUser?.id && <Check size={14} weight="bold" aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="profile-menu__actions">
           <button className="profile-menu__export" type="button" onClick={() => { onExport(); closeMenu(); }} title={tr("Includes only your own wardrobe and photos")}>
             <DownloadSimple size={14} /> {tr("Download data")}
@@ -4791,6 +4807,20 @@ export function App() {
     closeViewer();
   };
 
+  // Only an owner is ever offered more than one wardrobe; the server refuses the
+  // switch for anyone else, so this is a convenience rather than the guard.
+  const selectUser = async (userId) => {
+    if (userId === currentUserId) return;
+    try {
+      await profileApi("/api/users/current", { method: "PUT", body: JSON.stringify({ userId }) });
+      setCurrentUserId(userId);
+      setActiveType("all");
+      closeViewer();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
   const downloadPersonalData = async () => {
     setError("");
     const migrations = users.flatMap((user) => {
@@ -5157,7 +5187,9 @@ export function App() {
       )}
       {!!currentUser && (
         <ProfileMenu
+          users={users}
           currentUser={currentUser}
+          onSelect={selectUser}
           onEdit={() => { setProfileError(""); setProfileEditor(currentUser.id); }}
           onExport={downloadPersonalData}
           onLogout={auth.enabled ? logout : null}

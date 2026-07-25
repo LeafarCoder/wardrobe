@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createOAuthStateToken,
   createSessionToken,
+  normalizeEmail,
   parseAllowedAccounts,
   pkceChallenge,
   readOAuthStateToken,
@@ -95,4 +96,27 @@ test("an empty allowlist grants nobody access", () => {
 test("a pinned profile id that is not a profile id is ignored rather than trusted", () => {
   const accounts = parseAllowedAccounts("me@example.com=../../etc/passwd");
   assert.equal(accounts.get("me@example.com"), null);
+});
+
+test("the owner list is empty by default so nobody is elevated", () => {
+  // Mirrors the server helper: an unset variable must grant nothing.
+  const owners = (value) => new Set(
+    String(value || "").split(/[\n,]/).map(normalizeEmail).filter((email) => email.includes("@")),
+  );
+
+  assert.equal(owners(undefined).size, 0);
+  assert.equal(owners("").size, 0);
+  assert.equal(owners("  ").size, 0);
+});
+
+test("owner matching is case-insensitive and ignores non-addresses", () => {
+  const owners = (value) => new Set(
+    String(value || "").split(/[\n,]/).map(normalizeEmail).filter((email) => email.includes("@")),
+  );
+  const list = owners(" Me@Example.COM , not-an-email ,partner@example.com ");
+
+  assert.equal(list.has("me@example.com"), true);
+  assert.equal(list.has("partner@example.com"), true);
+  assert.equal(list.has("not-an-email"), false);
+  assert.equal(list.size, 2);
 });

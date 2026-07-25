@@ -2599,6 +2599,17 @@ export function wardrobeImportApi(options = {}) {
   // possible so rotating one does not silently sign every session out.
   const sessionSecret = () => String(setting("WARDROBE_SESSION_SECRET") || googleClientSecret());
   const allowedAccounts = () => parseAllowedAccounts(setting("WARDROBE_ALLOWED_EMAILS"));
+  // Empty by default: with no owner listed, every account is strictly isolated.
+  const ownerEmails = () => new Set(
+    String(setting("WARDROBE_OWNER_EMAILS") || "")
+      .split(/[\n,]/)
+      .map(normalizeEmail)
+      .filter((email) => email.includes("@")),
+  );
+  const isOwnerProfile = (profile) => {
+    const email = normalizeEmail(profile?.email);
+    return Boolean(email) && ownerEmails().has(email);
+  };
   const sessionUserId = (req) => {
     const token = parseCookies(req.headers.cookie)[AUTH_COOKIE];
     if (!token) return null;
@@ -3119,14 +3130,28 @@ export function wardrobeImportApi(options = {}) {
   // The owner comes from the signed session and nothing else. The `?user=` query
   // parameter still appears in asset URLs for cache separation, but it is never
   // consulted here, so it cannot be used to reach another person's wardrobe.
-  async function selectedUser(req) {
+  async function selectedUser(req, url = null) {
     const store = await loadUsersStore();
     if (!store) throw apiError("User profiles are not initialized.", 503, "profiles_unavailable");
     const signedInId = sessionUserId(req);
     if (!signedInId) throw apiError("Sign in to continue.", 401, "authentication_required");
-    const user = store.users.find((candidate) => candidate.id === signedInId);
-    if (!user) throw apiError("This wardrobe profile no longer exists.", 401, "user_not_found");
-    return { store, user };
+    const identity = store.users.find((candidate) => candidate.id === signedInId);
+    if (!identity) throw apiError("This wardrobe profile no longer exists.", 401, "user_not_found");
+    const owner = isOwnerProfile(identity);
+    // `?user=` is honored only for an owner. For everyone else it stays what it
+    // has always been for the browser — a cache key — and never selects a
+    // wardrobe, so it cannot be used to reach another person's data.
+    const requested = url?.searchParams.get("user");
+    if (owner && requested && requested !== identity.id) {
+      if (!USER_ID.test(requested)) throw apiError("Invalid wardrobe user.", 400, "invalid_user");
+      const target = store.users.find((candidate) => candidate.id === requested);
+      if (!target) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+      return { store, user: target, identity, owner };
+    }
+    if (!owner && requested && requested !== identity.id) {
+      throw apiError("You can only open your own wardrobe.", 403, "forbidden_profile");
+    }
+    return { store, user: identity, identity, owner };
   }
 
   async function saveProfileReferences(userId, images) {
@@ -4527,7 +4552,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       }
       if (!protectedPath) return next();
       // Everything below belongs to exactly one person: the signed-in one.
-      const { user: signedInUser } = await selectedUser(req);
+      const { user: signedInUser, identity: signedInIdentity, owner: isOwner, store: profileStore } = await selectedUser(req, url);
       const signedInUserId = signedInUser.id;
       if (url.pathname === EXPORT_ROOT && req.method === "GET") {
         const date = new Date().toISOString().slice(0, 10);
@@ -4544,9 +4569,12 @@ Interpret this correction semantically in whatever language it is written. It ov
         return;
       }
       if (url.pathname === USERS_ROOT && req.method === "GET") {
+        // An owner sees every wardrobe so they can switch; everyone else sees
+        // exactly one, so the switcher never appears for them.
         return json(res, 200, {
           currentUserId: signedInUserId,
-          users: [publicProfile(signedInUser)],
+          isOwner,
+          users: (isOwner ? profileStore.users : [signedInUser]).map(publicProfile),
         });
       }
       if (url.pathname === USERS_ROOT && req.method === "POST") {
@@ -4557,7 +4585,17 @@ Interpret this correction semantically in whatever language it is written. It ov
         );
       }
       if (url.pathname === `${USERS_ROOT}/current` && req.method === "PUT") {
-        throw apiError("You can only open your own wardrobe.", 403, "profile_switching_disabled");
+        if (!isOwner) throw apiError("You can only open your own wardrobe.", 403, "profile_switching_disabled");
+        const input = await body(req);
+        await withUsers(async () => {
+          const store = await loadUsersStore();
+          if (typeof input.userId !== "string" || !store.users.some((user) => user.id === input.userId)) {
+            throw apiError("Wardrobe user not found.", 404, "user_not_found");
+          }
+          store.currentUserId = input.userId;
+          await saveUsersStore(store);
+        });
+        return json(res, 200, { currentUserId: input.userId });
       }
       const aiActivityMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/ai-usage\/activities$/i);
       if (aiActivityMatch && req.method === "GET") {
