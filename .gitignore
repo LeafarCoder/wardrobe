@@ -6,3 +6,9 @@ dist/
 !.env.example
 *.log
 data/
+
+# Local cross-agent context. These files may contain workstation-specific notes
+# and evolving handoffs, so keep them out of the public repository.
+AGENTS.md
+CLAUDE.md
+HANDOFF.md

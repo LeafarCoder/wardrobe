@@ -883,15 +883,18 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
     } catch (requestError) { showError(requestError); }
   }, [showError, userId]);
 
+  const generatingJobIds = useMemo(() => jobs.filter((job) => (
+    job.stages?.crop?.status === "approved"
+    && job.duplicateReview?.status !== "review"
+    && ["processing", "pending", "queued"].includes(job.stages?.garment?.status)
+  )).map((job) => job.id).join(","), [jobs]);
+
   useEffect(() => {
-    if (!jobs.some((job) => (
-      job.stages?.crop?.status === "approved"
-      && job.duplicateReview?.status !== "review"
-      && ["processing", "pending", "queued"].includes(job.stages?.garment?.status)
-    ))) return undefined;
-    const timer = setInterval(() => jobs.forEach((job) => refresh(job.id)), 900);
+    if (!generatingJobIds) return undefined;
+    const ids = generatingJobIds.split(",");
+    const timer = setInterval(() => ids.forEach((id) => refresh(id)), 900);
     return () => clearInterval(timer);
-  }, [jobs, refresh]);
+  }, [generatingJobIds, refresh]);
 
   const submitFiles = useCallback(async (files) => {
     if (!setup?.ready) {

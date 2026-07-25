@@ -12,6 +12,7 @@ import {
   openRouterPlannerRequest,
   plannerModelCandidates,
   providerResponseError,
+  WARDROBE_PLAN_SCHEMA,
   wardrobePlanPrompt,
 } from "../scripts/import-job-api.mjs";
 
@@ -206,18 +207,30 @@ test("maps an exhausted OpenRouter balance to a human-readable credit error", ()
   assert.match(error.message, /no available credit/i);
 });
 
-test("uses portable JSON mode for planner responses", () => {
+test("constrains planner responses to the wardrobe plan schema", () => {
   const request = openRouterPlannerRequest({
     provider: { zdr: true },
     model: "google/gemini-3.1-flash-lite",
     prompt: "Create a wardrobe plan and return JSON.",
   });
 
-  assert.deepEqual(request.response_format, { type: "json_object" });
+  assert.equal(request.response_format.type, "json_schema");
+  assert.equal(request.response_format.json_schema.name, "wardrobe_plan");
+  assert.equal(request.response_format.json_schema.strict, true);
+  assert.deepEqual(request.response_format.json_schema.schema, WARDROBE_PLAN_SCHEMA);
   assert.equal(request.provider.require_parameters, true);
   assert.equal(request.provider.data_collection, "deny");
   assert.equal(request.provider.zdr, true);
-  assert.equal("json_schema" in request.response_format, false);
+});
+
+test("leaves enough output headroom for a long multi-day plan", () => {
+  const request = openRouterPlannerRequest({
+    provider: {},
+    model: "google/gemini-3.1-flash-lite",
+    prompt: "Create a wardrobe plan and return JSON.",
+  });
+
+  assert.ok(request.max_tokens >= 8192, "a truncated plan costs a paid retry on the fallback model");
 });
 
 test("puts the locally validated planner shape in the prompt", () => {

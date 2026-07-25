@@ -332,17 +332,17 @@ function parseCookies(header = "") {
   }).filter(([name]) => name));
 }
 
-function passwordToken(password) {
+export function passwordToken(password) {
   return createHmac("sha256", password).update(AUTH_CONTEXT).digest("base64url");
 }
 
-function createSessionToken(password, issuedAt = Date.now()) {
+export function createSessionToken(password, issuedAt = Date.now()) {
   const timestamp = String(issuedAt);
   const signature = createHmac("sha256", password).update(`${AUTH_CONTEXT}:${timestamp}`).digest("base64url");
   return `${timestamp}.${signature}`;
 }
 
-function validSessionToken(token, password) {
+export function validSessionToken(token, password) {
   const [timestamp, signature, extra] = String(token || "").split(".");
   const issuedAt = Number(timestamp);
   if (extra || !Number.isFinite(issuedAt) || issuedAt > Date.now() + 60_000 || Date.now() - issuedAt > 30 * 24 * 60 * 60 * 1000) return false;
@@ -1250,6 +1250,13 @@ async function normalizeImage(bytes) {
 function boundedEnvironmentInteger(name, fallback, minimum, maximum) {
   const parsed = Number.parseInt(process.env[name] || "", 10);
   return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
+}
+
+// Analysis only needs to name garments and place boxes on a 1000x1000 grid, so it
+// runs at a lower resolution than image generation references, where fabric detail
+// has to survive. Provider input cost scales with resolution.
+export function analysisMaxEdge() {
+  return boundedEnvironmentInteger("WARDROBE_AI_ANALYSIS_MAX_EDGE", 1024, 768, 2048);
 }
 
 export async function prepareProviderImage(
@@ -2348,8 +2355,17 @@ export function openRouterPlannerRequest({ provider, model, prompt }) {
   return {
     model,
     messages: [{ role: "user", content: prompt }],
-    response_format: { type: "json_object" },
-    max_tokens: 4096,
+    // A strict schema plus headroom keeps long multi-day plans from being truncated
+    // mid-JSON, which would otherwise cost a paid retry on the fallback model.
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "wardrobe_plan",
+        strict: true,
+        schema: WARDROBE_PLAN_SCHEMA,
+      },
+    },
+    max_tokens: 8192,
     temperature: 0.4,
     provider: {
       require_parameters: true,
@@ -2450,6 +2466,19 @@ export function wardrobeImportApi(options = {}) {
   let importHistoryWriteQueue = Promise.resolve();
   const running = new Map();
   const loginAttempts = new Map();
+  // Serializes read-modify-write cycles on a JSON store so two in-flight requests
+  // cannot both read the same snapshot and have the later write discard the earlier.
+  // Never wrap a provider call in one of these sections; they must stay short.
+  const criticalSection = () => {
+    let tail = Promise.resolve();
+    return (task) => {
+      const result = tail.then(task, task);
+      tail = result.then(() => {}, () => {});
+      return result;
+    };
+  };
+  const withLibrary = criticalSection();
+  const withUsers = criticalSection();
   const setting = (name, fallback = "") => options.env?.[name] || process.env[name] || fallback;
   const accessPassword = () => String(setting("WARDROBE_ACCESS_PASSWORD"));
   const authEnabled = () => Boolean(accessPassword());
@@ -2471,14 +2500,21 @@ export function wardrobeImportApi(options = {}) {
     `Max-Age=${maxAge}`,
     requestIsSecure(req) ? "Secure" : null,
   ].filter(Boolean).join("; ");
-  const clientAddress = (req) => String(
-    req.headers["x-real-ip"]
-    || req.socket?.remoteAddress
-    || "unknown",
-  ).slice(0, 120);
+  const trustsProxyHeaders = () => (
+    Boolean(setting("RAILWAY_ENVIRONMENT_NAME")) || booleanSetting("WARDROBE_TRUST_PROXY", false)
+  );
+  const clientAddress = (req) => {
+    const forwarded = trustsProxyHeaders()
+      ? String(req.headers["x-real-ip"] || req.headers["x-forwarded-for"] || "").split(",")[0].trim()
+      : "";
+    return String(forwarded || req.socket?.remoteAddress || "unknown").slice(0, 120);
+  };
   const rateLimitLogin = (req, failed = false) => {
     const key = clientAddress(req);
     const now = Date.now();
+    for (const [address, attempt] of loginAttempts) {
+      if (attempt.resetAt <= now) loginAttempts.delete(address);
+    }
     const current = loginAttempts.get(key);
     const state = !current || current.resetAt <= now
       ? { failures: 0, resetAt: now + (15 * 60 * 1000) }
@@ -3015,7 +3051,7 @@ export function wardrobeImportApi(options = {}) {
           })
           .forEach(({ record }, index) => { record.customOrder = index; });
       }
-      if (JSON.stringify(migrated) !== JSON.stringify(records)) await atomicJson(importedFile, migrated);
+      if (JSON.stringify(migrated) !== JSON.stringify(records)) await saveImported(migrated);
     }
     const ids = await readdir(jobsDir).catch(() => []);
     for (const id of ids) {
@@ -3083,17 +3119,62 @@ export function wardrobeImportApi(options = {}) {
     await atomicJson(path.join(jobsDir, job.id, "job.json"), job);
   }
 
-  async function loadImported(userId = null) {
+  // The wardrobe grid requests one authorized asset per image, so the library is
+  // parsed once per revision instead of once per request. Size and mtime together
+  // detect an external edit even within the same millisecond.
+  let libraryCache = null;
+
+  async function readLibraryRecords() {
+    let details;
     try {
-      const records = JSON.parse(await readFile(importedFile, "utf8"));
-      if (!userId) return records;
-      return records
-        .filter((record) => record.userId === userId)
-        .map((record) => publicImportedRecord(record, userId));
+      details = await stat(importedFile);
     } catch (error) {
-      if (error.code === "ENOENT") return [];
+      if (error.code === "ENOENT") {
+        libraryCache = null;
+        return [];
+      }
       throw error;
     }
+    if (libraryCache && libraryCache.mtimeMs === details.mtimeMs && libraryCache.size === details.size) {
+      return libraryCache.records;
+    }
+    const records = JSON.parse(await readFile(importedFile, "utf8"));
+    libraryCache = { mtimeMs: details.mtimeMs, size: details.size, records, assetIndex: null };
+    return records;
+  }
+
+  async function saveImported(records) {
+    await atomicJson(importedFile, records);
+    try {
+      const details = await stat(importedFile);
+      libraryCache = { mtimeMs: details.mtimeMs, size: details.size, records, assetIndex: null };
+    } catch {
+      libraryCache = null;
+    }
+  }
+
+  async function libraryAssetIndex() {
+    const records = await readLibraryRecords();
+    if (libraryCache?.assetIndex) return libraryCache.assetIndex;
+    const index = new Map();
+    for (const record of records) {
+      if (!record?.userId) continue;
+      const owned = index.get(record.userId) || new Set();
+      for (const asset of importedRecordAssets(record)) {
+        owned.add(path.basename(new URL(asset, "http://localhost").pathname));
+      }
+      index.set(record.userId, owned);
+    }
+    if (libraryCache) libraryCache.assetIndex = index;
+    return index;
+  }
+
+  async function loadImported(userId = null) {
+    const records = await readLibraryRecords();
+    if (!userId) return structuredClone(records);
+    return records
+      .filter((record) => record.userId === userId)
+      .map((record) => publicImportedRecord(record, userId));
   }
 
   const libraryAssetUrl = (fileName, version = null) => (
@@ -3176,7 +3257,7 @@ export function wardrobeImportApi(options = {}) {
       if (JSON.stringify(next) !== JSON.stringify(record)) changed += 1;
       optimized.push(next);
     }
-    if (changed) await atomicJson(importedFile, optimized);
+    if (changed) await saveImported(optimized);
     console.info(`[wardrobe] Image optimization ready for ${records.length} existing wardrobe item${records.length === 1 ? "" : "s"}${changed ? ` (${changed} record${changed === 1 ? "" : "s"} updated)` : ""}.`);
   }
 
@@ -3232,50 +3313,57 @@ export function wardrobeImportApi(options = {}) {
     if (job.duplicateReview?.status !== "review" || !job.duplicateReview.candidateId) {
       throw apiError("This import does not have a duplicate suggestion to merge.", 409, "duplicate_review_unavailable");
     }
-    const records = await loadImported();
-    const index = records.findIndex((record) => (
-      record.id === job.duplicateReview.candidateId && record.userId === user.id
-    ));
-    if (index < 0) {
-      throw apiError("The matching wardrobe garment no longer exists. Keep this as a new garment instead.", 409, "duplicate_candidate_missing");
-    }
-    const sourceFile = job.internal?.originalFile
-      ? path.join(jobsDir, job.id, job.internal.originalFile)
-      : null;
-    if (!sourceFile) throw apiError("The source photo for this import is missing.", 404, "import_source_missing");
-    const sourceId = randomUUID();
-    const sourceName = `${records[index].id}-source-${sourceId}.png`;
-    await copyFile(sourceFile, path.join(libraryAssetDir, sourceName));
-    const sourcePhoto = {
-      id: sourceId,
-      image: `${LIBRARY_ASSET_ROOT}/${sourceName}`,
-      boundingBox: job.metadata?.boundingBox || null,
-      focusBox: job.originalFocusBox || job.metadata?.boundingBox || null,
-      importJobId: job.id,
-      importUploadId: job.uploadId || null,
-      sourceFileName: job.sourceFileName || null,
-      addedAt: new Date().toISOString(),
-    };
-    const previousSources = sourcePhotosForRecord(records[index]);
-    records[index] = await optimizeImportedRecord(recordWithSourcePhotos({
-      ...records[index],
-      boundingBox: records[index].boundingBox || job.metadata?.boundingBox || null,
-      originalFocusBox: records[index].originalFocusBox || job.originalFocusBox || null,
-      updatedAt: new Date().toISOString(),
-    }, [...previousSources, sourcePhoto]));
-    await atomicJson(importedFile, records);
+    const merged = await withLibrary(async () => {
+      const records = await loadImported();
+      const index = records.findIndex((record) => (
+        record.id === job.duplicateReview.candidateId && record.userId === user.id
+      ));
+      if (index < 0) {
+        throw apiError("The matching wardrobe garment no longer exists. Keep this as a new garment instead.", 409, "duplicate_candidate_missing");
+      }
+      const sourceFile = job.internal?.originalFile
+        ? path.join(jobsDir, job.id, job.internal.originalFile)
+        : null;
+      if (!sourceFile) throw apiError("The source photo for this import is missing.", 404, "import_source_missing");
+      const sourceId = randomUUID();
+      const sourceName = `${records[index].id}-source-${sourceId}.png`;
+      await copyFile(sourceFile, path.join(libraryAssetDir, sourceName));
+      const sourcePhoto = {
+        id: sourceId,
+        image: `${LIBRARY_ASSET_ROOT}/${sourceName}`,
+        boundingBox: job.metadata?.boundingBox || null,
+        focusBox: job.originalFocusBox || job.metadata?.boundingBox || null,
+        importJobId: job.id,
+        importUploadId: job.uploadId || null,
+        sourceFileName: job.sourceFileName || null,
+        addedAt: new Date().toISOString(),
+      };
+      const previousSources = sourcePhotosForRecord(records[index]);
+      records[index] = await optimizeImportedRecord(recordWithSourcePhotos({
+        ...records[index],
+        boundingBox: records[index].boundingBox || job.metadata?.boundingBox || null,
+        originalFocusBox: records[index].originalFocusBox || job.originalFocusBox || null,
+        updatedAt: new Date().toISOString(),
+      }, [...previousSources, sourcePhoto]));
+      await saveImported(records);
+      return records[index];
+    });
     await updateImportHistoryItem(job, {
       outcome: "merged",
       duplicateStatus: "merged",
-      garmentId: records[index].id,
-      mergedIntoId: records[index].id,
+      garmentId: merged.id,
+      mergedIntoId: merged.id,
     });
     await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
-    console.info(`[wardrobe] Merged duplicate import "${job.metadata?.name || job.id}" into "${records[index].name}" and attached its source photo.`);
-    return records[index];
+    console.info(`[wardrobe] Merged duplicate import "${job.metadata?.name || job.id}" into "${merged.name}" and attached its source photo.`);
+    return merged;
   }
 
-  async function persistImported(job, includeModeled = false) {
+  function persistImported(job, includeModeled = false) {
+    return withLibrary(() => persistImportedRecord(job, includeModeled));
+  }
+
+  async function persistImportedRecord(job, includeModeled = false) {
     const id = `import-${job.id}`;
     await mkdir(libraryAssetDir, { recursive: true });
     const garmentName = `${id}-garment.png`;
@@ -3362,7 +3450,7 @@ export function wardrobeImportApi(options = {}) {
       updatedAt: now,
     }, sourcePhotos), modeledLooks));
     const next = [...records.filter((item) => item.id !== id), record];
-    await atomicJson(importedFile, next);
+    await saveImported(next);
     await updateImportHistoryItem(job, {
       outcome: "added",
       garmentId: record.id,
@@ -3445,33 +3533,35 @@ export function wardrobeImportApi(options = {}) {
         "preview",
         `${record.name || record.id} modeled look ${lookId}`,
       );
-      const latest = await loadImported();
-      const index = latest.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
-      if (index < 0) {
-        await Promise.all([
-          rm(path.join(libraryAssetDir, modeledName), { force: true }),
-          modeledPreview
-            ? rm(path.join(libraryAssetDir, path.basename(new URL(modeledPreview, "http://localhost").pathname)), { force: true })
-            : Promise.resolve(),
-        ]);
-        throw apiError("The wardrobe item was deleted while its modeled look was being generated.", 409, "wardrobe_item_deleted");
-      }
-      const generatedAt = new Date().toISOString();
-      const modeledLook = {
-        id: lookId,
-        image: modeledImage,
-        ...(modeledPreview ? { preview: modeledPreview } : {}),
-        model: generation.model,
-        fallbackUsed: generation.fallbackUsed,
-        variantId: selectedVariant?.id || null,
-        generatedAt,
-      };
-      latest[index] = recordWithModeledLooks({
-        ...latest[index],
-        updatedAt: generatedAt,
-      }, [...modeledLooksForRecord(latest[index]), modeledLook]);
-      await atomicJson(importedFile, latest);
-      return latest[index];
+      return withLibrary(async () => {
+        const latest = await loadImported();
+        const index = latest.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
+        if (index < 0) {
+          await Promise.all([
+            rm(path.join(libraryAssetDir, modeledName), { force: true }),
+            modeledPreview
+              ? rm(path.join(libraryAssetDir, path.basename(new URL(modeledPreview, "http://localhost").pathname)), { force: true })
+              : Promise.resolve(),
+          ]);
+          throw apiError("The wardrobe item was deleted while its modeled look was being generated.", 409, "wardrobe_item_deleted");
+        }
+        const generatedAt = new Date().toISOString();
+        const modeledLook = {
+          id: lookId,
+          image: modeledImage,
+          ...(modeledPreview ? { preview: modeledPreview } : {}),
+          model: generation.model,
+          fallbackUsed: generation.fallbackUsed,
+          variantId: selectedVariant?.id || null,
+          generatedAt,
+        };
+        latest[index] = recordWithModeledLooks({
+          ...latest[index],
+          updatedAt: generatedAt,
+        }, [...modeledLooksForRecord(latest[index]), modeledLook]);
+        await saveImported(latest);
+        return latest[index];
+      });
     })().finally(() => running.delete(lock));
     running.set(lock, task);
     return task;
@@ -3569,42 +3659,45 @@ export function wardrobeImportApi(options = {}) {
         generatedAt,
       };
 
-      const latestStore = await loadUsersStore();
-      const latestProfileIndex = latestStore.users.findIndex((candidate) => candidate.id === user.id);
-      const latestPlans = normalizeWardrobePlans(latestStore.users[latestProfileIndex]?.wardrobePlans);
-      const latestPlanIndex = latestPlans.findIndex((candidate) => candidate.id === planId);
-      const latestOutfit = latestPlans[latestPlanIndex]?.result.outfitIdeas[normalizedOutfitIndex];
-      if (latestProfileIndex < 0 || latestPlanIndex < 0 || !latestOutfit) {
-        await Promise.all([
-          rm(path.join(libraryAssetDir, modeledName), { force: true }),
-          modeledPreview
-            ? rm(path.join(libraryAssetDir, path.basename(new URL(modeledPreview, "http://localhost").pathname)), { force: true })
-            : Promise.resolve(),
-        ]);
-        throw apiError("The saved plan was removed while its outfit image was being generated.", 409, "planner_plan_deleted");
-      }
-      const previousLooks = latestOutfit.modeledLooks?.length
-        ? latestOutfit.modeledLooks
-        : latestOutfit.modeledLook ? [latestOutfit.modeledLook] : [];
-      const allModeledLooks = [...previousLooks, modeledLook];
-      const modeledLooks = allModeledLooks.slice(-12);
-      const discardedLooks = allModeledLooks.slice(0, Math.max(0, allModeledLooks.length - modeledLooks.length));
-      latestPlans[latestPlanIndex] = {
-        ...latestPlans[latestPlanIndex],
-        result: {
-          ...latestPlans[latestPlanIndex].result,
-          outfitIdeas: latestPlans[latestPlanIndex].result.outfitIdeas.map((candidate, index) => (
-            index === normalizedOutfitIndex ? { ...candidate, modeledLooks, modeledLook } : candidate
-          )),
-        },
-      };
-      latestStore.users[latestProfileIndex] = {
-        ...latestStore.users[latestProfileIndex],
-        wardrobePlans: normalizeWardrobePlans(latestPlans),
-        updatedAt: generatedAt,
-      };
-      await saveUsersStore(latestStore);
-      await Promise.all(discardedLooks.flatMap((look) => [look.image, look.preview].filter(Boolean)).map((asset) => rm(
+      const saved = await withUsers(async () => {
+        const latestStore = await loadUsersStore();
+        const latestProfileIndex = latestStore.users.findIndex((candidate) => candidate.id === user.id);
+        const latestPlans = normalizeWardrobePlans(latestStore.users[latestProfileIndex]?.wardrobePlans);
+        const latestPlanIndex = latestPlans.findIndex((candidate) => candidate.id === planId);
+        const latestOutfit = latestPlans[latestPlanIndex]?.result.outfitIdeas[normalizedOutfitIndex];
+        if (latestProfileIndex < 0 || latestPlanIndex < 0 || !latestOutfit) {
+          await Promise.all([
+            rm(path.join(libraryAssetDir, modeledName), { force: true }),
+            modeledPreview
+              ? rm(path.join(libraryAssetDir, path.basename(new URL(modeledPreview, "http://localhost").pathname)), { force: true })
+              : Promise.resolve(),
+          ]);
+          throw apiError("The saved plan was removed while its outfit image was being generated.", 409, "planner_plan_deleted");
+        }
+        const previousLooks = latestOutfit.modeledLooks?.length
+          ? latestOutfit.modeledLooks
+          : latestOutfit.modeledLook ? [latestOutfit.modeledLook] : [];
+        const allModeledLooks = [...previousLooks, modeledLook];
+        const modeledLooks = allModeledLooks.slice(-12);
+        const discardedLooks = allModeledLooks.slice(0, Math.max(0, allModeledLooks.length - modeledLooks.length));
+        latestPlans[latestPlanIndex] = {
+          ...latestPlans[latestPlanIndex],
+          result: {
+            ...latestPlans[latestPlanIndex].result,
+            outfitIdeas: latestPlans[latestPlanIndex].result.outfitIdeas.map((candidate, index) => (
+              index === normalizedOutfitIndex ? { ...candidate, modeledLooks, modeledLook } : candidate
+            )),
+          },
+        };
+        latestStore.users[latestProfileIndex] = {
+          ...latestStore.users[latestProfileIndex],
+          wardrobePlans: normalizeWardrobePlans(latestPlans),
+          updatedAt: generatedAt,
+        };
+        await saveUsersStore(latestStore);
+        return { modeledLooks, discardedLooks, profile: latestStore.users[latestProfileIndex] };
+      });
+      await Promise.all(saved.discardedLooks.flatMap((look) => [look.image, look.preview].filter(Boolean)).map((asset) => rm(
         path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
         { force: true },
       )));
@@ -3614,19 +3707,23 @@ export function wardrobeImportApi(options = {}) {
           image: withUser(modeledLook.image, user.id),
           preview: withUser(modeledLook.preview, user.id),
         },
-        modeledLooks: modeledLooks.map((look) => ({
+        modeledLooks: saved.modeledLooks.map((look) => ({
           ...look,
           image: withUser(look.image, user.id),
           preview: withUser(look.preview, user.id),
         })),
-        user: publicProfile(latestStore.users[latestProfileIndex]),
+        user: publicProfile(saved.profile),
       };
     })().finally(() => running.delete(lock));
     running.set(lock, task);
     return task;
   }
 
-  async function deleteImportedModeledLook(itemId, lookId, user) {
+  function deleteImportedModeledLook(itemId, lookId, user) {
+    return withLibrary(() => removeImportedModeledLook(itemId, lookId, user));
+  }
+
+  async function removeImportedModeledLook(itemId, lookId, user) {
     const records = await loadImported();
     const index = records.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
     if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
@@ -3639,7 +3736,7 @@ export function wardrobeImportApi(options = {}) {
       ...removal.record,
       updatedAt: new Date().toISOString(),
     };
-    await atomicJson(importedFile, records);
+    await saveImported(records);
     try {
       const assets = [removed.preview, removed.image]
         .filter(Boolean)
@@ -3647,7 +3744,7 @@ export function wardrobeImportApi(options = {}) {
       await Promise.all(assets.map((fileName) => rm(path.join(libraryAssetDir, fileName), { force: true })));
     } catch (error) {
       records[index] = previous;
-      await atomicJson(importedFile, records).catch(() => {});
+      await saveImported(records).catch(() => {});
       throw apiError("The modeled look could not be removed from storage. Try again.", 500, "modeled_look_delete_failed", error);
     }
     console.info(`[wardrobe] Deleted modeled look ${lookId} for "${records[index].name}" from the data volume.`);
@@ -3698,17 +3795,19 @@ export function wardrobeImportApi(options = {}) {
         })).map(normalizeMetadata);
         const originalFocusBox = combineBoundingBoxes(detected.map((metadata) => metadata.boundingBox));
         if (!originalFocusBox) throw new Error("No clothing was detected in the stored original photo.");
-        const used = new Set();
-        const latestRecords = await loadImported();
-        for (const recordId of group.recordIds) {
-          const record = latestRecords.find((candidate) => candidate.id === recordId);
-          if (!record) continue;
-          const match = metadataMatch(record, detected, used);
-          record.originalFocusBox = originalFocusBox;
-          record.originalFocusSource = "ai-backfill";
-          if (!record.boundingBox && match?.boundingBox) record.boundingBox = match.boundingBox;
-        }
-        await atomicJson(importedFile, latestRecords);
+        await withLibrary(async () => {
+          const used = new Set();
+          const latestRecords = await loadImported();
+          for (const recordId of group.recordIds) {
+            const record = latestRecords.find((candidate) => candidate.id === recordId);
+            if (!record) continue;
+            const match = metadataMatch(record, detected, used);
+            record.originalFocusBox = originalFocusBox;
+            record.originalFocusSource = "ai-backfill";
+            if (!record.boundingBox && match?.boundingBox) record.boundingBox = match.boundingBox;
+          }
+          await saveImported(latestRecords);
+        });
         completed += 1;
       } catch (error) {
         console.warn(`[wardrobe] Original-photo focus backfill failed for one stored photo: ${error.message}`);
@@ -3722,6 +3821,7 @@ export function wardrobeImportApi(options = {}) {
     if (running.has(lock)) return running.get(lock);
     const task = (async () => {
       const current = await loadJob(job.id);
+      if (!current) return;
       const stage = current.stages[stageName];
       stage.status = "processing"; stage.decision = null; stage.error = null; stage.attempts += 1; stage.updatedAt = new Date().toISOString();
       await saveJob(current);
@@ -3787,7 +3887,11 @@ Interpret this correction semantically in whatever language it is written. It ov
             || otherDetectedItems.length,
           );
           console.info(`[wardrobe] Generating garment with ${provider.label} / ${provider.garmentModel} (${diagnostics.cropWidth}x${diagnostics.cropHeight}px crop${generationImages.length > 1 ? ", contextual reference" : ""})...`);
+          // Validation already runs the full per-pixel cleanup; keep its output so the
+          // accepted candidate is not processed a second time.
+          let cleanedCandidate = null;
           const validateImage = async (candidateBytes, candidate) => {
+            cleanedCandidate = null;
             const generated = await sharp(candidateBytes).metadata();
             if ((generated.width || 0) < 512 || (generated.height || 0) < 512) {
               throw apiError(
@@ -3806,6 +3910,7 @@ Interpret this correction semantically in whatever language it is written. It ov
                 "garment_background_not_transparent",
               );
             }
+            cleanedCandidate = backgroundCheck;
             if (!needsContextReference && !validateSemantics) return;
             try {
               const analyzeImage = provider.id === "openrouter" ? openRouterAnalyze : openAIAnalyze;
@@ -3870,9 +3975,13 @@ Interpret this correction semantically in whatever language it is written. It ov
           const rawName = `${stageName}-${stage.attempts}-source.png`;
           await writeFile(path.join(dir, rawName), bytes);
           failedAssetUrl = `${ASSET_ROOT}/${current.id}/${rawName}`;
-          bytes = await removeChromaBackground(bytes, chromaKeyUsed, {
-            protectedColors: [current.metadata.color, current.metadata.secondaryColor],
-          });
+          if (cleanedCandidate && cleanedCandidate.verification.contaminatedPixels <= 1) {
+            bytes = cleanedCandidate.bytes;
+          } else {
+            bytes = await removeChromaBackground(bytes, chromaKeyUsed, {
+              protectedColors: [current.metadata.color, current.metadata.secondaryColor],
+            });
+          }
         } else {
           const garmentName = current.stages.garment.assetUrl
             ? path.basename(new URL(current.stages.garment.assetUrl, "http://localhost").pathname)
@@ -3908,6 +4017,10 @@ Interpret this correction semantically in whatever language it is written. It ov
         }
         await writeFile(output, bytes);
         const fresh = await loadJob(current.id);
+        if (!fresh) {
+          console.warn(`[wardrobe] Import ${current.id} was removed while its ${stageName} image was generating; discarding the result.`);
+          return;
+        }
         fresh.stages[stageName].status = "review";
         fresh.stages[stageName].assetUrl = `${ASSET_ROOT}/${fresh.id}/${path.basename(output)}`;
         fresh.stages[stageName].failedAssetUrl = null;
@@ -3922,6 +4035,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       } catch (error) {
         console.error(`[wardrobe] ${stageName} generation failed for job ${current.id}: ${error.message}`);
         const fresh = await loadJob(current.id);
+        if (!fresh) return;
         fresh.stages[stageName].status = "failed"; fresh.stages[stageName].error = error.message; fresh.stages[stageName].updatedAt = new Date().toISOString();
         if (typeof failedAssetUrl === "string") fresh.stages[stageName].failedAssetUrl = failedAssetUrl;
         if (chromaKeyUsed) fresh.stages[stageName].chromaKey = chromaKeyUsed;
@@ -3931,7 +4045,10 @@ Interpret this correction semantically in whatever language it is written. It ov
           failedStage: stageName,
         });
       }
-    })().finally(() => running.delete(lock));
+    })().catch((error) => {
+      // Callers start this in the background, so a rejection here would be unhandled.
+      console.error(`[wardrobe] ${stageName} generation could not be recorded for job ${job.id}: ${error.stack || error.message}`);
+    }).finally(() => running.delete(lock));
     running.set(lock, task);
     return task;
   }
@@ -4001,29 +4118,34 @@ Interpret this correction semantically in whatever language it is written. It ov
       }
       if (url.pathname === USERS_ROOT && req.method === "POST") {
         const input = await body(req, 60 * 1024 * 1024);
-        const store = await loadUsersStore();
-        const now = new Date().toISOString();
-        const id = randomUUID();
-        const references = await saveProfileReferences(id, input.referenceImages);
-        const profile = normalizeProfile(input, {
-          id,
-          referenceImages: references,
-          createdAt: now,
-          updatedAt: now,
+        const profile = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const now = new Date().toISOString();
+          const id = randomUUID();
+          const references = await saveProfileReferences(id, input.referenceImages);
+          const created = normalizeProfile(input, {
+            id,
+            referenceImages: references,
+            createdAt: now,
+            updatedAt: now,
+          });
+          store.users.push(created);
+          store.currentUserId = created.id;
+          await saveUsersStore(store);
+          return created;
         });
-        store.users.push(profile);
-        store.currentUserId = profile.id;
-        await saveUsersStore(store);
         return json(res, 201, { currentUserId: profile.id, user: publicProfile(profile) });
       }
       if (url.pathname === `${USERS_ROOT}/current` && req.method === "PUT") {
         const input = await body(req);
-        const store = await loadUsersStore();
-        if (typeof input.userId !== "string" || !store.users.some((user) => user.id === input.userId)) {
-          throw apiError("Wardrobe user not found.", 404, "user_not_found");
-        }
-        store.currentUserId = input.userId;
-        await saveUsersStore(store);
+        await withUsers(async () => {
+          const store = await loadUsersStore();
+          if (typeof input.userId !== "string" || !store.users.some((user) => user.id === input.userId)) {
+            throw apiError("Wardrobe user not found.", 404, "user_not_found");
+          }
+          store.currentUserId = input.userId;
+          await saveUsersStore(store);
+        });
         return json(res, 200, { currentUserId: input.userId });
       }
       const aiUsageMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/ai-usage$/i);
@@ -4058,47 +4180,50 @@ Interpret this correction semantically in whatever language it is written. It ov
       const profileMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})$/i);
       if (profileMatch && req.method === "PATCH") {
         const input = await body(req, 60 * 1024 * 1024);
-        const store = await loadUsersStore();
-        const index = store.users.findIndex((user) => user.id === profileMatch[1]);
-        if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
-        const existing = store.users[index];
-        const updatingReferences = Object.hasOwn(input, "referenceImages")
-          || Object.hasOwn(input, "referenceImageIds");
-        let referenceImages = existing.referenceImages;
-        let removedReferences = [];
-        if (updatingReferences) {
-          const retainedIds = Object.hasOwn(input, "referenceImageIds") ? input.referenceImageIds : [];
-          if (
-            !Array.isArray(retainedIds)
-            || retainedIds.some((id) => typeof id !== "string")
-            || new Set(retainedIds).size !== retainedIds.length
-          ) {
-            throw apiError("Reference photo selection is invalid.", 400, "invalid_reference_selection");
+        const saved = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const index = store.users.findIndex((user) => user.id === profileMatch[1]);
+          if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+          const existing = store.users[index];
+          const updatingReferences = Object.hasOwn(input, "referenceImages")
+            || Object.hasOwn(input, "referenceImageIds");
+          let referenceImages = existing.referenceImages;
+          let removedReferences = [];
+          if (updatingReferences) {
+            const retainedIds = Object.hasOwn(input, "referenceImageIds") ? input.referenceImageIds : [];
+            if (
+              !Array.isArray(retainedIds)
+              || retainedIds.some((id) => typeof id !== "string")
+              || new Set(retainedIds).size !== retainedIds.length
+            ) {
+              throw apiError("Reference photo selection is invalid.", 400, "invalid_reference_selection");
+            }
+            const retained = (existing.referenceImages || []).filter((reference) => retainedIds.includes(reference.id));
+            if (retained.length !== retainedIds.length) {
+              throw apiError("One of the selected reference photos no longer exists.", 409, "reference_not_found");
+            }
+            const additions = Object.hasOwn(input, "referenceImages") ? input.referenceImages : [];
+            if (!Array.isArray(additions) || retained.length + additions.length < 1 || retained.length + additions.length > 3) {
+              throw apiError("Choose between one and three reference photos.", 400, "invalid_reference_count");
+            }
+            const added = additions.length ? await saveProfileReferences(existing.id, additions) : [];
+            referenceImages = [...retained, ...added];
+            removedReferences = (existing.referenceImages || []).filter((reference) => !retainedIds.includes(reference.id));
           }
-          const retained = (existing.referenceImages || []).filter((reference) => retainedIds.includes(reference.id));
-          if (retained.length !== retainedIds.length) {
-            throw apiError("One of the selected reference photos no longer exists.", 409, "reference_not_found");
+          const profile = normalizeProfile(input, {
+            ...existing,
+            referenceImages,
+            updatedAt: new Date().toISOString(),
+          });
+          store.users[index] = profile;
+          await saveUsersStore(store);
+          if (updatingReferences) {
+            await Promise.all(removedReferences.flatMap((reference) => profileReferenceAssetNames(reference)
+              .map((fileName) => rm(path.join(profileReferenceDir(existing.id), fileName), { force: true }))));
           }
-          const additions = Object.hasOwn(input, "referenceImages") ? input.referenceImages : [];
-          if (!Array.isArray(additions) || retained.length + additions.length < 1 || retained.length + additions.length > 3) {
-            throw apiError("Choose between one and three reference photos.", 400, "invalid_reference_count");
-          }
-          const added = additions.length ? await saveProfileReferences(existing.id, additions) : [];
-          referenceImages = [...retained, ...added];
-          removedReferences = (existing.referenceImages || []).filter((reference) => !retainedIds.includes(reference.id));
-        }
-        const profile = normalizeProfile(input, {
-          ...existing,
-          referenceImages,
-          updatedAt: new Date().toISOString(),
+          return { currentUserId: store.currentUserId, profile };
         });
-        store.users[index] = profile;
-        await saveUsersStore(store);
-        if (updatingReferences) {
-          await Promise.all(removedReferences.flatMap((reference) => profileReferenceAssetNames(reference)
-            .map((fileName) => rm(path.join(profileReferenceDir(existing.id), fileName), { force: true }))));
-        }
-        return json(res, 200, { currentUserId: store.currentUserId, user: publicProfile(profile) });
+        return json(res, 200, { currentUserId: saved.currentUserId, user: publicProfile(saved.profile) });
       }
       if (!url.pathname.startsWith("/api/import/")) return next();
       const { user } = await selectedUser(req, url);
@@ -4151,16 +4276,19 @@ Interpret this correction semantically in whatever language it is written. It ov
           input: request,
           result,
         }])[0];
-        const store = await loadUsersStore();
-        const index = store.users.findIndex((candidate) => candidate.id === user.id);
-        if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
-        store.users[index] = {
-          ...store.users[index],
-          wardrobePlans: normalizeWardrobePlans([plan, ...(store.users[index].wardrobePlans || [])]),
-          updatedAt: new Date().toISOString(),
-        };
-        await saveUsersStore(store);
-        return json(res, 201, { plan, user: publicProfile(store.users[index]) });
+        const owner = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const index = store.users.findIndex((candidate) => candidate.id === user.id);
+          if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+          store.users[index] = {
+            ...store.users[index],
+            wardrobePlans: normalizeWardrobePlans([plan, ...(store.users[index].wardrobePlans || [])]),
+            updatedAt: new Date().toISOString(),
+          };
+          await saveUsersStore(store);
+          return store.users[index];
+        });
+        return json(res, 201, { plan, user: publicProfile(owner) });
       }
       const plannerOutfitMatch = url.pathname.match(/^\/api\/import\/planner\/([a-z0-9-]{1,80})\/outfits\/(\d{1,2})\/modeled$/i);
       if (plannerOutfitMatch && req.method === "POST") {
@@ -4230,45 +4358,58 @@ Interpret this correction semantically in whatever language it is written. It ov
             "planner_not_enough_variety",
           );
         }
-        plans[planIndex] = normalizeWardrobePlans([{
-          ...plan,
-          result: {
-            ...plan.result,
-            outfitIdeas: [...plan.result.outfitIdeas, ...additions],
-          },
-        }])[0];
-        store.users[profileIndex] = {
-          ...profile,
-          wardrobePlans: plans,
-          updatedAt: new Date().toISOString(),
-        };
-        await saveUsersStore(store);
+        const owner = await withUsers(async () => {
+          const latestStore = await loadUsersStore();
+          const latestIndex = latestStore.users.findIndex((candidate) => candidate.id === user.id);
+          if (latestIndex < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+          const latestPlans = normalizeWardrobePlans(latestStore.users[latestIndex].wardrobePlans);
+          const latestPlanIndex = latestPlans.findIndex((candidate) => candidate.id === plannerIdeasMatch[1]);
+          if (latestPlanIndex < 0) throw apiError("Saved wardrobe plan not found.", 404, "planner_plan_not_found");
+          const latestPlan = latestPlans[latestPlanIndex];
+          latestPlans[latestPlanIndex] = normalizeWardrobePlans([{
+            ...latestPlan,
+            result: {
+              ...latestPlan.result,
+              outfitIdeas: [...latestPlan.result.outfitIdeas, ...additions].slice(0, 12),
+            },
+          }])[0];
+          latestStore.users[latestIndex] = {
+            ...latestStore.users[latestIndex],
+            wardrobePlans: latestPlans,
+            updatedAt: new Date().toISOString(),
+          };
+          await saveUsersStore(latestStore);
+          return latestStore.users[latestIndex];
+        });
         return json(res, 200, {
-          plan: publicProfile(store.users[profileIndex]).wardrobePlans.find((candidate) => candidate.id === plan.id),
-          user: publicProfile(store.users[profileIndex]),
+          plan: publicProfile(owner).wardrobePlans.find((candidate) => candidate.id === plan.id),
+          user: publicProfile(owner),
           added: additions.length,
         });
       }
       const plannerMatch = url.pathname.match(/^\/api\/import\/planner\/([a-z0-9-]{1,80})$/i);
       if (plannerMatch && req.method === "DELETE") {
-        const store = await loadUsersStore();
-        const index = store.users.findIndex((candidate) => candidate.id === user.id);
-        if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
-        const previous = normalizeWardrobePlans(store.users[index].wardrobePlans);
-        const removedPlan = previous.find((plan) => plan.id === plannerMatch[1]);
-        const wardrobePlans = previous.filter((plan) => plan.id !== plannerMatch[1]);
-        if (wardrobePlans.length === previous.length) throw apiError("Saved wardrobe plan not found.", 404, "planner_plan_not_found");
-        store.users[index] = {
-          ...store.users[index],
-          wardrobePlans,
-          updatedAt: new Date().toISOString(),
-        };
-        await saveUsersStore(store);
-        await Promise.all(wardrobePlanAssets([removedPlan]).map((asset) => rm(
+        const deletion = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const index = store.users.findIndex((candidate) => candidate.id === user.id);
+          if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+          const previous = normalizeWardrobePlans(store.users[index].wardrobePlans);
+          const removedPlan = previous.find((plan) => plan.id === plannerMatch[1]);
+          const wardrobePlans = previous.filter((plan) => plan.id !== plannerMatch[1]);
+          if (wardrobePlans.length === previous.length) throw apiError("Saved wardrobe plan not found.", 404, "planner_plan_not_found");
+          store.users[index] = {
+            ...store.users[index],
+            wardrobePlans,
+            updatedAt: new Date().toISOString(),
+          };
+          await saveUsersStore(store);
+          return { removedPlan, profile: store.users[index] };
+        });
+        await Promise.all(wardrobePlanAssets([deletion.removedPlan]).map((asset) => rm(
           path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
           { force: true },
         )));
-        return json(res, 200, { deleted: true, user: publicProfile(store.users[index]) });
+        return json(res, 200, { deleted: true, user: publicProfile(deletion.profile) });
       }
       if (url.pathname === "/api/import/wardrobe" && req.method === "GET") {
         return json(res, 200, await loadImported(user.id));
@@ -4293,36 +4434,40 @@ Interpret this correction semantically in whatever language it is written. It ov
           if (!Array.isArray(input.ids) || input.ids.some((id) => typeof id !== "string")) {
             throw apiError("Wardrobe order must be a list of item IDs.", 400, "invalid_wardrobe_order");
           }
-          const records = await loadImported();
-          const owned = records.filter((record) => record.userId === user.id);
-          const submitted = new Set(input.ids);
-          if (
-            submitted.size !== input.ids.length
-            || input.ids.length !== owned.length
-            || owned.some((record) => !submitted.has(record.id))
-          ) {
-            throw apiError("Wardrobe order must include each of this user's items exactly once.", 409, "incomplete_wardrobe_order");
-          }
-          const positions = new Map(input.ids.map((id, index) => [id, index]));
-          for (const record of records) {
-            if (record.userId === user.id) record.customOrder = positions.get(record.id);
-          }
-          await atomicJson(importedFile, records);
+          await withLibrary(async () => {
+            const records = await loadImported();
+            const owned = records.filter((record) => record.userId === user.id);
+            const submitted = new Set(input.ids);
+            if (
+              submitted.size !== input.ids.length
+              || input.ids.length !== owned.length
+              || owned.some((record) => !submitted.has(record.id))
+            ) {
+              throw apiError("Wardrobe order must include each of this user's items exactly once.", 409, "incomplete_wardrobe_order");
+            }
+            const positions = new Map(input.ids.map((id, index) => [id, index]));
+            for (const record of records) {
+              if (record.userId === user.id) record.customOrder = positions.get(record.id);
+            }
+            await saveImported(records);
+          });
           orderedIds = input.ids;
         }
 
         let profile = user;
         if (changingMode) {
-          const store = await loadUsersStore();
-          const index = store.users.findIndex((candidate) => candidate.id === user.id);
-          if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
-          store.users[index] = {
-            ...store.users[index],
-            wardrobeSortMode: input.mode === "color" ? "custom" : input.mode,
-            wardrobeGroupMode: input.mode === "color" ? "color" : store.users[index].wardrobeGroupMode,
-          };
-          profile = store.users[index];
-          await saveUsersStore(store);
+          profile = await withUsers(async () => {
+            const store = await loadUsersStore();
+            const index = store.users.findIndex((candidate) => candidate.id === user.id);
+            if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+            store.users[index] = {
+              ...store.users[index],
+              wardrobeSortMode: input.mode === "color" ? "custom" : input.mode,
+              wardrobeGroupMode: input.mode === "color" ? "color" : store.users[index].wardrobeGroupMode,
+            };
+            await saveUsersStore(store);
+            return store.users[index];
+          });
         }
 
         console.info(`[wardrobe] Saved ${user.name}'s wardrobe organization${changingMode ? ` (${input.mode})` : ""}${changingOrder ? ` with ${orderedIds.length} items` : ""}.`);
@@ -4347,42 +4492,45 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (garmentVariantMatch && req.method === "POST") {
         const input = await body(req, 18 * 1024 * 1024);
         const image = decodeImage(input);
-        const records = await loadImported();
-        const index = records.findIndex((record) => record.id === garmentVariantMatch[1] && record.userId === user.id);
-        if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
-        const primaryColor = typeof input.primaryColor === "string" && HEX_COLOR.test(input.primaryColor)
-          ? input.primaryColor.toLowerCase()
-          : records[index].color;
-        const secondaryColor = typeof input.secondaryColor === "string" && HEX_COLOR.test(input.secondaryColor)
-          ? input.secondaryColor.toLowerCase()
-          : null;
-        const variantId = randomUUID();
-        const variantName = `${garmentVariantMatch[1]}-variant-${variantId}.png`;
-        const variantBytes = await sharp(image.data).rotate().png().toBuffer();
-        await atomicFile(path.join(libraryAssetDir, variantName), variantBytes);
-        const variantImage = libraryAssetUrl(variantName);
-        const [preview, thumbnail] = await Promise.all([
-          safeLibraryVariant(variantImage, "preview", `${records[index].name} color version`),
-          safeLibraryVariant(variantImage, "thumbnail", `${records[index].name} color version thumbnail`),
-        ]);
-        const variant = {
-          id: variantId,
-          image: variantImage,
-          preview: preview || null,
-          thumbnail: thumbnail || null,
-          primaryColor,
-          secondaryColor,
-          primaryThreshold: normalizeVariantThreshold(input.primaryThreshold),
-          secondaryThreshold: normalizeVariantThreshold(input.secondaryThreshold),
-          createdAt: new Date().toISOString(),
-        };
-        records[index] = {
-          ...records[index],
-          colorVariants: [...garmentColorVariants(records[index]), variant],
-          updatedAt: variant.createdAt,
-        };
-        await atomicJson(importedFile, records);
-        return json(res, 201, publicImportedRecord(records[index], user.id));
+        const saved = await withLibrary(async () => {
+          const records = await loadImported();
+          const index = records.findIndex((record) => record.id === garmentVariantMatch[1] && record.userId === user.id);
+          if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+          const primaryColor = typeof input.primaryColor === "string" && HEX_COLOR.test(input.primaryColor)
+            ? input.primaryColor.toLowerCase()
+            : records[index].color;
+          const secondaryColor = typeof input.secondaryColor === "string" && HEX_COLOR.test(input.secondaryColor)
+            ? input.secondaryColor.toLowerCase()
+            : null;
+          const variantId = randomUUID();
+          const variantName = `${garmentVariantMatch[1]}-variant-${variantId}.png`;
+          const variantBytes = await sharp(image.data).rotate().png().toBuffer();
+          await atomicFile(path.join(libraryAssetDir, variantName), variantBytes);
+          const variantImage = libraryAssetUrl(variantName);
+          const [preview, thumbnail] = await Promise.all([
+            safeLibraryVariant(variantImage, "preview", `${records[index].name} color version`),
+            safeLibraryVariant(variantImage, "thumbnail", `${records[index].name} color version thumbnail`),
+          ]);
+          const variant = {
+            id: variantId,
+            image: variantImage,
+            preview: preview || null,
+            thumbnail: thumbnail || null,
+            primaryColor,
+            secondaryColor,
+            primaryThreshold: normalizeVariantThreshold(input.primaryThreshold),
+            secondaryThreshold: normalizeVariantThreshold(input.secondaryThreshold),
+            createdAt: new Date().toISOString(),
+          };
+          records[index] = {
+            ...records[index],
+            colorVariants: [...garmentColorVariants(records[index]), variant],
+            updatedAt: variant.createdAt,
+          };
+          await saveImported(records);
+          return records[index];
+        });
+        return json(res, 201, publicImportedRecord(saved, user.id));
       }
       const modeledLookMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/modeled\/([a-z0-9-]{1,80})$/i);
       if (modeledLookMatch && req.method === "DELETE") {
@@ -4392,53 +4540,56 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (wardrobeItemMatch && !wardrobeItemMatch[2] && req.method === "PATCH") {
         const id = wardrobeItemMatch[1];
         const input = await body(req, 32 * 1024);
-        const records = await loadImported();
-        const index = records.findIndex((record) => record.id === id && record.userId === user.id);
-        if (index < 0) return json(res, 404, { error: "Imported wardrobe item not found" });
-        const metadata = normalizeMetadata({ ...records[index], ...input });
-        records[index] = {
-          ...records[index],
-          name: metadata.name,
-          part: metadata.part,
-          color: metadata.color,
-          secondaryColor: metadata.secondaryColor,
-          brand: metadata.brand,
-          purchaseMonth: metadata.purchaseMonth,
-          purchasePrice: metadata.purchasePrice,
-          secondHand: metadata.secondHand,
-          acquiredFree: metadata.acquiredFree,
-          palette: [metadata.color, metadata.secondaryColor].filter(Boolean),
-          tags: metadata.tags,
-          sizes: metadata.sizes,
-          fits: metadata.fits,
-          materials: metadata.materials,
-          seasons: metadata.seasons,
-          updatedAt: new Date().toISOString(),
-        };
-        await atomicJson(importedFile, records);
-        return json(res, 200, publicImportedRecord(records[index], user.id));
+        const updated = await withLibrary(async () => {
+          const records = await loadImported();
+          const index = records.findIndex((record) => record.id === id && record.userId === user.id);
+          if (index < 0) throw apiError("Imported wardrobe item not found", 404, "wardrobe_item_not_found");
+          const metadata = normalizeMetadata({ ...records[index], ...input });
+          records[index] = {
+            ...records[index],
+            name: metadata.name,
+            part: metadata.part,
+            color: metadata.color,
+            secondaryColor: metadata.secondaryColor,
+            brand: metadata.brand,
+            purchaseMonth: metadata.purchaseMonth,
+            purchasePrice: metadata.purchasePrice,
+            secondHand: metadata.secondHand,
+            acquiredFree: metadata.acquiredFree,
+            palette: [metadata.color, metadata.secondaryColor].filter(Boolean),
+            tags: metadata.tags,
+            sizes: metadata.sizes,
+            fits: metadata.fits,
+            materials: metadata.materials,
+            seasons: metadata.seasons,
+            updatedAt: new Date().toISOString(),
+          };
+          await saveImported(records);
+          return records[index];
+        });
+        return json(res, 200, publicImportedRecord(updated, user.id));
       }
       if (wardrobeItemMatch && !wardrobeItemMatch[2] && req.method === "DELETE") {
         const id = wardrobeItemMatch[1];
-        const records = await loadImported();
-        const record = records.find((candidate) => candidate.id === id && candidate.userId === user.id);
-        const next = records.filter((record) => record.id !== id || record.userId !== user.id);
-        if (next.length === records.length) return json(res, 404, { error: "Imported wardrobe item not found" });
-        await atomicJson(importedFile, next);
-        const assets = new Set(importedRecordAssets(record)
+        const removed = await withLibrary(async () => {
+          const records = await loadImported();
+          const record = records.find((candidate) => candidate.id === id && candidate.userId === user.id);
+          const next = records.filter((candidate) => candidate.id !== id || candidate.userId !== user.id);
+          if (next.length === records.length) throw apiError("Imported wardrobe item not found", 404, "wardrobe_item_not_found");
+          await saveImported(next);
+          return record;
+        });
+        const assets = new Set(importedRecordAssets(removed)
           .map((asset) => path.basename(new URL(asset, "http://localhost").pathname)));
         await Promise.all([...assets].map((fileName) => rm(path.join(libraryAssetDir, fileName), { force: true })));
         return json(res, 200, { deleted: true, id });
       }
       const libraryAssetMatch = url.pathname.match(/^\/api\/import\/library\/([\w.-]+)$/i);
       if (libraryAssetMatch && req.method === "GET") {
-        const records = await loadImported();
-        const profileStore = await loadUsersStore();
-        const profile = profileStore.users.find((candidate) => candidate.id === user.id);
         const requestedAsset = libraryAssetMatch[1];
-        const allowed = records.some((record) => record.userId === user.id && importedRecordAssets(record)
-          .some((asset) => path.basename(new URL(asset, "http://localhost").pathname) === requestedAsset))
-          || wardrobePlanAssets(profile?.wardrobePlans).some(
+        const ownedAssets = await libraryAssetIndex();
+        const allowed = ownedAssets.get(user.id)?.has(requestedAsset)
+          || wardrobePlanAssets(user.wardrobePlans).some(
             (asset) => path.basename(new URL(asset, "http://localhost").pathname) === requestedAsset,
           );
         if (!allowed) throw apiError("Wardrobe image not found.", 404, "wardrobe_image_not_found");
@@ -4503,7 +4654,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const normalizedImage = await normalizeImage(image.data);
         const provider = providerWithProfilePreferences(aiProvider(user.id), user);
         const analyzeImage = provider.id === "openrouter" ? openRouterAnalyze : openAIAnalyze;
-        const analysisImage = await prepareProviderImage(normalizedImage);
+        const analysisImage = await prepareProviderImage(normalizedImage, analysisMaxEdge());
         console.info(`[wardrobe] Analyzing import with ${provider.label} / ${provider.visionModel}...`);
         let detected;
         let providerDetected;
