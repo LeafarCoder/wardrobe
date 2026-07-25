@@ -529,8 +529,23 @@ export function providerResponseError(response, result, { provider, model, opera
   if (response.status === 403) {
     return apiError(`${label} denied access to ${model}. Check the API key's model permissions or choose another model in .env.`, 403, `${provider.id}_model_forbidden`);
   }
+  // OpenRouter answers a routing dead end with 404 as well, so this has to be
+  // separated from a genuinely unknown model or the message sends the reader to
+  // check a model name that was never the problem.
+  const routingMetadata = result.error?.metadata || nestedError?.metadata || {};
+  const requestedProviders = Array.isArray(routingMetadata.requested_providers) ? routingMetadata.requested_providers : [];
+  const availableProviders = Array.isArray(routingMetadata.available_providers) ? routingMetadata.available_providers : [];
+  if (requestedProviders.length || /no allowed providers|no endpoints found/i.test(signal)) {
+    const asked = requestedProviders.length ? ` Wardrobe asked for ${requestedProviders.join(", ")}.` : "";
+    const serves = availableProviders.length ? ` ${model} is served by ${availableProviders.join(", ")}.` : "";
+    return apiError(
+      `${label} has no allowed provider for ${model}.${asked}${serves} Remove the provider override for this task (OPENROUTER_GARMENT_PROVIDER, OPENROUTER_MODELED_PROVIDER, or OPENROUTER_IMAGE_PROVIDER) so Wardrobe can route it automatically.`,
+      400,
+      "openrouter_provider_unavailable",
+    );
+  }
   if (response.status === 404 || /model.*(not found|does not exist)/i.test(detail)) {
-    return apiError(`${label} could not find or access ${model}. Check the model name in .env, then restart the app.`, 400, `${provider.id}_model_not_found`);
+    return apiError(`${label} could not find or access ${model}. Check that the model id is still offered by ${label}, then choose another model for this task.`, 400, `${provider.id}_model_not_found`);
   }
   if (response.status === 429 && /insufficient_quota|quota|billing|credits/i.test(signal)) {
     return apiError(`The ${label} account has no available credit. Check its credits and spending limits, then try again.`, 429, `${provider.id}_quota_exceeded`);
@@ -1987,7 +2002,37 @@ export function openRouterHeaders(provider) {
   };
 }
 
-function openRouterImageRouting(provider, model, fallbackFrom = "", operation = "generation") {
+// A provider override is configured per task, but the model behind that task can
+// be changed at any time from the profile's AI preferences. Pinning a provider
+// that cannot serve the chosen model makes OpenRouter reject the request
+// outright, so an override is only honored when it belongs to that model's
+// provider family; otherwise routing falls back to the automatic choice.
+const MODEL_PROVIDER_FAMILIES = [
+  ["google/", ["google-vertex", "google-ai-studio"]],
+  ["black-forest-labs/", ["black-forest-labs"]],
+  ["bytedance-seed/", ["seed", "bytedance"]],
+];
+
+export function providerSlugSuitsModel(slug, model) {
+  const family = MODEL_PROVIDER_FAMILIES.find(([prefix]) => String(model || "").startsWith(prefix))?.[1];
+  if (!family) return true;
+  const base = String(slug || "").split("/")[0].trim().toLowerCase();
+  return Boolean(base) && family.includes(base);
+}
+
+export function openRouterProviderPin(configuredProvider, model) {
+  const configured = String(configuredProvider || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const suitable = configured.filter((slug) => providerSlugSuitsModel(slug, model));
+  if (configured.length && !suitable.length) {
+    console.warn(`[wardrobe:ai] provider override ignored | model=${cleanLogValue(model)} | configured=${cleanLogValue(configured.join(","))} | reason=cannot_serve_model`);
+  }
+  return suitable;
+}
+
+export function openRouterImageRouting(provider, model, fallbackFrom = "", operation = "generation") {
   const configuredProvider = fallbackFrom && model.startsWith("bytedance-seed/")
     ? provider.imageFallbackProvider
     : fallbackFrom
@@ -1995,10 +2040,7 @@ function openRouterImageRouting(provider, model, fallbackFrom = "", operation = 
       : operation === "garment"
         ? provider.garmentProvider || (model === OPENROUTER_KLEIN_4B ? "black-forest-labs" : provider.imageProvider)
         : provider.modeledProvider || provider.imageProvider;
-  const configured = String(configuredProvider || "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const configured = openRouterProviderPin(configuredProvider, model);
   const only = configured.length
     ? configured
     : provider.zdr && model.startsWith("google/")
