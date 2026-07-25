@@ -204,7 +204,10 @@ export function LightSelect({
               >
                 <span className="light-select__value">
                   {option.icon && <span className="light-select__icon" aria-hidden="true">{option.icon}</span>}
-                  <span>{option.label}</span>
+                  <span className="light-select__option-copy">
+                    <span>{option.label}</span>
+                    {option.meta && <small>{option.meta}</small>}
+                  </span>
                 </span>
                 {option.value === String(value ?? "") && <Check size={14} weight="bold" aria-hidden="true" />}
               </button>

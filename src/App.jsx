@@ -3038,14 +3038,23 @@ function ProfileAiEditor({ value, user, onChange }) {
                   onChange={(model) => update(task.id, model)}
                   options={[
                     { value: "", label: tr("Recommended") },
-                    ...task.options.map((option) => ({ value: option.id, label: `${option.label} · ${tr(option.badge)}` })),
+                    ...task.options.map((option) => ({
+                      value: option.id,
+                      label: `${option.label} · ${tr(option.badge)}`,
+                      meta: option.pricing,
+                      keywords: `${option.id} ${option.badge} ${option.pricing}`,
+                    })),
                   ]}
                   ariaLabel={`${tr(task.label)} · ${tr("Preferred model")}`}
+                  className="profile-ai-model-select"
                 />
               </div>
               <aside className={selectedOption ? "" : "is-default"}>
                 <strong>{tr(selectedOption?.badge || "Recommended")}</strong>
-                <span>{tr(selectedOption?.note || "Uses the app’s current recommended choice for this task.")}</span>
+                <span>
+                  {selectedOption?.pricing && <small className="profile-ai-selected-price">{selectedOption.pricing}</small>}
+                  {tr(selectedOption?.note || "Uses the app’s current recommended choice for this task.")}
+                </span>
                 {selectedOption?.zeroDataRetention === false && (
                   <InfoTooltip className="profile-zdr-help" label={tr("What zero data retention means")}>
                     {tr("Zero data retention means the AI provider processes your request without storing the prompt or images after it is completed. Without this protection, the provider may keep your images or request data according to its own policy.")}

@@ -173,6 +173,30 @@
   font-weight: 620;
 }
 
+.light-select__option-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.light-select__option-copy > span,
+.light-select__option-copy > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.light-select__option-copy > small {
+  color: var(--muted, #726d65);
+  font-size: 8px;
+  font-weight: 430;
+  line-height: 1.25;
+}
+
+.light-select__option:has(.light-select__option-copy small) {
+  min-height: 50px;
+}
+
 .light-select__option[aria-selected="true"] .light-select__icon {
   color: var(--ink, #201f1c);
 }

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   AI_TASKS,
   formatAiCost,
+  migrateAiModelId,
   normalizeAiPreferences,
   operationGroup,
   summarizeAiUsage,
@@ -18,10 +19,29 @@ test("normalizes independent model choices for every AI task", () => {
     plannerModel: "not a model id",
   });
 
-  assert.equal(preferences.analysisModel, "google/gemini-3.1-flash");
+  assert.equal(preferences.analysisModel, "google/gemini-3.6-flash");
   assert.equal(preferences.garmentModel, "black-forest-labs/flux.2-klein-4b");
   assert.equal(preferences.modeledMultiReferenceModel, "google/gemini-3.1-flash-image");
   assert.equal(preferences.plannerModel, "");
+});
+
+test("migrates the retired Gemini 3.1 Flash id to a live higher-quality route", () => {
+  assert.equal(migrateAiModelId("google/gemini-3.1-flash"), "google/gemini-3.6-flash");
+  assert.equal(migrateAiModelId("google/gemini-3.1-flash-lite"), "google/gemini-3.1-flash-lite");
+});
+
+test("offers only compatible live models for each AI task and includes pricing", () => {
+  const analysis = AI_TASKS.find((task) => task.id === "analysisModel");
+  const garment = AI_TASKS.find((task) => task.id === "garmentModel");
+  const planner = AI_TASKS.find((task) => task.id === "plannerModel");
+
+  assert.ok(analysis.options.some((option) => option.id === "google/gemini-3.6-flash"));
+  assert.ok(analysis.options.some((option) => option.id === "google/gemini-3.5-flash"));
+  assert.ok(!analysis.options.some((option) => option.id.endsWith("-image")));
+  assert.ok(garment.options.some((option) => option.id === "google/gemini-3-pro-image"));
+  assert.ok(garment.options.every((option) => option.pricing));
+  assert.ok(!planner.options.some((option) => option.id.endsWith("-image")));
+  assert.ok(AI_TASKS.every((task) => task.options.every((option) => option.pricing)));
 });
 
 test("clearly marks the garment option that may retain uploaded images", () => {
@@ -60,7 +80,7 @@ test("applies personal model choices only to OpenRouter and language to every pr
   };
 
   const selected = providerWithProfilePreferences(base, profile);
-  assert.equal(selected.visionModel, "google/gemini-3.1-flash");
+  assert.equal(selected.visionModel, "google/gemini-3.6-flash");
   assert.equal(selected.garmentModel, "default/garment");
   assert.equal(selected.modeledModel, "google/gemini-3.1-flash-image");
   assert.equal(selected.modeledMultiReferenceModel, "default/multi");

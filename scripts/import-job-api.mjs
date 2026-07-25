@@ -25,6 +25,7 @@ import {
 } from "../src/wardrobe-discovery.js";
 import { garmentColorVariants, normalizeVariantThreshold } from "../src/garment-variants.js";
 import {
+  migrateAiModelId,
   normalizeAiPreferences,
   operationGroup,
   summarizeAiUsage,
@@ -2653,12 +2654,12 @@ export function wardrobeImportApi(options = {}) {
         appTitle: setting("OPENROUTER_APP_TITLE", "Wardrobe").trim(),
         userId,
         recordUsage: recordAiUsage,
-        visionModel: setting("OPENROUTER_VISION_MODEL", "google/gemini-3.1-flash-lite"),
-        plannerModel: setting("OPENROUTER_PLANNER_MODEL", setting("OPENROUTER_VISION_MODEL", "google/gemini-3.1-flash-lite")),
-        plannerFallbackModels: parseModelList(setting("OPENROUTER_PLANNER_FALLBACK_MODELS", "google/gemini-2.5-flash-lite")),
-        garmentModel: setting("OPENROUTER_GARMENT_MODEL", imageModel || "google/gemini-3.1-flash-lite-image"),
-        modeledModel: setting("OPENROUTER_MODELED_MODEL", imageModel || "google/gemini-3.1-flash-lite-image"),
-        modeledMultiReferenceModel: setting("OPENROUTER_MODELED_MULTI_REFERENCE_MODEL", "google/gemini-3.1-flash-image"),
+        visionModel: migrateAiModelId(setting("OPENROUTER_VISION_MODEL", "google/gemini-3.1-flash-lite")),
+        plannerModel: migrateAiModelId(setting("OPENROUTER_PLANNER_MODEL", setting("OPENROUTER_VISION_MODEL", "google/gemini-3.1-flash-lite"))),
+        plannerFallbackModels: parseModelList(setting("OPENROUTER_PLANNER_FALLBACK_MODELS", "google/gemini-2.5-flash-lite")).map(migrateAiModelId),
+        garmentModel: migrateAiModelId(setting("OPENROUTER_GARMENT_MODEL", imageModel || "google/gemini-3.1-flash-lite-image")),
+        modeledModel: migrateAiModelId(setting("OPENROUTER_MODELED_MODEL", imageModel || "google/gemini-3.1-flash-lite-image")),
+        modeledMultiReferenceModel: migrateAiModelId(setting("OPENROUTER_MODELED_MULTI_REFERENCE_MODEL", "google/gemini-3.1-flash-image")),
         imageFallbackModels: parseModelList(setting("OPENROUTER_IMAGE_FALLBACK_MODELS", "bytedance-seed/seedream-4.5")),
         imageQuality: setting("OPENROUTER_IMAGE_QUALITY", "auto"),
         imageResolution: setting("OPENROUTER_IMAGE_RESOLUTION", "1K"),

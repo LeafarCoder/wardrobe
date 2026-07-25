@@ -5,8 +5,10 @@ export const AI_TASKS = [
     label: "Photo analysis",
     description: "Finds every garment, draws its crop box, and suggests its name, category, colors, tags, materials, fit, and seasons.",
     options: [
-      { id: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", badge: "Cheapest", note: "Recommended for most imports and bulk analysis." },
-      { id: "google/gemini-3.1-flash", label: "Gemini 3.1 Flash", badge: "More accurate", note: "Better for crowded outfits, overlaps, and difficult photos." },
+      { id: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", badge: "Lowest cost", pricing: "Input $0.25 · output $1.50 / 1M tokens", note: "Fast, inexpensive multimodal analysis for clear photos and bulk imports." },
+      { id: "google/gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite", badge: "Recommended", pricing: "Input $0.30 · output $2.50 / 1M tokens", note: "The best default balance for identifying garments and returning structured metadata." },
+      { id: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash", badge: "High quality", pricing: "Input $1.50 · output $9.00 / 1M tokens", note: "Stronger multimodal reasoning for crowded outfits, overlaps, and ambiguous accessories." },
+      { id: "google/gemini-3.6-flash", label: "Gemini 3.6 Flash", badge: "Latest quality", pricing: "Input $1.50 · output $7.50 / 1M tokens", note: "The latest top-tier Flash option for the most difficult photos and crop decisions." },
     ],
   },
   {
@@ -18,12 +20,14 @@ export const AI_TASKS = [
       {
         id: "black-forest-labs/flux.2-klein-4b",
         label: "FLUX.2 Klein 4B",
-        badge: "Cheapest",
+        badge: "Lowest cost",
+        pricing: "Input references included · output $0.014 / megapixel",
         note: "Lowest price. This route does not offer zero data retention, so the provider may keep your garment images or request data under its own policy.",
         zeroDataRetention: false,
       },
-      { id: "google/gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite Image", badge: "Private economy", note: "Use when zero-data-retention matters more than the lowest price." },
-      { id: "google/gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image", badge: "Best detail", note: "Higher fidelity for complex patterns and construction." },
+      { id: "google/gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite Image", badge: "Recommended", pricing: "Input $0.25 / 1M text tokens · output $30 / 1M image tokens", note: "Cost-efficient image editing with up to 14 references and zero-data-retention routes." },
+      { id: "google/gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image", badge: "Better detail", pricing: "Input $0.50 / 1M text tokens · output $60 / 1M image tokens", note: "Better construction and pattern fidelity, with up to 14 input references." },
+      { id: "google/gemini-3-pro-image", label: "Gemini 3 Pro Image", badge: "Highest quality", pricing: "Input $2.00 / 1M image tokens · output $120 / 1M image tokens", note: "Top-tier reconstruction when small accessories or intricate details matter more than price." },
     ],
   },
   {
@@ -32,9 +36,10 @@ export const AI_TASKS = [
     label: "Modeled look · one reference",
     description: "Creates a styled editorial image using one identity photo and the exact garment.",
     options: [
-      { id: "google/gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite Image", badge: "Economy", note: "Recommended when one clear identity photo is available." },
-      { id: "google/gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image", badge: "Better match", note: "Improves face, fabric, and garment consistency." },
-      { id: "bytedance-seed/seedream-4.5", label: "Seedream 4.5", badge: "Alternative", note: "Useful when the primary provider refuses an otherwise ordinary fashion image." },
+      { id: "google/gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite Image", badge: "Lowest cost", pricing: "Input $0.25 / 1M text tokens · output $30 / 1M image tokens", note: "Recommended when one clear identity photo is available and economy matters." },
+      { id: "bytedance-seed/seedream-4.5", label: "Seedream 4.5", badge: "Flat price", pricing: "Input references included · output $0.04 / image", note: "A predictable-price alternative when another provider refuses an ordinary fashion image." },
+      { id: "google/gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image", badge: "Recommended", pricing: "Input $0.50 / 1M text tokens · output $60 / 1M image tokens", note: "Stronger face, fabric, and garment consistency with flexible output sizes." },
+      { id: "google/gemini-3-pro-image", label: "Gemini 3 Pro Image", badge: "Highest quality", pricing: "Input $2.00 / 1M image tokens · output $120 / 1M image tokens", note: "Top-tier editorial fidelity when price is secondary." },
     ],
   },
   {
@@ -43,9 +48,10 @@ export const AI_TASKS = [
     label: "Modeled look · two or three references",
     description: "Combines complementary identity photos for a stronger face and body match.",
     options: [
-      { id: "google/gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite Image", badge: "Cheapest", note: "Lower cost, with less reliable multi-reference identity matching." },
-      { id: "google/gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image", badge: "Recommended", note: "Best balance for multiple identity references." },
-      { id: "google/gemini-3-pro-image", label: "Gemini 3 Pro Image", badge: "Highest quality", note: "Use for the strongest fidelity when price is secondary." },
+      { id: "google/gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite Image", badge: "Lowest cost", pricing: "Input $0.25 / 1M text tokens · output $30 / 1M image tokens", note: "Accepts up to 14 references, but identity matching is less reliable than the stronger models." },
+      { id: "bytedance-seed/seedream-4.5", label: "Seedream 4.5", badge: "Flat price", pricing: "Input references included · output $0.04 / image", note: "Supports up to 14 references at a predictable price and is useful as an alternative route." },
+      { id: "google/gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image", badge: "Recommended", pricing: "Input $0.50 / 1M text tokens · output $60 / 1M image tokens", note: "Best balance for combining two or three identity references with the garment." },
+      { id: "google/gemini-3-pro-image", label: "Gemini 3 Pro Image", badge: "Highest quality", pricing: "Input $2.00 / 1M image tokens · output $120 / 1M image tokens", note: "Strongest multi-reference fidelity when price is secondary." },
     ],
   },
   {
@@ -54,9 +60,11 @@ export const AI_TASKS = [
     label: "Trip and event planner",
     description: "Uses wardrobe metadata, destination, dates, climate expectations, and preferences to build outfits and a missing-items list.",
     options: [
-      { id: "google/gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", badge: "Cheapest private", note: "Lowest-cost option that does not retain your request data, and a reliable choice for routine plans." },
-      { id: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", badge: "Recommended", note: "Better reasoning while remaining inexpensive for routine packing and event plans." },
-      { id: "google/gemini-3.1-flash", label: "Gemini 3.1 Flash", badge: "More thoughtful", note: "Better for long trips, mixed dress codes, and larger wardrobes." },
+      { id: "google/gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", badge: "Lowest cost", pricing: "Input $0.10 · output $0.40 / 1M tokens", note: "The least expensive reliable option for straightforward events and short trips." },
+      { id: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", badge: "Economy", pricing: "Input $0.25 · output $1.50 / 1M tokens", note: "Good inexpensive reasoning for routine packing and event plans." },
+      { id: "google/gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite", badge: "Recommended", pricing: "Input $0.30 · output $2.50 / 1M tokens", note: "Best default balance for varied outfits, climate context, and missing-item suggestions." },
+      { id: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash", badge: "High quality", pricing: "Input $1.50 · output $9.00 / 1M tokens", note: "More deliberate planning for longer trips, mixed dress codes, and large wardrobes." },
+      { id: "google/gemini-3.6-flash", label: "Gemini 3.6 Flash", badge: "Latest quality", pricing: "Input $1.50 · output $7.50 / 1M tokens", note: "Latest top-tier Flash reasoning for complex itineraries and maximum variety." },
     ],
   },
 ];
@@ -65,13 +73,20 @@ export const DEFAULT_AI_PREFERENCES = Object.freeze(Object.fromEntries(
   AI_TASKS.map((task) => [task.id, ""]),
 ));
 
-const MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
+export const LEGACY_AI_MODEL_IDS = Object.freeze({
+  "google/gemini-3.1-flash": "google/gemini-3.6-flash",
+});
+
+export function migrateAiModelId(model) {
+  const normalized = typeof model === "string" ? model.trim().slice(0, 160) : "";
+  return LEGACY_AI_MODEL_IDS[normalized] || normalized;
+}
 
 export function normalizeAiPreferences(value = {}) {
   const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   return Object.fromEntries(AI_TASKS.map((task) => {
-    const model = typeof input[task.id] === "string" ? input[task.id].trim().slice(0, 160) : "";
-    return [task.id, MODEL_ID.test(model) ? model : ""];
+    const model = migrateAiModelId(input[task.id]);
+    return [task.id, task.options.some((option) => option.id === model) ? model : ""];
   }));
 }
 
