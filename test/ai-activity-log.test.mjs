@@ -103,6 +103,69 @@ test("activities carry an image so a filename like IMG_2026… is recognizable",
   assert.equal(importActivity.items.find((item) => item.garmentId === "import-a").image, "/api/import/library/import-a-thumb.webp");
 });
 
+test("finds the uploaded photo of an import saved before importUploadId was preserved", () => {
+  // Records written before the field was kept only carry importJobId.
+  const legacyGarment = {
+    ...GARMENT,
+    importJobId: "job-1",
+    sourcePhotos: [{
+      id: "original",
+      image: "/api/import/library/import-a-original.png",
+      preview: "/api/import/library/import-a-original-preview.webp",
+      importJobId: "job-1",
+      importUploadId: null,
+    }],
+  };
+  const [activity] = aiUsageActivities(
+    [entry("u1", "analysis", "analysis", 0.002, "2026-07-21T10:00:00.000Z", { uploadId: "upload-1" })],
+    { uploads: [UPLOAD], garments: [legacyGarment], plans: [] },
+  );
+
+  assert.equal(activity.sourceImage, "/api/import/library/import-a-original-preview.webp");
+  assert.equal(activity.image, "/api/import/library/import-a-original-preview.webp");
+});
+
+test("an import shows the uploaded photo next to what was generated from it", () => {
+  const importActivity = activitiesFor().find((activity) => activity.type === "import");
+  const kinds = importActivity.previews.map((preview) => preview.kind);
+
+  assert.equal(importActivity.previews[0].kind, "source");
+  assert.equal(importActivity.previews[0].image, "/api/import/library/import-a-original-preview.webp");
+  assert.equal(kinds.includes("generated"), true);
+  assert.equal(
+    importActivity.previews.find((preview) => preview.kind === "generated").image,
+    "/api/import/library/import-a-thumb.webp",
+  );
+  assert.equal(importActivity.previews.every((preview) => preview.image), true);
+});
+
+test("modeled and planner activities preview their generated images too", () => {
+  const activities = activitiesFor();
+  const modeled = activities.find((activity) => activity.type === "modeled");
+  const planner = activities.find((activity) => activity.type === "planner");
+
+  assert.equal(modeled.previews[0].kind, "source");
+  assert.equal(planner.previews.length, 1);
+  assert.equal(planner.previews[0].kind, "generated");
+  assert.equal(planner.previews[0].image, "/api/import/library/plan-look-preview.webp");
+});
+
+test("previews stay bounded so one busy upload cannot bloat the payload", () => {
+  const manyItems = Array.from({ length: 30 }, (_, index) => ({
+    jobId: `job-${index}`,
+    garmentId: `g-${index}`,
+    name: `Garment ${index}`,
+    outcome: "added",
+  }));
+  const manyGarments = manyItems.map((item) => ({ id: item.garmentId, name: item.name, thumbnail: `/thumb-${item.garmentId}.webp` }));
+  const [activity] = aiUsageActivities(
+    [entry("u1", "analysis", "analysis", 0.002, "2026-07-21T10:00:00.000Z", { uploadId: "upload-many" })],
+    { uploads: [{ ...UPLOAD, id: "upload-many", items: manyItems }], garments: manyGarments, plans: [] },
+  );
+
+  assert.equal(activity.previews.length, 12);
+});
+
 test("an import falls back to a garment image when the source photo predates upload linking", () => {
   const garment = { ...GARMENT, sourcePhotos: [] };
   const [activity] = aiUsageActivities(

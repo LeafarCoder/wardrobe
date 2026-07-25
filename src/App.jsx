@@ -3023,6 +3023,25 @@ function AiActivityCard({ activity, defaultOpen }) {
       </summary>
       <div className="ai-activity__body">
         <AiActivityDetails activity={activity} />
+        {!!activity.previews?.length && (
+          <div className="ai-activity__previews">
+            {activity.previews.map((preview) => (
+              <figure key={`${preview.kind}-${preview.id}`} className={`ai-activity__preview is-${preview.kind}`}>
+                <OptimizedImage
+                  className="ai-activity__preview-image"
+                  src={preview.image}
+                  alt={preview.label}
+                  loading="lazy"
+                  decoding="async"
+                />
+                <figcaption>
+                  <small>{tr(preview.kind === "source" ? "Source" : "Generated")}</small>
+                  <span title={preview.label}>{tr(preview.label)}</span>
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        )}
         {!!activity.items?.length && (
           <div className="profile-ai-outcomes">
             <h5>{tr("Garment outcomes")}</h5>

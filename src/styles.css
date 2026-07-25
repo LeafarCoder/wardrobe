@@ -1276,6 +1276,37 @@ button { font: inherit; }
 .ai-activity__metrics span + span { border-left: 1px solid var(--line); }
 .ai-activity__metrics strong { color: var(--ink); font-size: 13px; font-weight: 520; font-variant-numeric: tabular-nums; }
 
+.ai-activity__previews {
+  display: flex;
+  gap: 9px;
+  overflow-x: auto;
+  margin-top: 13px;
+  padding-bottom: 4px;
+}
+
+.ai-activity__preview {
+  flex: 0 0 auto;
+  width: 92px;
+  margin: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.ai-activity__preview-image {
+  width: 92px;
+  height: 92px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: linear-gradient(160deg, #f8f5ef, #eee8de);
+}
+
+.ai-activity__preview.is-source .ai-activity__preview-image { object-fit: cover; }
+
+.ai-activity__preview figcaption { display: grid; gap: 1px; min-width: 0; }
+.ai-activity__preview figcaption small { color: var(--muted); font-size: 7px; letter-spacing: .06em; text-transform: uppercase; }
+.ai-activity__preview figcaption span { overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+
 .ai-activity__outcome-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ai-activity__outcome-name .ai-activity__thumbnail {
   width: 26px;

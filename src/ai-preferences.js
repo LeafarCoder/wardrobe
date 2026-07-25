@@ -157,6 +157,21 @@ function newestTimestamp(entries = [], fallback = null) {
   );
 }
 
+// Finds the photo an import actually came from. Records written before source
+// photos preserved `importUploadId` are matched through the job ids the upload
+// created instead, so older imports still show their original photo.
+export function uploadedPhotoFor(uploadId, items = [], garments = []) {
+  const sourcePhotos = garments.flatMap((garment) => (
+    (Array.isArray(garment.sourcePhotos) ? garment.sourcePhotos : [])
+      .map((photo) => ({ ...photo, importJobId: photo.importJobId || garment.importJobId || null }))
+  ));
+  const byUpload = sourcePhotos.find((photo) => photo.importUploadId === uploadId);
+  if (byUpload) return byUpload;
+  const jobIds = new Set(items.map((item) => item?.jobId).filter(Boolean));
+  if (!jobIds.size) return null;
+  return sourcePhotos.find((photo) => photo.importJobId && jobIds.has(photo.importJobId)) || null;
+}
+
 function activityTotals(requests = []) {
   return {
     requestCount: requests.length,
@@ -238,15 +253,26 @@ export function aiUsageActivities(entries = [], {
       };
     });
     const sourceGarment = detailedItems.find((item) => item.image);
-    const uploadPhoto = garments
-      .flatMap((garment) => (Array.isArray(garment.sourcePhotos) ? garment.sourcePhotos : []))
-      .find((photo) => photo?.importUploadId === uploadId);
+    const uploadPhoto = uploadedPhotoFor(uploadId, items, garments);
+    const uploadImage = uploadPhoto?.preview || uploadPhoto?.image || null;
     activities.push({
       id: `import:${uploadId}`,
       type: "import",
       label: AI_ACTIVITY_LABELS.import,
       title: upload?.fileName || "Uploaded image",
-      image: uploadPhoto?.preview || uploadPhoto?.image || sourceGarment?.image || null,
+      image: uploadImage || sourceGarment?.image || null,
+      sourceImage: uploadImage,
+      previews: [
+        ...(uploadImage ? [{ id: "source", kind: "source", label: "Uploaded photo", image: uploadImage }] : []),
+        ...detailedItems
+          .filter((item) => item.image)
+          .map((item) => ({
+            id: item.garmentId || item.jobId,
+            kind: "generated",
+            label: item.name,
+            image: item.image,
+          })),
+      ].slice(0, 12),
       createdAt: upload?.createdAt || newestTimestamp(requests),
       status: upload?.status || "complete",
       detectedCount: Number.isInteger(upload?.detectedCount) ? upload.detectedCount : items.length,
@@ -263,12 +289,24 @@ export function aiUsageActivities(entries = [], {
 
   for (const [garmentId, requests] of modeledRequests) {
     const garment = garmentById.get(garmentId);
+    const garmentImage = garment?.thumbnail || garment?.imagePreview || garment?.image || null;
+    const looks = Array.isArray(garment?.modeledLooks) ? garment.modeledLooks : [];
     activities.push({
       id: `modeled:${garmentId}`,
       type: "modeled",
       label: AI_ACTIVITY_LABELS.modeled,
       title: garment?.name || requests.find((entry) => entry.itemName)?.itemName || "Modeled look",
-      image: garment?.thumbnail || garment?.imagePreview || garment?.image || null,
+      image: garmentImage,
+      sourceImage: garmentImage,
+      previews: [
+        ...(garmentImage ? [{ id: "garment", kind: "source", label: "Garment", image: garmentImage }] : []),
+        ...looks.map((look) => ({
+          id: look.id,
+          kind: "generated",
+          label: "Modeled look",
+          image: look.preview || look.image,
+        })).filter((preview) => preview.image),
+      ].slice(0, 12),
       createdAt: newestTimestamp(requests),
       garmentId,
       lookCount: requests.filter((entry) => entry.completed).length,
@@ -282,15 +320,23 @@ export function aiUsageActivities(entries = [], {
     const plan = planById.get(planKey);
     const outfitLooks = requests.filter((entry) => entry.operationGroup === "modeled");
     const named = requests.find((entry) => entry.planTitle || entry.itemName);
+    const plannedLooks = (plan?.result?.outfitIdeas || []).flatMap((outfit) => (
+      (outfit.modeledLooks?.length ? outfit.modeledLooks : outfit.modeledLook ? [outfit.modeledLook] : [])
+        .map((look) => ({
+          id: look.id,
+          kind: "generated",
+          label: outfit.name || "Planned outfit",
+          image: look.preview || look.image,
+        }))
+    )).filter((preview) => preview.image);
     activities.push({
       id: `planner:${planKey}`,
       type: "planner",
       label: AI_ACTIVITY_LABELS.planner,
       title: plan?.input?.title || plan?.input?.location || named?.planTitle || named?.itemName || "Wardrobe plan",
-      image: plan?.result?.outfitIdeas
-        ?.flatMap((outfit) => (outfit.modeledLooks?.length ? outfit.modeledLooks : outfit.modeledLook ? [outfit.modeledLook] : []))
-        .map((look) => look.preview || look.image)
-        .find(Boolean) || null,
+      image: plannedLooks[0]?.image || null,
+      sourceImage: null,
+      previews: plannedLooks.slice(0, 12),
       createdAt: plan?.createdAt || newestTimestamp(requests),
       planId: plan?.id || null,
       planKind: plan?.input?.kind || "trip",
@@ -312,6 +358,8 @@ export function aiUsageActivities(entries = [], {
       label: AI_ACTIVITY_LABELS.other,
       title: "Other and earlier requests",
       image: null,
+      sourceImage: null,
+      previews: [],
       createdAt: newestTimestamp(otherRequests),
       items: [],
       requests: otherRequests,
