@@ -8,6 +8,7 @@ import {
   buildGarmentPrompt,
   cropDetailDiagnostics,
   cropDetectedItem,
+  garmentCutoutTransparencyFailure,
   imageVariantFileName,
   prepareGarmentReference,
   prepareProviderImage,
@@ -232,6 +233,43 @@ test("a painted transparency checkerboard counts as no transparency at all", asy
   );
 });
 
+test("rejects a garment left standing on its source photo even when gaps clear the ratio gate", async () => {
+  const size = 320;
+  const raw = Buffer.alloc(size * size * 3);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const index = ((y * size) + x) * 3;
+      const inGarment = Math.abs(x - (size / 2)) < 90 && Math.abs(y - (size / 2)) < 120;
+      if (inGarment) {
+        raw[index] = 142; raw[index + 1] = 150; raw[index + 2] = 160;
+      } else {
+        const noise = 120 + (((x * 7) + (y * 13)) % 60);
+        raw[index] = noise; raw[index + 1] = noise - 6; raw[index + 2] = noise - 14;
+      }
+      if (inGarment && Math.abs(y - (size / 2)) < 110 && Math.abs(x - (size / 2)) > 55) {
+        raw[index] = 0; raw[index + 1] = 255; raw[index + 2] = 0;
+      }
+    }
+  }
+  const onPhoto = await sharp(raw, { raw: { width: size, height: size, channels: 3 } }).png().toBuffer();
+
+  const result = await processChromaBackground(onPhoto, "#00ff00", { protectedColors: ["#8e9196"] });
+
+  assert.ok(
+    result.transparency.transparentRatio >= 0.08,
+    "the keyed gaps alone are enough to clear the overall ratio gate",
+  );
+  assert.equal(result.transparency.borderTransparentRatio, 0);
+  assert.equal(garmentCutoutTransparencyFailure(result.transparency), "opaque-border");
+});
+
+test("the transparency contract is judged the same way wherever a cutout is accepted", () => {
+  assert.equal(garmentCutoutTransparencyFailure({ transparentRatio: 0, borderTransparentRatio: 0 }), "opaque-canvas");
+  assert.equal(garmentCutoutTransparencyFailure({ transparentRatio: 0.2, borderTransparentRatio: 0.1 }), "opaque-border");
+  assert.equal(garmentCutoutTransparencyFailure({ transparentRatio: 0.5, borderTransparentRatio: 1 }), null);
+  assert.equal(garmentCutoutTransparencyFailure({}), "opaque-canvas");
+});
+
 test("a real chroma-key cutout still reports the transparency it has", async () => {
   const size = 256;
   const raw = Buffer.alloc(size * size * 3);
@@ -250,6 +288,8 @@ test("a real chroma-key cutout still reports the transparency it has", async () 
   const result = await processChromaBackground(keyed, "#00ff00", { protectedColors: ["#be282d"] });
 
   assert.ok(result.transparency.transparentRatio > 0.5);
+  assert.equal(result.transparency.borderTransparentRatio, 1);
+  assert.equal(garmentCutoutTransparencyFailure(result.transparency), null);
 });
 
 test("keeps a separately detected scarf out of an outerwear reconstruction", () => {

@@ -1852,6 +1852,25 @@ export async function processChromaBackground(bytes, key, options = {}) {
     else if (data[index] < 247) keyedTranslucentPixels += 1;
   }
   const keyedPixels = info.width * info.height;
+  // The prompt's contract is that nothing outside the product survives, so the
+  // outer ring of a real cutout is transparent. A garment left standing on its
+  // source photo keeps an opaque ring even when gaps inside the silhouette make
+  // the overall ratio look healthy.
+  const alphaAt = (x, y) => data[(((y * info.width) + x) * 4) + 3];
+  let borderPixels = 0;
+  let borderTransparentPixels = 0;
+  for (let x = 0; x < info.width; x += 1) {
+    for (const y of [0, info.height - 1]) {
+      borderPixels += 1;
+      if (alphaAt(x, y) <= 8) borderTransparentPixels += 1;
+    }
+  }
+  for (let y = 1; y < info.height - 1; y += 1) {
+    for (const x of [0, info.width - 1]) {
+      borderPixels += 1;
+      if (alphaAt(x, y) <= 8) borderTransparentPixels += 1;
+    }
+  }
   const keyedOutput = await sharp(data, { raw: info }).png().toBuffer();
   const framedOutput = await frameTransparentGarment(keyedOutput);
   const { data: framedData, info: framedInfo } = await sharp(framedOutput).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -1877,6 +1896,7 @@ export async function processChromaBackground(bytes, key, options = {}) {
     transparentRatio: keyedPixels ? keyedTransparentPixels / keyedPixels : 0,
     translucentPixels: keyedTranslucentPixels,
     translucentRatio: keyedPixels ? keyedTranslucentPixels / keyedPixels : 0,
+    borderTransparentRatio: borderPixels ? borderTransparentPixels / borderPixels : 0,
     // Kept for diagnostics only; never use these to judge whether the model
     // actually produced a cutout.
     framedTransparentPixels: transparentOutputPixels,
@@ -1885,6 +1905,19 @@ export async function processChromaBackground(bytes, key, options = {}) {
     framedTranslucentRatio: outputPixels ? translucentOutputPixels / outputPixels : 0,
   };
   return { bytes: output, verification, transparency, tolerance, edgeFallbackApplied };
+}
+
+// Used by both automatic generation and the manual cleanup accept so a garment
+// can never reach the wardrobe through a path that skips the contract.
+export const GARMENT_MINIMUM_TRANSPARENT_RATIO = 0.08;
+export const GARMENT_MINIMUM_BORDER_TRANSPARENT_RATIO = 0.6;
+
+export function garmentCutoutTransparencyFailure(transparency = {}) {
+  const transparentRatio = Number(transparency.transparentRatio) || 0;
+  const borderTransparentRatio = Number(transparency.borderTransparentRatio) || 0;
+  if (transparentRatio < GARMENT_MINIMUM_TRANSPARENT_RATIO) return "opaque-canvas";
+  if (borderTransparentRatio < GARMENT_MINIMUM_BORDER_TRANSPARENT_RATIO) return "opaque-border";
+  return null;
 }
 
 export async function removeChromaBackground(bytes, key, options = {}) {
@@ -4001,9 +4034,12 @@ Interpret this correction semantically in whatever language it is written. It ov
             const backgroundCheck = await processChromaBackground(candidateBytes, chromaKeyUsed, {
               protectedColors: [current.metadata.color, current.metadata.secondaryColor],
             });
-            if (backgroundCheck.transparency.transparentRatio < 0.08) {
+            const transparencyFailure = garmentCutoutTransparencyFailure(backgroundCheck.transparency);
+            if (transparencyFailure) {
               throw apiError(
-                `The image model returned "${current.metadata.name}" on an opaque background. Wardrobe rejected it and will try a fallback model that can produce a transparent garment cutout.`,
+                transparencyFailure === "opaque-border"
+                  ? `The image model left "${current.metadata.name}" standing on its original background instead of cutting it out. Wardrobe rejected it and will try a fallback model that can produce a transparent garment cutout.`
+                  : `The image model returned "${current.metadata.name}" on an opaque background. Wardrobe rejected it and will try a fallback model that can produce a transparent garment cutout.`,
                 422,
                 "garment_background_not_transparent",
               );
@@ -4985,6 +5021,20 @@ Interpret this correction semantically in whatever language it is written. It ov
         stage.cleanupPreviewUrl = previewUrl;
         stage.updatedAt = new Date().toISOString();
         if (cleanupAction[1] === "cleanup-accept") {
+          // Cleanup exists to make a failed render transparent, so accepting one
+          // that is still opaque would put the very thing this stage rejected
+          // into the wardrobe.
+          const cleanupFailure = garmentCutoutTransparencyFailure(cleaned.transparency);
+          if (cleanupFailure) {
+            await saveJob(job);
+            throw apiError(
+              cleanupFailure === "opaque-border"
+                ? "This cleanup still leaves the original background around the garment. Raise the tolerance, or regenerate the garment instead."
+                : "This cleanup still leaves an opaque background. Raise the tolerance, or regenerate the garment instead.",
+              422,
+              "garment_background_not_transparent",
+            );
+          }
           stage.status = "review";
           stage.decision = null;
           stage.error = null;
