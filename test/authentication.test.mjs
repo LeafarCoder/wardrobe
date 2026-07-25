@@ -1,72 +1,98 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createOAuthStateToken,
   createSessionToken,
-  passwordToken,
-  validSessionToken,
+  parseAllowedAccounts,
+  pkceChallenge,
+  readOAuthStateToken,
+  sessionTokenUser,
 } from "../scripts/import-job-api.mjs";
 
-const PASSWORD = "a-long-shared-household-password";
+const SECRET = "a-long-server-side-session-secret-value";
+const USER = "3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
 const DAY = 24 * 60 * 60 * 1000;
 
-test("accepts a freshly issued session token", () => {
-  assert.equal(validSessionToken(createSessionToken(PASSWORD), PASSWORD), true);
+test("a session names the profile it belongs to", () => {
+  assert.equal(sessionTokenUser(createSessionToken(SECRET, USER), SECRET), USER);
+  assert.equal(sessionTokenUser(createSessionToken(SECRET, "default"), SECRET), "default");
 });
 
-test("rejects a session token issued for another password", () => {
-  const token = createSessionToken(PASSWORD);
-  assert.equal(validSessionToken(token, "a-different-household-password"), false);
+test("a session signed with another secret is refused", () => {
+  const token = createSessionToken(SECRET, USER);
+  assert.equal(sessionTokenUser(token, "a-different-session-secret-value"), null);
 });
 
-test("rejects a session token older than thirty days", () => {
-  const expired = createSessionToken(PASSWORD, Date.now() - (31 * DAY));
-  assert.equal(validSessionToken(expired, PASSWORD), false);
+test("a session cannot be re-pointed at another profile", () => {
+  // Keep the signature, swap the subject: the classic privilege escalation.
+  const [, timestamp, signature] = createSessionToken(SECRET, USER).split(".");
+  const victim = Buffer.from("00000000-0000-4000-8000-000000000000").toString("base64url");
+  assert.equal(sessionTokenUser(`${victim}.${timestamp}.${signature}`, SECRET), null);
 });
 
-test("accepts a session token close to the expiry boundary", () => {
-  const almostExpired = createSessionToken(PASSWORD, Date.now() - (29 * DAY));
-  assert.equal(validSessionToken(almostExpired, PASSWORD), true);
+test("a session expires and cannot be dated into the future", () => {
+  assert.equal(sessionTokenUser(createSessionToken(SECRET, USER, Date.now() - (31 * DAY)), SECRET), null);
+  assert.equal(sessionTokenUser(createSessionToken(SECRET, USER, Date.now() - (29 * DAY)), SECRET), USER);
+  assert.equal(sessionTokenUser(createSessionToken(SECRET, USER, Date.now() + (5 * 60 * 1000)), SECRET), null);
 });
 
-test("rejects a session token issued beyond the allowed clock skew", () => {
-  const future = createSessionToken(PASSWORD, Date.now() + (5 * 60 * 1000));
-  assert.equal(validSessionToken(future, PASSWORD), false);
-});
-
-test("tolerates a small forward clock difference", () => {
-  const slightlyAhead = createSessionToken(PASSWORD, Date.now() + 30_000);
-  assert.equal(validSessionToken(slightlyAhead, PASSWORD), true);
-});
-
-test("rejects a token whose signature was replaced", () => {
-  const [timestamp] = createSessionToken(PASSWORD).split(".");
-  assert.equal(validSessionToken(`${timestamp}.forged-signature`, PASSWORD), false);
-});
-
-test("rejects a token whose timestamp was moved forward under the original signature", () => {
-  const [timestamp, signature] = createSessionToken(PASSWORD, Date.now() - DAY).split(".");
-  const replayed = `${Number(timestamp) + DAY}.${signature}`;
-  assert.equal(validSessionToken(replayed, PASSWORD), false);
-});
-
-test("rejects a token carrying extra dot-separated segments", () => {
-  const token = createSessionToken(PASSWORD);
-  assert.equal(validSessionToken(`${token}.extra`, PASSWORD), false);
-});
-
-test("rejects empty, malformed, and non-string tokens", () => {
-  for (const token of ["", "not-a-token", ".", "abc.def", null, undefined, 42]) {
-    assert.equal(validSessionToken(token, PASSWORD), false);
+test("a malformed session is refused rather than trusted", () => {
+  for (const token of ["", "abc", "a.b", "a.b.c.d", null, undefined, 42]) {
+    assert.equal(sessionTokenUser(token, SECRET), null);
   }
 });
 
-test("password tokens are stable per password and differ between passwords", () => {
-  assert.equal(passwordToken(PASSWORD), passwordToken(PASSWORD));
-  assert.notEqual(passwordToken(PASSWORD), passwordToken(`${PASSWORD}!`));
+test("a session carrying a subject that is not a profile id is refused", () => {
+  const subject = Buffer.from("../../etc/passwd").toString("base64url");
+  const token = createSessionToken(SECRET, "../../etc/passwd");
+  assert.equal(token.startsWith(`${subject}.`), true);
+  assert.equal(sessionTokenUser(token, SECRET), null);
 });
 
-test("password tokens are a fixed length so comparison cannot leak password length", () => {
-  const short = passwordToken("short");
-  const long = passwordToken("a-considerably-longer-household-password-value");
-  assert.equal(short.length, long.length);
+test("the login round trip survives a restart and rejects tampering", () => {
+  const token = createOAuthStateToken(SECRET, { state: "abc", verifier: "xyz" });
+  const restored = readOAuthStateToken(token, SECRET);
+
+  assert.equal(restored.state, "abc");
+  assert.equal(restored.verifier, "xyz");
+  assert.equal(readOAuthStateToken(token, "another-secret"), null);
+  assert.equal(readOAuthStateToken(`${token}x`, SECRET), null);
+});
+
+test("a stale login round trip is refused", () => {
+  const stale = createOAuthStateToken(SECRET, { state: "abc", verifier: "xyz" }, Date.now() - (11 * 60 * 1000));
+  assert.equal(readOAuthStateToken(stale, SECRET), null);
+});
+
+test("the PKCE challenge is the S256 digest of the verifier", () => {
+  const challenge = pkceChallenge("verifier-value");
+  assert.match(challenge, /^[A-Za-z0-9_-]+$/, "must be base64url with no padding");
+  assert.equal(challenge, pkceChallenge("verifier-value"));
+  assert.notEqual(challenge, pkceChallenge("another-verifier"));
+});
+
+test("the allowlist accepts plain addresses and addresses pinned to a profile", () => {
+  const accounts = parseAllowedAccounts("Me@Example.com=default, partner@example.com\nthird@example.com=3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d");
+
+  assert.equal(accounts.get("me@example.com"), "default");
+  assert.equal(accounts.get("partner@example.com"), null);
+  assert.equal(accounts.get("third@example.com"), "3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d");
+  assert.equal(accounts.has("stranger@example.com"), false);
+});
+
+test("the allowlist ignores blanks and entries that are not addresses", () => {
+  const accounts = parseAllowedAccounts(" , not-an-email, ,  spaced@example.com  ");
+
+  assert.equal(accounts.size, 1);
+  assert.equal(accounts.has("spaced@example.com"), true);
+});
+
+test("an empty allowlist grants nobody access", () => {
+  assert.equal(parseAllowedAccounts("").size, 0);
+  assert.equal(parseAllowedAccounts(undefined).size, 0);
+});
+
+test("a pinned profile id that is not a profile id is ignored rather than trusted", () => {
+  const accounts = parseAllowedAccounts("me@example.com=../../etc/passwd");
+  assert.equal(accounts.get("me@example.com"), null);
 });

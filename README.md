@@ -189,7 +189,10 @@ Other settings:
 | Variable | Default |
 | --- | --- |
 | `WARDROBE_DEFAULT_USER_NAME` | `My wardrobe` |
-| `WARDROBE_ACCESS_PASSWORD` | Empty locally; required before public deployment |
+| `GOOGLE_CLIENT_ID` | Required; Wardrobe refuses all access until it is set |
+| `GOOGLE_CLIENT_SECRET` | Required; from the same Google OAuth client |
+| `WARDROBE_ALLOWED_EMAILS` | Required; the Google addresses allowed to sign in, optionally pinned to a profile id |
+| `WARDROBE_SESSION_SECRET` | Falls back to `GOOGLE_CLIENT_SECRET` |
 | `WARDROBE_MODEL_REFERENCE` | Legacy first-run reference: `data/model-reference.png` |
 | `WARDROBE_MODEL_REFERENCES` | Optional legacy first-run list of 2–3 person photos |
 | `WARDROBE_DATA_DIR` | `data` |
@@ -268,13 +271,16 @@ The first upload creates the service. Do not generate a public domain yet. In th
 
 ```dotenv
 WARDROBE_DATA_DIR=/data
-WARDROBE_ACCESS_PASSWORD=a-unique-random-password-of-at-least-20-characters
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+WARDROBE_ALLOWED_EMAILS=you@gmail.com=default, partner@gmail.com
+WARDROBE_SESSION_SECRET=a-long-random-string
 WARDROBE_AI_PROVIDER=openrouter
 OPENROUTER_API_KEY=sk-or-v1-your-key
 OPENROUTER_ZDR=true
 ```
 
-Generate the password locally with `openssl rand -base64 24`; do not reuse an account password. `railway.json` tells Railway to build with `npm run build`, run the production server with `npm start`, and probe `/healthz`.
+Create the OAuth client in Google Cloud Console under **APIs & Services > Credentials > OAuth client ID > Web application**, and add `https://<your-domain>/api/auth/google/callback` as an authorized redirect URI (plus `http://localhost:5173/api/auth/google/callback` for local development). Generate the session secret with `openssl rand -base64 24`. `railway.json` tells Railway to build with `npm run build`, run the production server with `npm start`, and probe `/healthz`.
 
 If you do not want to move the existing local wardrobe, skip the volume upload and the app will initialize a fresh one. Never upload `.env`; copy each value into Railway's Variables screen.
 
@@ -290,10 +296,11 @@ Railway also offers private S3-compatible Buckets at a lower per-GB storage rate
 
 ### Security checklist
 
-- Set `WARDROBE_ACCESS_PASSWORD` before generating the public domain. Rotate it if it is shared outside the intended group.
-- Keep `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, and the access password in Railway variables only. Never use a `VITE_` prefix for secrets.
+- Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `WARDROBE_ALLOWED_EMAILS` before generating the public domain. Without the allowlist nobody can sign in, which fails closed rather than open.
+- Each Google account owns exactly one wardrobe. Profiles cannot be switched, another person's assets return 404, and a personal-data export contains only the signed-in person's data.
+- Keep `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_CLIENT_SECRET`, and `WARDROBE_SESSION_SECRET` in Railway variables only. Never use a `VITE_` prefix for secrets.
 - Keep a single service replica. The JSON store and attached volume are not safe for concurrent writers, and Railway volumes do not support horizontal replicas.
-- Turn on volume backups and periodically download an off-platform copy. A password wall does not replace a backup.
+- Turn on volume backups and periodically download an off-platform copy. A login wall does not replace a backup.
 - Leave `OPENROUTER_ZDR=true` if the selected routes support it. Imports send clothing photos to the configured AI provider; profile reference photos are sent only for explicitly requested modeled looks.
 - Do not use a public Supabase or S3 bucket for these photos. Use a private bucket plus short-lived signed URLs if storage is moved later.
 - Review Railway logs after deployment. The server logs AI model, status, duration, token usage, and reported provider cost, but never logs API keys or image contents.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowsDownUp, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, FunnelSimple, Handbag, ImageSquare, Info, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowsDownUp, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { BrandIcon } from "./BrandIcon.jsx";
 import { CITY_SUGGESTIONS } from "./city-suggestions.js";
@@ -2474,32 +2474,29 @@ function ItemViewer({
   );
 }
 
-function PasswordGate({ error: statusError, onAuthenticated }) {
-  const [password, setPassword] = useState("");
+const SIGN_IN_MESSAGES = {
+  "not-allowed": "That Google account is not on this wardrobe's list. Ask the owner to add your address.",
+  expired: "That sign-in took too long. Try again.",
+  cancelled: "Sign-in was cancelled.",
+  failed: "Google sign-in could not be completed. Try again.",
+};
+
+function SignInGate({ error: statusError, configurationError }) {
   const [error, setError] = useState(statusError || "");
   const [busy, setBusy] = useState(false);
 
-  const submit = async (event) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      const result = await profileApi("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ password }),
-      });
-      setPassword("");
-      onAuthenticated(result);
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  useEffect(() => {
+    const outcome = new URLSearchParams(window.location.search).get("signin");
+    if (!outcome || outcome === "ok") return;
+    setError(tr(SIGN_IN_MESSAGES[outcome] || SIGN_IN_MESSAGES.failed));
+    const clean = new URL(window.location.href);
+    clean.searchParams.delete("signin");
+    window.history.replaceState({}, "", clean.pathname + clean.search + clean.hash);
+  }, []);
 
   return (
     <main className="password-gate">
-      <form onSubmit={submit}>
+      <div className="password-gate__panel">
         <label className="password-gate__language">
           <span>{tr("Language")}</span>
           <LightSelect
@@ -2511,15 +2508,28 @@ function PasswordGate({ error: statusError, onAuthenticated }) {
         </label>
         <span className="password-gate__mark"><LockKey size={26} weight="light" aria-hidden="true" /></span>
         <p>{tr("Private wardrobe")}</p>
-        <h1>{tr("Enter the shared password")}</h1>
-        <label>
-          <span>{tr("Password")}</span>
-          <input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} autoFocus />
-        </label>
-        {error && <p className="password-gate__error" role="alert">{error}</p>}
-        <button type="submit" disabled={busy || !password}>{tr(busy ? "Unlocking…" : "Open wardrobe")}</button>
-        <small>{tr("Access is shared with anyone who knows this password.")}</small>
-      </form>
+        <h1>{tr("Sign in to your wardrobe")}</h1>
+        {configurationError ? (
+          <p className="password-gate__error" role="alert">{configurationError}</p>
+        ) : (
+          <>
+            {error && <p className="password-gate__error" role="alert">{error}</p>}
+            <button
+              type="button"
+              className="password-gate__google"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                window.location.href = "/api/auth/google/start";
+              }}
+            >
+              <GoogleLogo size={17} weight="bold" aria-hidden="true" />
+              <span>{tr(busy ? "Opening Google…" : "Continue with Google")}</span>
+            </button>
+            <small>{tr("Only your own clothes, photos, and details are visible to you.")}</small>
+          </>
+        )}
+      </div>
     </main>
   );
 }
@@ -2542,7 +2552,7 @@ function InfoTooltip({ label, children, className = "" }) {
   );
 }
 
-function ProfileMenu({ users, currentUser, onSelect, onAdd, onEdit, onExport, onLogout }) {
+function ProfileMenu({ currentUser, onEdit, onExport, onLogout }) {
   const detailsRef = useRef(null);
   const closeMenu = () => { if (detailsRef.current) detailsRef.current.open = false; };
 
@@ -2572,7 +2582,10 @@ function ProfileMenu({ users, currentUser, onSelect, onAdd, onEdit, onExport, on
       <div className="profile-menu__popover">
         <div className="profile-menu__identity">
           <ProfileAvatar user={currentUser} />
-          <span><small>{tr("Current wardrobe")}</small><strong>{currentUser?.name || tr("Choose user")}</strong></span>
+          <span>
+            <small>{currentUser?.email || tr("Current wardrobe")}</small>
+            <strong>{currentUser?.name || tr("Choose user")}</strong>
+          </span>
           <button
             className="profile-menu__edit"
             type="button"
@@ -2583,31 +2596,8 @@ function ProfileMenu({ users, currentUser, onSelect, onAdd, onEdit, onExport, on
             <PencilSimple size={15} aria-hidden="true" />
           </button>
         </div>
-        <div className="profile-menu__people-heading">
-          <span>{tr("People")}</span>
-          <button type="button" onClick={() => { onAdd(); closeMenu(); }}>
-            <Plus size={13} aria-hidden="true" />
-            {tr("Add person")}
-          </button>
-        </div>
-        {users.length > 1 && (
-          <div className="profile-menu__users">
-            {users.map((user) => (
-              <button
-                className={user.id === currentUser?.id ? "is-current" : ""}
-                type="button"
-                key={user.id}
-                onClick={() => { onSelect(user.id); closeMenu(); }}
-              >
-                <ProfileAvatar user={user} />
-                <span><strong>{user.name}</strong><small>{user.fashionStyle || tr(user.referenceImages?.length === 1 ? "{count} reference photo" : "{count} reference photos", { count: user.referenceImages?.length || 0 })}</small></span>
-                {user.id === currentUser?.id && <Check size={14} weight="bold" aria-hidden="true" />}
-              </button>
-            ))}
-          </div>
-        )}
         <div className="profile-menu__actions">
-          <button className="profile-menu__export" type="button" onClick={() => { onExport(); closeMenu(); }} title={tr("Includes every person's wardrobe and photos")}>
+          <button className="profile-menu__export" type="button" onClick={() => { onExport(); closeMenu(); }} title={tr("Includes only your own wardrobe and photos")}>
             <DownloadSimple size={14} /> {tr("Download data")}
           </button>
           {onLogout && <button className="profile-menu__logout" type="button" onClick={() => { onLogout(); closeMenu(); }}><LockKey size={14} /> {tr("Log out")}</button>}
@@ -4801,18 +4791,6 @@ export function App() {
     closeViewer();
   };
 
-  const selectUser = async (userId) => {
-    if (userId === currentUserId) return;
-    try {
-      await profileApi("/api/users/current", { method: "PUT", body: JSON.stringify({ userId }) });
-      setCurrentUserId(userId);
-      setActiveType("all");
-      closeViewer();
-    } catch (requestError) {
-      setError(requestError.message);
-    }
-  };
-
   const downloadPersonalData = async () => {
     setError("");
     const migrations = users.flatMap((user) => {
@@ -4986,7 +4964,7 @@ export function App() {
 
   if (auth === null) return <main className="password-gate"><p className="status">{tr("Checking access")}</p></main>;
   if (!auth.authenticated) {
-    return <PasswordGate error={authError} onAuthenticated={(result) => { setAuthError(""); setAuth(result); setLoading(true); }} />;
+    return <SignInGate error={authError} configurationError={auth.configurationError} />;
   }
 
   return (
@@ -5179,10 +5157,7 @@ export function App() {
       )}
       {!!currentUser && (
         <ProfileMenu
-          users={users}
           currentUser={currentUser}
-          onSelect={selectUser}
-          onAdd={() => { setProfileError(""); setProfileEditor("new"); }}
           onEdit={() => { setProfileError(""); setProfileEditor(currentUser.id); }}
           onExport={downloadPersonalData}
           onLogout={auth.enabled ? logout : null}

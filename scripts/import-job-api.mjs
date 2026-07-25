@@ -39,7 +39,13 @@ const LIBRARY_ASSET_ROOT = "/api/import/library";
 const USERS_ROOT = "/api/users";
 const EXPORT_ROOT = "/api/export";
 const AUTH_COOKIE = "wardrobe_session";
+const OAUTH_COOKIE = "wardrobe_oauth";
 const AUTH_CONTEXT = "wardrobe-access-v1";
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
 const STAGES = new Set(["crop", "garment", "modeled"]);
 const DECISIONS = new Set(["approve", "reject"]);
 const PARTS = new Set(["upperbody", "wholebody_up", "lowerbody", "wholebody", "shoes", "accessories_up"]);
@@ -334,22 +340,81 @@ function parseCookies(header = "") {
   }).filter(([name]) => name));
 }
 
-export function passwordToken(password) {
-  return createHmac("sha256", password).update(AUTH_CONTEXT).digest("base64url");
-}
-
-export function createSessionToken(password, issuedAt = Date.now()) {
+// A session now names the profile it belongs to. Every request derives its owner
+// from this signature alone, so a caller can no longer ask for another person's
+// wardrobe by changing a query parameter.
+export function createSessionToken(secret, userId, issuedAt = Date.now()) {
   const timestamp = String(issuedAt);
-  const signature = createHmac("sha256", password).update(`${AUTH_CONTEXT}:${timestamp}`).digest("base64url");
-  return `${timestamp}.${signature}`;
+  const subject = String(userId);
+  const signature = createHmac("sha256", secret)
+    .update(`${AUTH_CONTEXT}:${subject}:${timestamp}`)
+    .digest("base64url");
+  return `${Buffer.from(subject).toString("base64url")}.${timestamp}.${signature}`;
 }
 
-export function validSessionToken(token, password) {
-  const [timestamp, signature, extra] = String(token || "").split(".");
+export function sessionTokenUser(token, secret) {
+  const [encodedSubject, timestamp, signature, extra] = String(token || "").split(".");
+  if (extra || !encodedSubject || !timestamp || !signature) return null;
   const issuedAt = Number(timestamp);
-  if (extra || !Number.isFinite(issuedAt) || issuedAt > Date.now() + 60_000 || Date.now() - issuedAt > 30 * 24 * 60 * 60 * 1000) return false;
-  const expected = createHmac("sha256", password).update(`${AUTH_CONTEXT}:${timestamp}`).digest("base64url");
-  return safeEqual(signature, expected);
+  if (!Number.isFinite(issuedAt) || issuedAt > Date.now() + 60_000 || Date.now() - issuedAt > SESSION_MAX_AGE_MS) return null;
+  let subject;
+  try {
+    subject = Buffer.from(encodedSubject, "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+  if (!USER_ID.test(subject)) return null;
+  const expected = createHmac("sha256", secret)
+    .update(`${AUTH_CONTEXT}:${subject}:${timestamp}`)
+    .digest("base64url");
+  return safeEqual(signature, expected) ? subject : null;
+}
+
+// The login round trip has to survive a Railway restart and more than one
+// instance, so the PKCE verifier travels in a signed cookie rather than memory.
+export function createOAuthStateToken(secret, payload, issuedAt = Date.now()) {
+  const body = Buffer.from(JSON.stringify({ ...payload, issuedAt })).toString("base64url");
+  const signature = createHmac("sha256", secret).update(`${AUTH_CONTEXT}:oauth:${body}`).digest("base64url");
+  return `${body}.${signature}`;
+}
+
+export function readOAuthStateToken(token, secret) {
+  const [body, signature, extra] = String(token || "").split(".");
+  if (extra || !body || !signature) return null;
+  const expected = createHmac("sha256", secret).update(`${AUTH_CONTEXT}:oauth:${body}`).digest("base64url");
+  if (!safeEqual(signature, expected)) return null;
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  const issuedAt = Number(payload?.issuedAt);
+  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > OAUTH_STATE_MAX_AGE_MS) return null;
+  return payload;
+}
+
+export function pkceChallenge(verifier) {
+  return createHash("sha256").update(String(verifier)).digest("base64url");
+}
+
+export function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+// WARDROBE_ALLOWED_EMAILS holds the household. An entry may pin an existing
+// profile id so a returning person claims the wardrobe they already own:
+//   me@gmail.com=default, partner@gmail.com
+export function parseAllowedAccounts(value) {
+  const accounts = new Map();
+  for (const entry of String(value || "").split(/[\n,]/)) {
+    const [rawEmail, rawProfile] = entry.split("=");
+    const email = normalizeEmail(rawEmail);
+    if (!email || !email.includes("@")) continue;
+    const profileId = String(rawProfile || "").trim();
+    accounts.set(email, USER_ID.test(profileId) ? profileId : null);
+  }
+  return accounts;
 }
 
 function safeEqual(first, second) {
@@ -403,61 +468,6 @@ function tarHeader(name, size, modifiedAt = Date.now()) {
 function tarPadding(size) {
   const remainder = size % TAR_BLOCK_SIZE;
   return remainder ? Buffer.alloc(TAR_BLOCK_SIZE - remainder) : null;
-}
-
-async function* backupFiles(directory, relative = "") {
-  const entries = await readdir(directory, { withFileTypes: true });
-  entries.sort((first, second) => first.name.localeCompare(second.name));
-  for (const entry of entries) {
-    if (entry.name.endsWith(".tmp") || entry.isSymbolicLink()) continue;
-    const absolute = path.join(directory, entry.name);
-    const childRelative = relative ? path.join(relative, entry.name) : entry.name;
-    if (entry.isDirectory()) {
-      yield* backupFiles(absolute, childRelative);
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    const details = await lstat(absolute);
-    if (!details.isFile()) continue;
-    yield {
-      absolute,
-      archivePath: path.posix.join("wardrobe-data", "data", ...childRelative.split(path.sep)),
-      modifiedAt: details.mtimeMs,
-      size: details.size,
-    };
-  }
-}
-
-async function* personalDataArchive(dataDirectory) {
-  const restoreInstructions = Buffer.from([
-    "WARDROBE PERSONAL DATA BACKUP",
-    "",
-    "This archive contains every Wardrobe profile, reference photo, clothing image,",
-    "original upload, modeled image, metadata record, and unfinished import stored",
-    "by this Wardrobe instance. API keys and the access password are not included.",
-    "",
-    "RESTORE LOCALLY",
-    "1. Install or clone the same Wardrobe application and stop it if it is running.",
-    "2. Move its existing data directory somewhere safe as a backup.",
-    "3. Copy the data directory beside this file into the Wardrobe project root.",
-    "4. Create .env from .env.example and add your own OpenRouter or OpenAI key.",
-    "5. Run npm install, then npm run dev.",
-    "",
-    "Wait for active imports to finish before creating a backup for the cleanest snapshot.",
-    "",
-  ].join("\n"));
-  yield tarHeader("wardrobe-data/RESTORE.txt", restoreInstructions.length);
-  yield restoreInstructions;
-  const instructionsPadding = tarPadding(restoreInstructions.length);
-  if (instructionsPadding) yield instructionsPadding;
-
-  for await (const file of backupFiles(dataDirectory)) {
-    yield tarHeader(file.archivePath, file.size, file.modifiedAt);
-    for await (const chunk of createReadStream(file.absolute)) yield chunk;
-    const padding = tarPadding(file.size);
-    if (padding) yield padding;
-  }
-  yield Buffer.alloc(TAR_BLOCK_SIZE * 2);
 }
 
 function upstreamProviderErrorMessage(result = {}) {
@@ -2582,26 +2592,43 @@ export function wardrobeImportApi(options = {}) {
   const withLibrary = criticalSection();
   const withUsers = criticalSection();
   const setting = (name, fallback = "") => options.env?.[name] || process.env[name] || fallback;
-  const accessPassword = () => String(setting("WARDROBE_ACCESS_PASSWORD"));
-  const authEnabled = () => Boolean(accessPassword());
-  const isAuthenticated = (req) => {
-    if (!authEnabled()) return true;
+  const googleClientId = () => String(setting("GOOGLE_CLIENT_ID")).trim();
+  const googleClientSecret = () => String(setting("GOOGLE_CLIENT_SECRET")).trim();
+  const authEnabled = () => Boolean(googleClientId() && googleClientSecret());
+  // Signing key for our own cookies. Kept separate from the OAuth secret when
+  // possible so rotating one does not silently sign every session out.
+  const sessionSecret = () => String(setting("WARDROBE_SESSION_SECRET") || googleClientSecret());
+  const allowedAccounts = () => parseAllowedAccounts(setting("WARDROBE_ALLOWED_EMAILS"));
+  const sessionUserId = (req) => {
     const token = parseCookies(req.headers.cookie)[AUTH_COOKIE];
-    return Boolean(token) && validSessionToken(token, accessPassword());
+    if (!token) return null;
+    return sessionTokenUser(token, sessionSecret());
   };
   const requestIsSecure = (req) => (
     String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https"
     || setting("NODE_ENV") === "production"
     || Boolean(setting("RAILWAY_ENVIRONMENT_NAME"))
   );
-  const authCookie = (req, value, maxAge) => [
-    `${AUTH_COOKIE}=${value}`,
+  const cookieHeader = (req, name, value, maxAge, sameSite = "Strict") => [
+    `${name}=${value}`,
     "Path=/",
     "HttpOnly",
-    "SameSite=Strict",
+    `SameSite=${sameSite}`,
     `Max-Age=${maxAge}`,
     requestIsSecure(req) ? "Secure" : null,
   ].filter(Boolean).join("; ");
+  const authCookie = (req, value, maxAge) => cookieHeader(req, AUTH_COOKIE, value, maxAge);
+  // Lax so the cookie survives Google's cross-site redirect back to the callback.
+  const oauthCookie = (req, value, maxAge) => cookieHeader(req, OAUTH_COOKIE, value, maxAge, "Lax");
+  const publicOrigin = (req) => {
+    const configured = String(setting("WARDROBE_PUBLIC_URL")).trim();
+    if (configured) return configured.replace(/\/$/, "");
+    const railwayDomain = String(setting("RAILWAY_PUBLIC_DOMAIN")).trim();
+    if (railwayDomain) return `${/^https?:\/\//i.test(railwayDomain) ? "" : "https://"}${railwayDomain}`.replace(/\/$/, "");
+    const host = String(req.headers["x-forwarded-host"] || req.headers.host || "localhost").split(",")[0].trim();
+    return `${requestIsSecure(req) ? "https" : "http"}://${host}`;
+  };
+  const redirectUri = (req) => `${publicOrigin(req)}/api/auth/google/callback`;
   const trustsProxyHeaders = () => (
     Boolean(setting("RAILWAY_ENVIRONMENT_NAME")) || booleanSetting("WARDROBE_TRUST_PROXY", false)
   );
@@ -2920,6 +2947,10 @@ export function wardrobeImportApi(options = {}) {
     const rawGroupMode = input.wardrobeGroupMode ?? existing.wardrobeGroupMode;
     return {
       ...existing,
+      // Identity is set by the sign-in flow only; a profile edit can never move a
+      // wardrobe to another Google account.
+      googleSubject: existing.googleSubject || null,
+      email: normalizeEmail(existing.email) || null,
       name,
       age,
       city: cleanProfileText(input.city ?? existing.city, 120),
@@ -2991,13 +3022,110 @@ export function wardrobeImportApi(options = {}) {
     await atomicJson(usersFile, { version: 1, currentUserId: store.currentUserId, users: store.users });
   }
 
-  async function selectedUser(req, url) {
+  // Resolves the wardrobe a verified Google identity owns, creating one on first
+  // sign-in. An allowlist entry may pin an existing profile id so a person who
+  // already has a wardrobe claims it instead of starting empty.
+  async function profileForGoogleIdentity(identity) {
+    const email = normalizeEmail(identity.email);
+    const accounts = allowedAccounts();
+    if (!accounts.size) {
+      throw apiError(
+        "No wardrobe accounts are configured. Add WARDROBE_ALLOWED_EMAILS to the server environment.",
+        403,
+        "no_allowed_accounts",
+      );
+    }
+    if (!accounts.has(email)) {
+      throw apiError("This Google account is not allowed to open this wardrobe.", 403, "account_not_allowed");
+    }
+    return withUsers(async () => {
+      const store = await loadUsersStore();
+      if (!store) throw apiError("User profiles are not initialized.", 503, "profiles_unavailable");
+      const bySubject = store.users.find((user) => user.googleSubject === identity.subject);
+      if (bySubject) {
+        if (bySubject.email !== email) {
+          bySubject.email = email;
+          await saveUsersStore(store);
+        }
+        return bySubject.id;
+      }
+      const claimedId = accounts.get(email);
+      const byEmail = store.users.find((user) => normalizeEmail(user.email) === email && !user.googleSubject);
+      const pinned = claimedId ? store.users.find((user) => user.id === claimedId) : null;
+      const target = pinned || byEmail;
+      if (target) {
+        if (target.googleSubject && target.googleSubject !== identity.subject) {
+          throw apiError("That wardrobe is already linked to a different Google account.", 409, "profile_already_linked");
+        }
+        target.googleSubject = identity.subject;
+        target.email = email;
+        target.updatedAt = new Date().toISOString();
+        await saveUsersStore(store);
+        console.info(`[wardrobe] Linked ${email} to the existing wardrobe "${target.name}".`);
+        return target.id;
+      }
+      const now = new Date().toISOString();
+      const created = normalizeProfile({
+        name: identity.name || email.split("@")[0] || "My wardrobe",
+      }, {
+        id: randomUUID(),
+        googleSubject: identity.subject,
+        email,
+        referenceImages: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      store.users.push(created);
+      await saveUsersStore(store);
+      console.info(`[wardrobe] Created a new wardrobe for ${email}.`);
+      return created.id;
+    });
+  }
+
+  async function exchangeGoogleCode(code, verifier, req) {
+    const body = new URLSearchParams({
+      code,
+      client_id: googleClientId(),
+      client_secret: googleClientSecret(),
+      redirect_uri: redirectUri(req),
+      grant_type: "authorization_code",
+      code_verifier: verifier,
+    });
+    const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    const token = await tokenResponse.json().catch(() => ({}));
+    if (!tokenResponse.ok || !token.access_token) {
+      console.error(`[wardrobe:auth] Google token exchange failed (${tokenResponse.status}): ${cleanLogValue(token.error_description || token.error || "unknown error")}`);
+      throw apiError("Google sign-in could not be completed. Try again.", 502, "google_token_exchange_failed");
+    }
+    // The profile comes from Google's userinfo endpoint over TLS using the token
+    // we just obtained, so no local JWT verification is needed.
+    const userinfoResponse = await fetch(GOOGLE_USERINFO_URL, {
+      headers: { Authorization: `Bearer ${token.access_token}` },
+    });
+    const profile = await userinfoResponse.json().catch(() => ({}));
+    if (!userinfoResponse.ok || !profile.sub) {
+      throw apiError("Google did not return an account profile. Try again.", 502, "google_userinfo_failed");
+    }
+    if (profile.email_verified === false) {
+      throw apiError("This Google account does not have a verified email address.", 403, "google_email_unverified");
+    }
+    return { subject: String(profile.sub), email: normalizeEmail(profile.email), name: profile.name || "" };
+  }
+
+  // The owner comes from the signed session and nothing else. The `?user=` query
+  // parameter still appears in asset URLs for cache separation, but it is never
+  // consulted here, so it cannot be used to reach another person's wardrobe.
+  async function selectedUser(req) {
     const store = await loadUsersStore();
     if (!store) throw apiError("User profiles are not initialized.", 503, "profiles_unavailable");
-    const requested = url.searchParams.get("user") || req.headers["x-wardrobe-user"] || store.currentUserId;
-    if (typeof requested !== "string" || !USER_ID.test(requested)) throw apiError("Invalid wardrobe user.", 400, "invalid_user");
-    const user = store.users.find((candidate) => candidate.id === requested);
-    if (!user) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+    const signedInId = sessionUserId(req);
+    if (!signedInId) throw apiError("Sign in to continue.", 401, "authentication_required");
+    const user = store.users.find((candidate) => candidate.id === signedInId);
+    if (!user) throw apiError("This wardrobe profile no longer exists.", 401, "user_not_found");
     return { store, user };
   }
 
@@ -4187,6 +4315,110 @@ Interpret this correction semantically in whatever language it is written. It ov
     return task;
   }
 
+  // A backup must contain the signed-in person's wardrobe and nothing else, so it
+  // is assembled from filtered records rather than by walking the whole volume.
+  async function* personalDataArchiveForUser(userId) {
+    const yieldBuffer = async function* (archivePath, buffer) {
+      yield tarHeader(archivePath, buffer.length);
+      yield buffer;
+      const padding = tarPadding(buffer.length);
+      if (padding) yield padding;
+    };
+    const yieldFile = async function* (archivePath, absolute) {
+      let details;
+      try {
+        details = await lstat(absolute);
+      } catch {
+        return;
+      }
+      if (!details.isFile()) return;
+      yield tarHeader(archivePath, details.size, details.mtimeMs);
+      for await (const chunk of createReadStream(absolute)) yield chunk;
+      const padding = tarPadding(details.size);
+      if (padding) yield padding;
+    };
+
+    const [store, records, ledger, history] = await Promise.all([
+      loadUsersStore(),
+      loadImported(),
+      readAiUsageLedger(),
+      readImportHistory(),
+    ]);
+    const profile = store?.users.find((candidate) => candidate.id === userId);
+    if (!profile) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+    const owned = records.filter((record) => record.userId === userId);
+
+    yield* yieldBuffer("wardrobe-data/RESTORE.txt", Buffer.from([
+      "WARDROBE PERSONAL DATA BACKUP",
+      "",
+      `This archive contains the wardrobe of ${profile.name}${profile.email ? ` (${profile.email})` : ""} and nothing`,
+      "belonging to anyone else: the profile and its reference photos, every clothing",
+      "image, original upload and modeled image, the matching metadata, AI usage and",
+      "import history, and any unfinished imports. API keys and server secrets are",
+      "not included.",
+      "",
+      "RESTORE LOCALLY",
+      "1. Install or clone the same Wardrobe application and stop it if it is running.",
+      "2. Move its existing data directory somewhere safe as a backup.",
+      "3. Copy the data directory beside this file into the Wardrobe project root.",
+      "4. Create .env from .env.example and add your own OpenRouter or OpenAI key.",
+      "5. Run npm install, then npm run dev.",
+      "",
+      "Wait for active imports to finish before creating a backup for the cleanest snapshot.",
+      "",
+    ].join("\n")));
+
+    const jsonFile = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+    yield* yieldBuffer("wardrobe-data/data/users.json", jsonFile({
+      version: 1,
+      currentUserId: profile.id,
+      users: [profile],
+    }));
+    yield* yieldBuffer("wardrobe-data/data/library.json", jsonFile(owned));
+    yield* yieldBuffer("wardrobe-data/data/ai-usage.json", jsonFile({
+      version: 1,
+      entries: ledger.entries.filter((entry) => entry?.userId === userId),
+    }));
+    yield* yieldBuffer("wardrobe-data/data/import-history.json", jsonFile({
+      version: 1,
+      uploads: history.uploads.filter((upload) => upload?.userId === userId),
+    }));
+
+    const referenceDir = profileReferenceDir(userId);
+    for (const reference of profile.referenceImages || []) {
+      for (const fileName of profileReferenceAssetNames(reference)) {
+        yield* yieldFile(
+          path.posix.join("wardrobe-data", "data", "profiles", userId, "references", fileName),
+          path.join(referenceDir, fileName),
+        );
+      }
+    }
+
+    const assets = new Set([
+      ...owned.flatMap((record) => importedRecordAssets(record)),
+      ...wardrobePlanAssets(profile.wardrobePlans),
+    ].filter(Boolean).map((asset) => path.basename(new URL(asset, "http://localhost").pathname)));
+    for (const fileName of assets) {
+      yield* yieldFile(
+        path.posix.join("wardrobe-data", "data", "imported", fileName),
+        path.join(libraryAssetDir, fileName),
+      );
+    }
+
+    for (const id of await readdir(jobsDir).catch(() => [])) {
+      const job = await loadJob(id);
+      if (job?.userId !== userId) continue;
+      for (const entry of await readdir(path.join(jobsDir, id)).catch(() => [])) {
+        yield* yieldFile(
+          path.posix.join("wardrobe-data", "data", "jobs", id, entry),
+          path.join(jobsDir, id, entry),
+        );
+      }
+    }
+
+    yield Buffer.alloc(TAR_BLOCK_SIZE * 2);
+  }
+
   async function handler(req, res, next) {
     const url = new URL(req.url, "http://localhost");
     setSecurityHeaders(req, res);
@@ -4195,28 +4427,93 @@ Interpret this correction semantically in whatever language it is written. It ov
         return json(res, 200, { status: "healthy" });
       }
       if (url.pathname === "/api/auth/status" && req.method === "GET") {
-        return json(res, 200, { enabled: authEnabled(), authenticated: isAuthenticated(req) });
+        if (!authEnabled()) {
+          return json(res, 200, {
+            enabled: false,
+            authenticated: false,
+            configurationError: "Google sign-in is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to the server environment.",
+          });
+        }
+        const signedInId = sessionUserId(req);
+        if (!signedInId) return json(res, 200, { enabled: true, authenticated: false });
+        const store = await loadUsersStore();
+        const profile = store?.users.find((user) => user.id === signedInId);
+        if (!profile) {
+          res.setHeader("Set-Cookie", authCookie(req, "", 0));
+          return json(res, 200, { enabled: true, authenticated: false });
+        }
+        return json(res, 200, {
+          enabled: true,
+          authenticated: true,
+          user: { id: profile.id, name: profile.name, email: profile.email || null },
+        });
       }
-      if (url.pathname === "/api/auth/login" && req.method === "POST") {
-        if (!authEnabled()) return json(res, 200, { enabled: false, authenticated: true });
+      if (url.pathname === "/api/auth/google/start" && req.method === "GET") {
+        if (!authEnabled()) {
+          return json(res, 503, {
+            error: "Google sign-in is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to the server environment.",
+            code: "google_auth_unconfigured",
+          });
+        }
         const limited = rateLimitLogin(req);
         if (limited.blocked) {
           res.setHeader("Retry-After", limited.retryAfter);
-          return json(res, 429, { error: "Too many password attempts. Try again in 15 minutes.", code: "login_rate_limited" });
+          return json(res, 429, { error: "Too many sign-in attempts. Try again in 15 minutes.", code: "login_rate_limited" });
         }
-        const input = await body(req, 16 * 1024);
-        const submitted = typeof input.password === "string" ? input.password : "";
-        if (!submitted || !safeEqual(passwordToken(submitted), passwordToken(accessPassword()))) {
-          const failed = rateLimitLogin(req, true);
-          if (failed.blocked) res.setHeader("Retry-After", failed.retryAfter);
-          return json(res, failed.blocked ? 429 : 401, {
-            error: failed.blocked ? "Too many password attempts. Try again in 15 minutes." : "Incorrect password.",
-            code: failed.blocked ? "login_rate_limited" : "incorrect_password",
-          });
+        const verifier = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
+        const state = randomUUID();
+        res.setHeader("Set-Cookie", oauthCookie(
+          req,
+          createOAuthStateToken(sessionSecret(), { state, verifier }),
+          Math.floor(OAUTH_STATE_MAX_AGE_MS / 1000),
+        ));
+        const authorize = new URL(GOOGLE_AUTHORIZE_URL);
+        authorize.searchParams.set("client_id", googleClientId());
+        authorize.searchParams.set("redirect_uri", redirectUri(req));
+        authorize.searchParams.set("response_type", "code");
+        authorize.searchParams.set("scope", "openid email profile");
+        authorize.searchParams.set("state", state);
+        authorize.searchParams.set("code_challenge", pkceChallenge(verifier));
+        authorize.searchParams.set("code_challenge_method", "S256");
+        // Always show the chooser so a shared browser cannot silently reuse an account.
+        authorize.searchParams.set("prompt", "select_account");
+        res.statusCode = 302;
+        res.setHeader("Location", authorize.href);
+        res.setHeader("Cache-Control", "no-store");
+        return res.end();
+      }
+      if (url.pathname === "/api/auth/google/callback" && req.method === "GET") {
+        const finish = (query) => {
+          res.statusCode = 302;
+          res.setHeader("Location", `/?${query}`);
+          res.setHeader("Cache-Control", "no-store");
+          return res.end();
+        };
+        const cookies = parseCookies(req.headers.cookie);
+        const pending = readOAuthStateToken(cookies[OAUTH_COOKIE], sessionSecret());
+        res.setHeader("Set-Cookie", oauthCookie(req, "", 0));
+        const returnedState = url.searchParams.get("state");
+        if (url.searchParams.get("error")) return finish("signin=cancelled");
+        if (!pending || !returnedState || !safeEqual(returnedState, pending.state)) {
+          return finish("signin=expired");
         }
-        loginAttempts.delete(limited.key);
-        res.setHeader("Set-Cookie", authCookie(req, createSessionToken(accessPassword()), 30 * 24 * 60 * 60));
-        return json(res, 200, { enabled: true, authenticated: true });
+        const code = url.searchParams.get("code");
+        if (!code) return finish("signin=failed");
+        try {
+          const identity = await exchangeGoogleCode(code, pending.verifier, req);
+          const profileId = await profileForGoogleIdentity(identity);
+          loginAttempts.delete(clientAddress(req));
+          res.setHeader("Set-Cookie", [
+            oauthCookie(req, "", 0),
+            authCookie(req, createSessionToken(sessionSecret(), profileId), Math.floor(SESSION_MAX_AGE_MS / 1000)),
+          ]);
+          console.info(`[wardrobe] ${identity.email} signed in.`);
+          return finish("signin=ok");
+        } catch (error) {
+          rateLimitLogin(req, true);
+          console.warn(`[wardrobe:auth] sign-in refused: ${cleanLogValue(error.message)}`);
+          return finish(`signin=${error.code === "account_not_allowed" ? "not-allowed" : "failed"}`);
+        }
       }
       if (url.pathname === "/api/auth/logout" && req.method === "POST") {
         res.setHeader("Set-Cookie", authCookie(req, "", 0));
@@ -4225,70 +4522,47 @@ Interpret this correction semantically in whatever language it is written. It ov
       const protectedPath = url.pathname.startsWith("/api/import/")
         || url.pathname.startsWith(USERS_ROOT)
         || url.pathname === EXPORT_ROOT;
-      if (protectedPath && !isAuthenticated(req)) {
-        return json(res, 401, { error: "Enter the wardrobe password to continue.", code: "authentication_required" });
+      if (protectedPath && !sessionUserId(req)) {
+        return json(res, 401, { error: "Sign in with Google to continue.", code: "authentication_required" });
       }
       if (!protectedPath) return next();
+      // Everything below belongs to exactly one person: the signed-in one.
+      const { user: signedInUser } = await selectedUser(req);
+      const signedInUserId = signedInUser.id;
       if (url.pathname === EXPORT_ROOT && req.method === "GET") {
         const date = new Date().toISOString().slice(0, 10);
         res.statusCode = 200;
         res.setHeader("Content-Type", "application/gzip");
         res.setHeader("Content-Disposition", `attachment; filename="wardrobe-personal-data-${date}.tar.gz"`);
         res.setHeader("Cache-Control", "private, no-store");
-        console.info("[wardrobe] Creating a personal data backup.");
+        console.info(`[wardrobe] Creating a personal data backup for ${signedInUser.name}.`);
         await pipeline(
-          Readable.from(personalDataArchive(dataDir)),
+          Readable.from(personalDataArchiveForUser(signedInUserId)),
           createGzip({ level: 6 }),
           res,
         );
         return;
       }
       if (url.pathname === USERS_ROOT && req.method === "GET") {
-        const store = await loadUsersStore();
         return json(res, 200, {
-          currentUserId: store.currentUserId,
-          users: store.users.map(publicProfile),
+          currentUserId: signedInUserId,
+          users: [publicProfile(signedInUser)],
         });
       }
       if (url.pathname === USERS_ROOT && req.method === "POST") {
-        const input = await body(req, 60 * 1024 * 1024);
-        const profile = await withUsers(async () => {
-          const store = await loadUsersStore();
-          const now = new Date().toISOString();
-          const id = randomUUID();
-          const references = await saveProfileReferences(id, input.referenceImages);
-          const created = normalizeProfile(input, {
-            id,
-            referenceImages: references,
-            createdAt: now,
-            updatedAt: now,
-          });
-          store.users.push(created);
-          store.currentUserId = created.id;
-          await saveUsersStore(store);
-          return created;
-        });
-        return json(res, 201, { currentUserId: profile.id, user: publicProfile(profile) });
+        throw apiError(
+          "Each wardrobe belongs to one Google account. Add the person's address to WARDROBE_ALLOWED_EMAILS and ask them to sign in.",
+          403,
+          "profile_creation_disabled",
+        );
       }
       if (url.pathname === `${USERS_ROOT}/current` && req.method === "PUT") {
-        const input = await body(req);
-        await withUsers(async () => {
-          const store = await loadUsersStore();
-          if (typeof input.userId !== "string" || !store.users.some((user) => user.id === input.userId)) {
-            throw apiError("Wardrobe user not found.", 404, "user_not_found");
-          }
-          store.currentUserId = input.userId;
-          await saveUsersStore(store);
-        });
-        return json(res, 200, { currentUserId: input.userId });
+        throw apiError("You can only open your own wardrobe.", 403, "profile_switching_disabled");
       }
       const aiActivityMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/ai-usage\/activities$/i);
       if (aiActivityMatch && req.method === "GET") {
-        const store = await loadUsersStore();
-        if (!store.users.some((user) => user.id === aiActivityMatch[1])) {
-          throw apiError("Wardrobe user not found.", 404, "user_not_found");
-        }
-        const activities = await aiUsageActivityList(aiActivityMatch[1]);
+        if (aiActivityMatch[1] !== signedInUserId) throw apiError("You can only open your own wardrobe.", 403, "forbidden_profile");
+        const activities = await aiUsageActivityList(signedInUserId);
         return json(res, 200, paginateAiActivities(activities, {
           offset: url.searchParams.get("offset"),
           limit: url.searchParams.get("limit"),
@@ -4296,13 +4570,10 @@ Interpret this correction semantically in whatever language it is written. It ov
       }
       const aiUsageMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/ai-usage$/i);
       if (aiUsageMatch && req.method === "GET") {
-        const store = await loadUsersStore();
-        if (!store.users.some((user) => user.id === aiUsageMatch[1])) {
-          throw apiError("Wardrobe user not found.", 404, "user_not_found");
-        }
+        if (aiUsageMatch[1] !== signedInUserId) throw apiError("You can only open your own wardrobe.", 403, "forbidden_profile");
         const [summary, activities] = await Promise.all([
-          aiUsageSummary(aiUsageMatch[1]),
-          aiUsageActivityList(aiUsageMatch[1]),
+          aiUsageSummary(signedInUserId),
+          aiUsageActivityList(signedInUserId),
         ]);
         // The dialog pages through activities, so the summary carries only the
         // first page instead of every recorded request.
@@ -4315,10 +4586,10 @@ Interpret this correction semantically in whatever language it is written. It ov
       }
       const referenceMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/references\/([\w.-]+)$/i);
       if (referenceMatch && req.method === "GET") {
-        const store = await loadUsersStore();
-        const profile = store.users.find((user) => user.id === referenceMatch[1]);
+        if (referenceMatch[1] !== signedInUserId) throw apiError("Reference photo not found.", 404, "reference_not_found");
+        const profile = signedInUser;
         const reference = profile?.referenceImages?.find((candidate) => profileReferenceAssetNames(candidate).includes(referenceMatch[2]));
-        if (!profile || !reference) throw apiError("Reference photo not found.", 404, "reference_not_found");
+        if (!reference) throw apiError("Reference photo not found.", 404, "reference_not_found");
         const fileName = referenceMatch[2];
         const file = path.join(profileReferenceDir(profile.id), fileName);
         const details = await stat(file);
@@ -4337,9 +4608,10 @@ Interpret this correction semantically in whatever language it is written. It ov
       const profileMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})$/i);
       if (profileMatch && req.method === "PATCH") {
         const input = await body(req, 60 * 1024 * 1024);
+        if (profileMatch[1] !== signedInUserId) throw apiError("You can only edit your own profile.", 403, "forbidden_profile");
         const saved = await withUsers(async () => {
           const store = await loadUsersStore();
-          const index = store.users.findIndex((user) => user.id === profileMatch[1]);
+          const index = store.users.findIndex((user) => user.id === signedInUserId);
           if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
           const existing = store.users[index];
           const updatingReferences = Object.hasOwn(input, "referenceImages")
@@ -4383,7 +4655,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         return json(res, 200, { currentUserId: saved.currentUserId, user: publicProfile(saved.profile) });
       }
       if (!url.pathname.startsWith("/api/import/")) return next();
-      const { user } = await selectedUser(req, url);
+      const user = signedInUser;
       if (url.pathname === "/api/import/planner" && req.method === "POST") {
         const input = await body(req, 32 * 1024);
         const kind = input.kind === "event" ? "event" : "trip";
