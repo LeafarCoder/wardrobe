@@ -88,8 +88,19 @@ test("applies personal model choices only to OpenRouter and language to every pr
   assert.equal(selected.responseLanguage, "pt-PT");
   assert.deepEqual(
     providerWithProfilePreferences({ ...base, id: "openai" }, profile),
-    { ...base, id: "openai", responseLanguage: "pt-PT" },
+    { ...base, id: "openai", responseLanguage: "pt-PT", wardrobeUserId: null },
   );
+});
+
+test("records which wardrobe a request served, separately from who paid", () => {
+  const provider = providerWithProfilePreferences(
+    { id: "openrouter", key: "sk-or-v1-server000000000000000000", userId: "rafael" },
+    { id: "sara", name: "Sara" },
+    { id: "rafael", name: "Rafael", openRouterApiKey: "sk-or-v1-rafael000000000000000000" },
+  );
+
+  assert.equal(provider.wardrobeUserId, "sara", "the work was done in Sara's wardrobe");
+  assert.equal(provider.userId, "rafael", "but Rafael's account is billed");
 });
 
 test("summarizes recorded AI spend by person, task, and model", () => {

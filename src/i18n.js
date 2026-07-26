@@ -211,6 +211,8 @@ const pt = {
   "Keep the saved key": "Manter a chave guardada",
   "Until you add a key, requests use the server\u0027s shared key.": "Enquanto não adicionar uma chave, os pedidos usam a chave partilhada do servidor.",
   "By task": "Por tarefa",
+  "By wardrobe": "Por guarda-roupa",
+  "Your wardrobe": "O seu guarda-roupa",
   "By model": "Por modelo",
   "Request details": "Detalhes dos pedidos",
   "See costs, models, and garment outcomes for every uploaded image.": "Consulte os custos, modelos e resultados das peças para cada imagem carregada.",

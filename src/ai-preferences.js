@@ -137,6 +137,7 @@ export function publicAiRequest(entry) {
     jobId: entry.jobId || null,
     garmentId: entry.garmentId || null,
     planId: entry.planId || null,
+    wardrobeUserId: entry.wardrobeUserId || entry.userId || null,
     fallbackFrom: entry.fallbackFrom || null,
     upstream: entry.upstream || null,
     inputTokens: Number.isFinite(entry.inputTokens) ? entry.inputTokens : null,
@@ -390,7 +391,7 @@ export function paginateAiActivities(activities = [], { offset = 0, limit = 20 }
   };
 }
 
-export function summarizeAiUsage(allEntries = [], userId, importHistory = []) {
+export function summarizeAiUsage(allEntries = [], userId, importHistory = [], wardrobeNames = {}) {
   const entries = (Array.isArray(allEntries) ? allEntries : [])
     .filter((entry) => entry?.userId === userId)
     .sort((first, second) => String(second.createdAt).localeCompare(String(first.createdAt)));
@@ -468,6 +469,10 @@ export function summarizeAiUsage(allEntries = [], userId, importHistory = []) {
     unpricedRequestCount: entries.filter((entry) => !Number.isFinite(entry.cost)).length,
     byOperation: summarize("operationGroup", (id) => AI_OPERATION_LABELS[id] || AI_OPERATION_LABELS.other),
     byModel: summarize("model", (id) => id),
+    // Spend is recorded against whoever paid, so this splits it by the wardrobe
+    // the work was actually done in.
+    byWardrobe: summarize("wardrobeUserId", (id) => wardrobeNames[id] || (id === userId ? "This wardrobe" : "Another wardrobe"))
+      .map((group) => ({ ...group, isOwn: group.id === userId })),
     recent: entries.slice(0, 20),
     uploads: uploadDetails,
     uploadCount: uploadDetails.length,

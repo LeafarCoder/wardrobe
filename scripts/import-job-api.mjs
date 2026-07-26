@@ -90,6 +90,7 @@ export function providerWithProfilePreferences(provider = {}, profile = {}, paye
   const localizedProvider = {
     ...provider,
     responseLanguage: profile.language === "pt-PT" ? "pt-PT" : "en-US",
+    wardrobeUserId: profile.id || provider.userId || null,
     ...(provider.id === "openrouter" && payerKey ? { key: payerKey, keyOwner: "profile" } : {}),
   };
   if (provider.id !== "openrouter") return localizedProvider;
@@ -680,6 +681,7 @@ function logAiCall({ provider, model, operation, response, result = {}, startedA
   if (provider.userId && typeof provider.recordUsage === "function") {
     void provider.recordUsage({
       userId: provider.userId,
+      wardrobeUserId: provider.wardrobeUserId || provider.userId,
       provider: provider.id,
       model,
       operation,
@@ -2751,6 +2753,8 @@ export function wardrobeImportApi(options = {}) {
       ledger.entries.push({
         id,
         userId: entry.userId,
+        // Which wardrobe the work was done in, which is not always who paid.
+        wardrobeUserId: USER_ID.test(entry.wardrobeUserId || "") ? entry.wardrobeUserId : entry.userId,
         provider: cleanLogValue(entry.provider || "unknown").slice(0, 40),
         model: cleanLogValue(entry.model || "unknown").slice(0, 180),
         operation: cleanLogValue(entry.operation || "other").slice(0, 60),
@@ -2850,7 +2854,9 @@ export function wardrobeImportApi(options = {}) {
       readAiUsageLedger(),
       readImportHistory(),
     ]);
-    return summarizeAiUsage(ledger.entries, userId, history.uploads);
+    const store = await loadUsersStore();
+    const wardrobeNames = Object.fromEntries((store?.users || []).map((user) => [user.id, user.name]));
+    return summarizeAiUsage(ledger.entries, userId, history.uploads, wardrobeNames);
   };
 
   // Activities carry thumbnails, so they are built from the same user-scoped asset
@@ -3792,7 +3798,7 @@ export function wardrobeImportApi(options = {}) {
       if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
       if (!provider.key) {
         throw apiError(
-          `${provider.keyEnv} is not configured. Add it to .env, then restart the app.`,
+          "No OpenRouter key is available. Add your own key under AI & costs in your profile.",
           503,
           `${provider.id}_key_missing`,
         );
@@ -3904,7 +3910,7 @@ export function wardrobeImportApi(options = {}) {
       if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
       if (!provider.key) {
         throw apiError(
-          `${provider.keyEnv} is not configured. Add it to .env, then restart the app.`,
+          "No OpenRouter key is available. Add your own key under AI & costs in your profile.",
           503,
           `${provider.id}_key_missing`,
         );
@@ -4150,7 +4156,7 @@ export function wardrobeImportApi(options = {}) {
         )) || profile;
         const provider = providerWithProfilePreferences(aiProvider(current.billingUserId || current.userId), profile, billingProfile);
         if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
-        if (!provider.key) throw apiError(`${provider.keyEnv} is not configured. Add it to .env, then restart the app.`, 503, `${provider.id}_key_missing`);
+        if (!provider.key) throw apiError("No OpenRouter key is available. Add your own key under AI & costs in your profile.", 503, `${provider.id}_key_missing`);
         const editImage = provider.id === "openrouter" ? openRouterEdit : openAIEdit;
         const sourceFile = stageName === "garment" && current.internal.cropFile ? current.internal.cropFile : current.internal.originalFile;
         const original = { data: await readFile(path.join(dir, sourceFile)), mime: "image/png", name: sourceFile };
@@ -4749,7 +4755,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
         if (!provider.key) {
           throw apiError(
-            `${provider.keyEnv} is not configured. Add it to the server environment, then restart the app.`,
+            "No OpenRouter key is available. Add your own key under AI & costs in your profile.",
             503,
             `${provider.id}_key_missing`,
           );
@@ -4830,7 +4836,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
         if (!provider.key) {
           throw apiError(
-            `${provider.keyEnv} is not configured. Add it to the server environment, then restart the app.`,
+            "No OpenRouter key is available. Add your own key under AI & costs in your profile.",
             503,
             `${provider.id}_key_missing`,
           );

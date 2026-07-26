@@ -448,7 +448,12 @@ function ImportQueueCard({ job, draft, selected, busy, deferred, confirmDelete, 
       <div className="import-card__body">
         <h3 className="import-card__title">{itemName}</h3>
         <p className="import-card__detail import-card__detail--status" data-tone={status.tone}>
-          {status.tone === "error" ? readableError(status.detail) : deferred ? tr("Ready after crop review") : status.text}
+          <span
+            className="import-card__status-text"
+            title={status.tone === "error" ? readableError(status.detail) : undefined}
+          >
+            {status.tone === "error" ? readableError(status.detail) : deferred ? tr("Ready after crop review") : status.text}
+          </span>
         </p>
       </div>
       <div className="import-card__actions">

@@ -740,9 +740,12 @@ button.import-source-option:focus-visible,
 .import-cleanup-editor + .import-card-list { margin-top: 28px; }
 .import-card-list + .import-actions { margin-top: 28px; }
 .import-card {
-  display: grid;
-  grid-template-columns: 88px minmax(0, 1fr) auto;
-  gap: 14px;
+  /* Flex rather than a fixed grid: when a long status message leaves no room
+     for the buttons they wrap onto their own line instead of squeezing the
+     text column to nothing and letting it spill across the thumbnail. */
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 14px;
   align-items: center;
   padding: 10px;
   border: 1px solid var(--import-line);
@@ -750,6 +753,7 @@ button.import-source-option:focus-visible,
   background: rgba(255, 255, 255, 0.38);
 }
 .import-card__stage {
+  flex: 0 0 auto;
   width: 88px;
   aspect-ratio: 4 / 5;
   display: grid;
@@ -757,15 +761,26 @@ button.import-source-option:focus-visible,
   border-radius: 10px;
 }
 .import-card__image { width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
-.import-card__body { min-width: 0; }
+.import-card__body { flex: 1 1 150px; min-width: 0; }
 .import-card__title { margin: 0 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; }
 .import-card__detail { margin: 0; color: var(--import-muted); font-size: 12px; }
-.import-card__detail--status { display: flex; align-items: center; gap: 8px; }
-.import-card__detail--status::before { content: ""; flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .42; }
+.import-card__detail--status { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.import-card__detail--status::before { content: ""; flex: 0 0 6px; width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: currentColor; opacity: .42; }
+/* Keep a long provider error to three lines; the full text is on hover. */
+.import-card__status-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
 .import-card__detail--status[data-tone="processing"]::before { animation: import-pulse 1.2s ease-in-out infinite; }
 .import-card__detail--status[data-tone="error"] { color: #8a3f35; }
 .import-card__detail--status[data-tone="complete"] { color: #49604b; }
-.import-card__actions { display: flex; gap: 4px; }
+.import-card__actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-left: auto; }
 .import-card__delete { color: #7c4038; }
 .import-card__delete:hover,
 .import-card__delete:focus-visible { background: rgba(124, 64, 56, 0.1); }

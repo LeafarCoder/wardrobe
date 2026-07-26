@@ -2879,6 +2879,20 @@ function ProfileAiUsage({ user }) {
                     </p>
                   ))}
                 </div>
+                {usage.byWardrobe?.length > 1 && (
+                  <div>
+                    <h4>{tr("By wardrobe")}</h4>
+                    {usage.byWardrobe.map((group) => (
+                      <p key={group.id}>
+                        <span>
+                          {group.isOwn ? tr("Your wardrobe") : group.label}
+                          <small>{tr(group.requests === 1 ? "{count} call" : "{count} calls", { count: group.requests })}</small>
+                        </span>
+                        <strong>{formatAiCost(group.cost)}</strong>
+                      </p>
+                    ))}
+                  </div>
+                )}
                 <div>
                   <h4>{tr("By model")}</h4>
                   {usage.byModel.slice(0, 6).map((group) => (
