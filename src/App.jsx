@@ -61,6 +61,7 @@ import {
   WARDROBE_SHOWCASE_MODES,
   wardrobeItemMatches,
 } from "./wardrobe-discovery.js";
+import { withWardrobeUser } from "./user-scope.js";
 
 const STORAGE_KEY = "open-wardrobe-edits-v1";
 const DELETED_STORAGE_KEY = "open-wardrobe-deleted-v1";
@@ -2989,7 +2990,7 @@ function ProfileAiUsage({ user }) {
     if (!user?.id) return;
     let active = true;
     setStatus("loading");
-    profileApi(`/api/users/${user.id}/ai-usage`)
+    profileApi(withWardrobeUser(`/api/users/${user.id}/ai-usage`, user.id))
       .then((result) => {
         if (!active) return;
         setUsage(result);
@@ -3288,7 +3289,10 @@ function AiActivityLogDialog({ user, summary, onClose }) {
     if (nextOffset === null || loading) return;
     setLoading(true);
     try {
-      const page = await profileApi(`/api/users/${user.id}/ai-usage/activities?offset=${nextOffset}&limit=20`);
+      const page = await profileApi(withWardrobeUser(
+        `/api/users/${user.id}/ai-usage/activities?offset=${nextOffset}&limit=20`,
+        user.id,
+      ));
       setActivities((current) => {
         const seen = new Set(current.map((activity) => activity.id));
         return [...current, ...(page.activities || []).filter((activity) => !seen.has(activity.id))];
@@ -5023,7 +5027,7 @@ export function App() {
         : user
     )));
     try {
-      const result = await profileApi(`/api/users/${currentUserId}`, {
+      const result = await profileApi(withWardrobeUser(`/api/users/${currentUserId}`, currentUserId), {
         method: "PATCH",
         body: JSON.stringify({
           wardrobeSortMode: nextSortMode,
@@ -5056,7 +5060,7 @@ export function App() {
 
   const persistSavedViews = async (nextViews) => {
     if (!currentUserId) return null;
-    const result = await profileApi(`/api/users/${currentUserId}`, {
+    const result = await profileApi(withWardrobeUser(`/api/users/${currentUserId}`, currentUserId), {
       method: "PATCH",
       body: JSON.stringify({ savedViews: nextViews }),
     });
@@ -5072,7 +5076,7 @@ export function App() {
       user.id === currentUserId ? { ...user, wardrobeDisplay: normalized } : user
     )));
     try {
-      const result = await profileApi(`/api/users/${currentUserId}`, {
+      const result = await profileApi(withWardrobeUser(`/api/users/${currentUserId}`, currentUserId), {
         method: "PATCH",
         body: JSON.stringify({ wardrobeDisplay: normalized }),
       });
@@ -5211,7 +5215,7 @@ export function App() {
     setMergeBusy(true);
     setMergeError("");
     try {
-      const result = await profileApi("/api/import/wardrobe/merge", {
+      const result = await profileApi(withWardrobeUser("/api/import/wardrobe/merge", currentUserId), {
         method: "POST",
         body: JSON.stringify({ keepId: mergeKeepId, discardId }),
       });
@@ -5370,7 +5374,7 @@ export function App() {
       setError(tr("The backup could not include every browser-only change. Check your connection and try the download again."));
       return;
     }
-    window.location.assign("/api/export");
+    window.location.assign(withWardrobeUser("/api/export", currentUserId));
   };
 
   const saveProfile = async (input) => {
@@ -5378,7 +5382,9 @@ export function App() {
     setProfileError("");
     try {
       const editingUser = profileEditor === "new" ? null : users.find((user) => user.id === profileEditor);
-      const result = await profileApi(editingUser ? `/api/users/${editingUser.id}` : "/api/users", {
+      const result = await profileApi(editingUser
+        ? withWardrobeUser(`/api/users/${editingUser.id}`, editingUser.id)
+        : "/api/users", {
         method: editingUser ? "PATCH" : "POST",
         body: JSON.stringify(input),
       });

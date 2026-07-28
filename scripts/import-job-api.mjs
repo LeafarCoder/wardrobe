@@ -3119,9 +3119,9 @@ export function wardrobeImportApi(options = {}) {
     })),
     referenceImages: (profile.referenceImages || []).map((reference) => ({
       ...reference,
-      url: profileReferenceUrl(profile.id, reference.fileName),
+      url: withUser(profileReferenceUrl(profile.id, reference.fileName), profile.id),
       avatarUrl: reference.avatarFileName
-        ? profileReferenceUrl(profile.id, reference.avatarFileName)
+        ? withUser(profileReferenceUrl(profile.id, reference.avatarFileName), profile.id)
         : undefined,
     })),
   });

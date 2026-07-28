@@ -775,6 +775,7 @@ const pt = {
   "Delete {name} saved view": "Eliminar a vista guardada {name}",
   "{category} wardrobe items": "Peças do guarda-roupa: {category}",
   "The profile could not be saved.": "Não foi possível guardar o perfil.",
+  "You can only edit your own profile.": "Só pode editar o seu próprio perfil.",
   "Could not read that photo.": "Não foi possível ler essa fotografia.",
   "The garment preview could not be loaded.": "Não foi possível carregar a pré-visualização da peça.",
   "The color preview could not be rendered.": "Não foi possível criar a pré-visualização da cor.",
