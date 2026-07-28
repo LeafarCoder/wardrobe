@@ -50,8 +50,7 @@ export const OUTFIT_POSES = [
 ];
 
 export const OUTFIT_SEASONS = ["spring", "summer", "autumn", "winter"];
-export const OUTFIT_MAX_GARMENTS_PER_PERSON = 6;
-export const OUTFIT_MAX_GARMENTS = 12;
+export const OUTFIT_MAX_GARMENTS = 10;
 
 const OCCASION_IDS = new Set(OUTFIT_OCCASIONS.map((option) => option.id));
 const WEATHER_IDS = new Set(OUTFIT_WEATHER.map((option) => option.id));

@@ -6,6 +6,7 @@ import {
   normalizeWardrobeOutfits,
   wardrobeOutfitAssets,
   wardrobeOutfitsAfterGarmentMerge,
+  OUTFIT_MAX_GARMENTS,
 } from "../src/outfit-studio.js";
 
 const ITEMS = [
@@ -63,4 +64,11 @@ test("normalizes saved outfits, retargets merges, and collects modeled assets", 
   const merged = wardrobeOutfitsAfterGarmentMerge(outfits, "keeper", "discarded");
   assert.deepEqual(merged[0].garments.map((item) => item.itemId), ["keeper"]);
   assert.deepEqual(wardrobeOutfitAssets(merged), ["/look.png", "/look.webp"]);
+});
+
+test("keeps at most ten garments on an outfit board", () => {
+  const garments = Array.from({ length: 12 }, (_, index) => ({ itemId: `item-${index}` }));
+  const [outfit] = normalizeWardrobeOutfits([{ id: "ten", name: "Ten pieces", garments }]);
+  assert.equal(OUTFIT_MAX_GARMENTS, 10);
+  assert.equal(outfit.garments.length, 10);
 });

@@ -115,6 +115,17 @@ test("saved outfit CRUD validates garments and persists context, variants, and p
     assert.deepEqual(created.json().outfit.context.weather, ["mild"]);
     const outfitId = created.json().outfit.id;
 
+    const second = await request(api, "/api/import/outfits", "POST", {
+      name: "Simple shirt",
+      garments: [{ itemId: "import-11111111-1111-4111-8111-111111111111" }],
+    });
+    assert.equal(second.statusCode, 201);
+    const secondId = second.json().outfit.id;
+
+    const reordered = await request(api, "/api/import/outfits/order", "PATCH", { ids: [outfitId, secondId] });
+    assert.equal(reordered.statusCode, 200);
+    assert.deepEqual(reordered.json().user.wardrobeOutfits.map((outfit) => outfit.id), [outfitId, secondId]);
+
     const updated = await request(api, `/api/import/outfits/${outfitId}`, "PATCH", {
       name: "Summer dinner",
       garments: [{ itemId: "import-11111111-1111-4111-8111-111111111111" }],
@@ -134,6 +145,8 @@ test("saved outfit CRUD validates garments and persists context, variants, and p
     const deleted = await request(api, `/api/import/outfits/${outfitId}`, "DELETE");
     assert.equal(deleted.statusCode, 200);
     assert.equal(deleted.json().deleted, true);
+    const deletedSecond = await request(api, `/api/import/outfits/${secondId}`, "DELETE");
+    assert.equal(deletedSecond.statusCode, 200);
     const users = JSON.parse(await readFile(path.join(dataDir, "users.json"), "utf8"));
     assert.deepEqual(users.users.find((user) => user.id === "default").wardrobeOutfits, []);
   } finally {

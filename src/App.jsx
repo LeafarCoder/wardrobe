@@ -5844,6 +5844,20 @@ export function App() {
     { method: "POST", body: JSON.stringify(input) },
   );
 
+  const nameWardrobeOutfit = async (input) => profileApi(
+    `/api/import/outfits/name?user=${encodeURIComponent(currentUserId)}`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+
+  const reorderWardrobeOutfits = async (ids) => {
+    const result = await profileApi(`/api/import/outfits/order?user=${encodeURIComponent(currentUserId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ ids }),
+    });
+    setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+    return result.user.wardrobeOutfits;
+  };
+
   const generateWardrobeOutfitLook = async (outfitId) => {
     const result = await profileApi(`/api/import/outfits/${encodeURIComponent(outfitId)}/modeled?user=${encodeURIComponent(currentUserId)}`, {
       method: "POST",
@@ -6221,6 +6235,8 @@ export function App() {
           onSave={saveWardrobeOutfit}
           onDelete={deleteWardrobeOutfit}
           onRefine={refineWardrobeOutfit}
+          onGenerateName={nameWardrobeOutfit}
+          onReorder={reorderWardrobeOutfits}
           onGenerate={generateWardrobeOutfitLook}
           onDeleteLook={deleteWardrobeOutfitLook}
         />

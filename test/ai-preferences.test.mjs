@@ -32,6 +32,7 @@ test("migrates the retired Gemini 3.1 Flash id to a live higher-quality route", 
 
 test("groups Outfit Studio text and image calls under the saved outfit", () => {
   assert.equal(operationGroup("outfit-refine"), "outfit");
+  assert.equal(operationGroup("outfit-name"), "outfit");
   assert.equal(operationGroup("modeled-outfit"), "outfit");
   assert.equal(operationGroup("modeled-plan"), "modeled");
 });

@@ -11,14 +11,17 @@ import {
   openRouterHeaders,
   openRouterImageRequest,
   openRouterOutfitRequest,
+  openRouterOutfitNameRequest,
   openRouterPlannerRequest,
   OPENROUTER_WARDROBE_PLAN_SCHEMA,
   plannerModelCandidates,
   parseOutfitRefinement,
+  parseOutfitName,
   providerResponseError,
   WARDROBE_PLAN_SCHEMA,
   wardrobePlanPrompt,
   outfitRefinementPrompt,
+  outfitNamePrompt,
 } from "../scripts/import-job-api.mjs";
 
 test("makes a Portuguese bracelet correction override watch-like crop ambiguity", () => {
@@ -168,6 +171,22 @@ test("uses a compact strict schema for three AI outfit candidates", () => {
   assert.equal(request.response_format.json_schema.strict, true);
   assert.equal(request.provider.zdr, true);
   assert.equal(JSON.stringify(request.response_format).includes("maxItems"), false);
+});
+
+test("names an outfit from metadata and context with a compact text-only request", () => {
+  const prompt = outfitNamePrompt(
+    { garments: [{ itemId: "shirt" }], context: { occasion: "dinner", weather: ["mild"], season: "summer" } },
+    { language: "pt-PT" },
+    [{ id: "shirt", name: "Camisa de linho", part: "upperbody", color: "#ffffff", image: "private.png" }],
+  );
+  const request = openRouterOutfitNameRequest({ provider: { zdr: true }, model: "planner", prompt });
+
+  assert.match(prompt, /European Portuguese/);
+  assert.match(prompt, /Camisa de linho/);
+  assert.doesNotMatch(prompt, /private\.png/);
+  assert.equal(request.response_format.json_schema.name, "outfit_name");
+  assert.equal(request.max_tokens, 100);
+  assert.equal(parseOutfitName('{"name":"  Jantar de Linho  "}', { id: "openrouter", label: "OpenRouter" }), "Jantar de Linho");
 });
 
 test("filters invalid and duplicate AI outfit candidates locally", () => {
