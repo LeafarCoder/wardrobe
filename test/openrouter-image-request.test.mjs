@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   analysisPrompt,
   buildGarmentPrompt,
+  buildModeledPrompt,
   buildOutfitStudioModeledPrompt,
   buildPlannedOutfitPrompt,
   editWithSafetyFallback,
@@ -102,6 +103,43 @@ test("grounds a planned modeled outfit in every garment, place, date, and occasi
   assert.match(prompt, /2026-12-04 through 2026-12-07/);
   assert.match(prompt, /formal restaurant/);
   assert.match(prompt, /Cold with occasional rain/);
+});
+
+test("locks facial and anatomical identity in every modeled-look workflow", () => {
+  const garmentPrompt = buildModeledPrompt(2, { name: "Rafael", age: 34 }, { name: "Navy jacket" });
+  const plannedPrompt = buildPlannedOutfitPrompt(
+    2,
+    { name: "Rafael", age: 34 },
+    {},
+    { name: "Dinner" },
+    [{ name: "Navy jacket", part: "wholebody_up" }],
+  );
+  const studioPrompt = buildOutfitStudioModeledPrompt(
+    [
+      { profile: { name: "Rafael", age: 34 }, referenceCount: 2 },
+      { profile: { name: "Sara", age: 31 }, referenceCount: 1 },
+    ],
+    { name: "Rafael" },
+    {},
+    [
+      { name: "Navy jacket", wearerName: "Rafael" },
+      { name: "Cream dress", wearerName: "Sara" },
+    ],
+  );
+
+  for (const prompt of [garmentPrompt, plannedPrompt, studioPrompt]) {
+    assert.match(prompt, /Identity lock — highest priority/);
+    assert.match(prompt, /eye shape, color and spacing/i);
+    assert.match(prompt, /nose/i);
+    assert.match(prompt, /jawline and face contour/i);
+    assert.match(prompt, /skin tone and visible skin texture/i);
+    assert.match(prompt, /apparent age/i);
+    assert.match(prompt, /body shape/i);
+    assert.match(prompt, /Do not beautify, idealize/i);
+    assert.match(prompt, /generic fashion-model face/i);
+  }
+  assert.match(studioPrompt, /from only that person's own reference group/i);
+  assert.match(studioPrompt, /never average, blend or invent identities/i);
 });
 
 test("grounds an Outfit Studio image in every chosen garment and presentation control", () => {

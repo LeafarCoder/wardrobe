@@ -1807,8 +1807,13 @@ export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metad
     profile.favoriteColors?.length ? `Favorite colors: ${profile.favoriteColors.join(", ")}.` : null,
     profile.preferences ? `Personal styling preferences and constraints: ${profile.preferences}.` : null,
   ].filter(Boolean).join(" ");
+  const identityLock = modeledIdentityLock(profile.name || "the referenced person");
 
-  return `Create a professional horizontal 3:2 editorial fashion photograph. ${personImages} Image ${garmentImage} is the exact garment reference. Show that person wearing that garment. ${categoryDirection} ${profileDetails} Preserve the person's recognizable identity, face, hair, age, skin tone, and proportions across the references. Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.`;
+  return `Create a professional horizontal 3:2 editorial fashion photograph. ${personImages} Image ${garmentImage} is the exact garment reference. Show that person wearing that garment. ${categoryDirection} ${profileDetails} ${identityLock} Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.`;
+}
+
+function modeledIdentityLock(subject = "the referenced person") {
+  return `Identity lock — highest priority: Maintain the exact identity of ${subject} from the identity reference images. Keep the same facial geometry and distinctive features: eye shape, color and spacing; eyebrows; nose shape; mouth and lip shape; cheekbones; jawline and face contour; ears; hairline, hair color and hair texture; skin tone and visible skin texture; and apparent age. Preserve the same body shape, height impression and proportions. A new expression, pose, clothing and lighting are allowed, but those identity traits must not change. Do not beautify, idealize, age up or down, slim, enlarge, symmetrize, reshape the face or body, smooth away real skin texture, add unreferenced makeup, or substitute a generic fashion-model face. When references differ in angle, expression or lighting, reconcile them as views of the same real person using their stable shared traits; never average, blend or invent an identity.`;
 }
 
 export function buildPlannedOutfitPrompt(personReferenceCount = 1, profile = {}, plan = {}, outfit = {}, garments = []) {
@@ -1849,6 +1854,7 @@ export function buildPlannedOutfitPrompt(personReferenceCount = 1, profile = {},
     profile.fashionStyle ? `Their preferred fashion style is ${profile.fashionStyle}.` : null,
     profile.preferences ? `Personal styling preferences and constraints: ${profile.preferences}.` : null,
   ].filter(Boolean).join(" ");
+  const identityLock = modeledIdentityLock(profile.name || "the wardrobe owner");
 
   return `Create one professional horizontal 3:2 editorial fashion photograph for the saved wardrobe plan.
 
@@ -1858,7 +1864,7 @@ Outfit: "${outfit.name || "Planned outfit"}". Styling occasion and mood: ${outfi
 
 Mandatory garments: Dress the referenced person in EVERY supplied garment reference together in the same look. Preserve each garment's exact identity, silhouette, color, material, pattern, fit, construction, logo, and distinctive detail. Do not omit, replace, merge, redesign, recolor, or invent any of them. Garment details: ${garmentRequirements}.
 
-Person: ${profileDetails} Preserve the recognizable face, hair, apparent age, skin tone, body proportions, and identity from the person references. Show exactly one person with realistic anatomy.
+Person: ${profileDetails} ${identityLock} Show exactly one person with realistic anatomy.
 
 Setting and season: ${setting} ${season} Make the environment, natural light, pose, layering, and overall mood appropriate to the stated place, time of year, weather expectations, dress code, and outfit note. For walking or casual plans, use a natural active street or neighborhood moment. For formal plans, use a refined setting and composed posture. Avoid an artificial studio unless the plan explicitly calls for one.
 
@@ -1901,6 +1907,9 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
     person.profile?.fashionStyle ? `Their preferred style is ${person.profile.fashionStyle}.` : null,
     person.profile?.preferences ? `Their personal constraints are ${person.profile.preferences}.` : null,
   ].filter(Boolean).join(" ")).join(" ");
+  const identityLock = people.length === 1
+    ? modeledIdentityLock(people[0].profile?.name || "the referenced person")
+    : `Identity lock — highest priority: Maintain the exact identity of every named person from only that person's own reference group. For each person, keep the same facial geometry and distinctive eye shape, color and spacing; eyebrows; nose; mouth and lips; cheekbones; jawline and face contour; ears; hairline, hair color and texture; skin tone and visible skin texture; apparent age; body shape; height impression; and proportions. Expressions, poses, clothing and lighting may change, but identity traits must not. Do not beautify, idealize, age, slim, enlarge, symmetrize, reshape, smooth away real skin texture, add unreferenced makeup, substitute generic fashion-model faces, or transfer any feature between people. Reconcile different views within each person's group as the same real person; never average, blend or invent identities.`;
   const presentationDirection = [
     presentation.background !== "automatic" ? `Background: ${presentation.background}.` : "Choose a tasteful background appropriate to the outfit context.",
     presentation.style !== "automatic" ? `Photographic style: ${presentation.style}.` : "Use a natural editorial fashion-photography style.",
@@ -1914,7 +1923,7 @@ References: ${identityReferences} ${garmentReferences}
 
 Mandatory outfit: Dress the referenced ${people.length === 1 ? "person" : "people"} in EVERY supplied garment assigned to them. Preserve the exact product identity, silhouette, color version shown in its reference, material, pattern, fit, construction, logo, and distinctive detail. Do not omit, replace, merge, redesign, recolor, swap between people, or invent any supplied garment. Garment details: ${requirements}.
 
-People: ${profileDetails} Preserve each person's recognizable face, hair, apparent age, skin tone, body proportions, and identity from only their own reference group. Show exactly ${people.length} ${people.length === 1 ? "person" : "people"} with realistic anatomy. Keep the identities distinct; never blend faces, bodies, ages, or features between people. Place them together naturally in the requested scene.
+People: ${profileDetails} ${identityLock} Show exactly ${people.length} ${people.length === 1 ? "person" : "people"} with realistic anatomy. Keep the identities distinct; never blend faces, bodies, ages, or features between people. Place them together naturally in the requested scene.
 
 Context: Occasion ${context.occasion || "not specified"}; weather ${context.weather.join(", ") || "not specified"}; season ${context.season || "not specified"}. Make the styling, layering, light, and setting believable for that context.
 
@@ -3446,7 +3455,7 @@ export function wardrobeImportApi(options = {}) {
         plannerModel: migrateAiModelId(setting("OPENROUTER_PLANNER_MODEL", setting("OPENROUTER_VISION_MODEL", "google/gemini-3.1-flash-lite"))),
         plannerFallbackModels: parseModelList(setting("OPENROUTER_PLANNER_FALLBACK_MODELS", "google/gemini-2.5-flash-lite")).map(migrateAiModelId),
         garmentModel: migrateAiModelId(setting("OPENROUTER_GARMENT_MODEL", imageModel || "google/gemini-3.1-flash-lite-image")),
-        modeledModel: migrateAiModelId(setting("OPENROUTER_MODELED_MODEL", imageModel || "google/gemini-3.1-flash-lite-image")),
+        modeledModel: migrateAiModelId(setting("OPENROUTER_MODELED_MODEL", imageModel || "google/gemini-3.1-flash-image")),
         modeledMultiReferenceModel: migrateAiModelId(setting("OPENROUTER_MODELED_MULTI_REFERENCE_MODEL", "google/gemini-3.1-flash-image")),
         imageFallbackModels: parseModelList(setting("OPENROUTER_IMAGE_FALLBACK_MODELS", "bytedance-seed/seedream-4.5")),
         imageQuality: setting("OPENROUTER_IMAGE_QUALITY", "auto"),
