@@ -179,6 +179,33 @@ test("normalizes saved planner results for personal-data portability", () => {
   assert.equal(plan.result.missingItems[0].searchQuery, "packable rain jacket");
 });
 
+test("enforces planner list limits locally after provider output is parsed", () => {
+  const createItems = (count, mapper) => Array.from({ length: count }, (_, index) => mapper(index));
+  const [plan] = normalizeWardrobePlans([{
+    id: "oversized-plan",
+    result: {
+      expectedWeather: {
+        conditions: createItems(10, (index) => `condition-${index}`),
+      },
+      recommendedItems: createItems(35, (index) => ({ itemId: `item-${index}`, reason: `reason-${index}` })),
+      outfitIdeas: createItems(15, (index) => ({
+        name: `outfit-${index}`,
+        itemIds: createItems(15, (itemIndex) => `item-${itemIndex}`),
+        note: `note-${index}`,
+      })),
+      missingItems: createItems(25, (index) => ({ name: `missing-${index}` })),
+      packingNotes: createItems(15, (index) => `note-${index}`),
+    },
+  }]);
+
+  assert.equal(plan.result.expectedWeather.conditions.length, 8);
+  assert.equal(plan.result.recommendedItems.length, 30);
+  assert.equal(plan.result.outfitIdeas.length, 12);
+  assert.equal(plan.result.outfitIdeas[0].itemIds.length, 12);
+  assert.equal(plan.result.missingItems.length, 20);
+  assert.equal(plan.result.packingNotes.length, 12);
+});
+
 test("keeps multiple generated outfit images inside saved wardrobe plans", () => {
   const [plan] = normalizeWardrobePlans([{
     id: "trip-look",

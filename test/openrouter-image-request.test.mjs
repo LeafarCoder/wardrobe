@@ -10,6 +10,7 @@ import {
   openRouterHeaders,
   openRouterImageRequest,
   openRouterPlannerRequest,
+  OPENROUTER_WARDROBE_PLAN_SCHEMA,
   plannerModelCandidates,
   providerResponseError,
   WARDROBE_PLAN_SCHEMA,
@@ -207,7 +208,7 @@ test("maps an exhausted OpenRouter balance to a human-readable credit error", ()
   assert.match(error.message, /no available credit/i);
 });
 
-test("constrains planner responses to the wardrobe plan schema", () => {
+test("constrains planner response shape without provider state-heavy array bounds", () => {
   const request = openRouterPlannerRequest({
     provider: { zdr: true },
     model: "google/gemini-3.1-flash-lite",
@@ -217,7 +218,10 @@ test("constrains planner responses to the wardrobe plan schema", () => {
   assert.equal(request.response_format.type, "json_schema");
   assert.equal(request.response_format.json_schema.name, "wardrobe_plan");
   assert.equal(request.response_format.json_schema.strict, true);
-  assert.deepEqual(request.response_format.json_schema.schema, WARDROBE_PLAN_SCHEMA);
+  assert.deepEqual(request.response_format.json_schema.schema, OPENROUTER_WARDROBE_PLAN_SCHEMA);
+  assert.deepEqual(OPENROUTER_WARDROBE_PLAN_SCHEMA.required, WARDROBE_PLAN_SCHEMA.required);
+  assert.match(JSON.stringify(WARDROBE_PLAN_SCHEMA), /maxItems/);
+  assert.doesNotMatch(JSON.stringify(OPENROUTER_WARDROBE_PLAN_SCHEMA), /(?:minItems|maxItems)/);
   assert.equal(request.provider.require_parameters, true);
   assert.equal(request.provider.data_collection, "deny");
   assert.equal(request.provider.zdr, true);

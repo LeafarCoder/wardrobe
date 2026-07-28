@@ -228,6 +228,23 @@ export const WARDROBE_PLAN_SCHEMA = {
   ],
 };
 
+function schemaWithoutArrayLengthBounds(value) {
+  if (Array.isArray(value)) return value.map(schemaWithoutArrayLengthBounds);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).flatMap(([key, nested]) => (
+    key === "minItems" || key === "maxItems"
+      ? []
+      : [[key, schemaWithoutArrayLengthBounds(nested)]]
+  )));
+}
+
+// Gemini compiles JSON Schema array bounds into serving states. Combining the
+// planner's several large lists with itemIds nested inside outfitIdeas can exceed
+// that compiler's state limit before a request is generated. The same caps are
+// enforced by normalizeWardrobePlans after parsing, so OpenRouter only needs the
+// required object shape and value types here.
+export const OPENROUTER_WARDROBE_PLAN_SCHEMA = schemaWithoutArrayLengthBounds(WARDROBE_PLAN_SCHEMA);
+
 const WARDROBE_PLAN_OUTPUT_GUIDE = `Return only one valid JSON object with exactly this shape:
 {
   "summary": "short overview",
@@ -2542,7 +2559,7 @@ export function openRouterPlannerRequest({ provider, model, prompt }) {
       json_schema: {
         name: "wardrobe_plan",
         strict: true,
-        schema: WARDROBE_PLAN_SCHEMA,
+        schema: OPENROUTER_WARDROBE_PLAN_SCHEMA,
       },
     },
     max_tokens: 8192,
