@@ -4768,6 +4768,32 @@ Interpret this correction semantically in whatever language it is written. It ov
         });
         return json(res, 200, { currentUserId: input.userId });
       }
+      if (url.pathname === `${USERS_ROOT}/openrouter-key` && req.method === "PATCH") {
+        const input = await body(req, 16 * 1024);
+        const openRouterApiKey = normalizeOpenRouterApiKey(input.openRouterApiKey);
+        if (!openRouterApiKey) {
+          throw apiError(
+            "Paste a complete OpenRouter API key beginning with sk-or-.",
+            400,
+            "invalid_openrouter_key",
+          );
+        }
+        // AI spend follows the signed-in identity even when an owner is viewing
+        // another wardrobe. Save this shortcut's key to that payer, never to a
+        // profile selected through `?user=`.
+        const profile = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const index = store.users.findIndex((candidate) => candidate.id === signedInIdentity.id);
+          if (index < 0) throw apiError("Your signed-in profile no longer exists.", 404, "user_not_found");
+          store.users[index] = normalizeProfile({ openRouterApiKey }, {
+            ...store.users[index],
+            updatedAt: new Date().toISOString(),
+          });
+          await saveUsersStore(store);
+          return store.users[index];
+        });
+        return json(res, 200, { user: publicProfile(profile) });
+      }
       const aiActivityMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/ai-usage\/activities$/i);
       if (aiActivityMatch && req.method === "GET") {
         if (aiActivityMatch[1] !== signedInUserId) throw apiError("You can only open your own wardrobe.", 403, "forbidden_profile");

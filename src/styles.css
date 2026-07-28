@@ -6313,12 +6313,235 @@ button { font: inherit; }
   .look-delete-overlay,
   .look-delete-dialog,
   .source-photo-overlay,
-  .source-photo-dialog { animation: none; }
+  .source-photo-dialog,
+  .openrouter-key-overlay,
+  .openrouter-key-dialog { animation: none; }
   .modeled-request__spinner { animation: none; }
   .viewer.shake {
     animation: none;
     box-shadow: inset 3px 0 0 var(--accent), -18px 0 50px rgba(25, 24, 22, .08);
   }
+}
+
+.openrouter-key-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 360;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(35, 32, 28, .58);
+  animation: look-delete-overlay-in 150ms ease-out both;
+}
+
+.openrouter-key-dialog {
+  width: min(610px, 100%);
+  max-height: min(92dvh, 760px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 0 30px 90px rgba(25, 24, 22, .32);
+  animation: look-delete-dialog-in 180ms cubic-bezier(.22, .8, .22, 1) both;
+}
+
+.openrouter-key-dialog > header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+  padding: 19px 20px 18px 24px;
+}
+
+.openrouter-key-dialog > header p {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.openrouter-key-dialog > header h2 { margin: 0; font-size: 23px; font-weight: 470; letter-spacing: -.025em; }
+.openrouter-key-dialog > header > button {
+  width: 39px;
+  height: 39px;
+  flex: 0 0 39px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.openrouter-key-dialog > header > button:hover,
+.openrouter-key-dialog > header > button:focus-visible { border-color: var(--ink); outline: none; }
+.openrouter-key-dialog > header > button:disabled { opacity: .45; cursor: default; }
+
+.openrouter-key-dialog__body { overflow-y: auto; padding: 22px 24px 20px; }
+.openrouter-key-dialog__intro {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 20px;
+}
+.openrouter-key-dialog__intro > span {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .28);
+}
+.openrouter-key-dialog__intro p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+
+.openrouter-key-dialog__steps {
+  counter-reset: openrouter-step;
+  display: grid;
+  gap: 0;
+  margin: 0 0 21px;
+  padding: 0;
+  list-style: none;
+}
+.openrouter-key-dialog__steps li {
+  counter-increment: openrouter-step;
+  min-height: 43px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border-top: 1px solid var(--line);
+  padding: 8px 2px;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.openrouter-key-dialog__steps li:last-child { border-bottom: 1px solid var(--line); }
+.openrouter-key-dialog__steps li::before {
+  content: counter(openrouter-step);
+  width: 23px;
+  height: 23px;
+  flex: 0 0 23px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 9px;
+}
+.openrouter-key-dialog__steps li:first-child > span { flex: 1; }
+.openrouter-key-dialog__steps a {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 2px;
+  color: var(--ink);
+  font-size: 10px;
+  text-decoration: none;
+}
+.openrouter-key-dialog__steps a:hover,
+.openrouter-key-dialog__steps a:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
+
+.openrouter-key-dialog__field { display: grid; gap: 7px; }
+.openrouter-key-dialog__field > label {
+  font-size: 10px;
+  font-weight: 560;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.openrouter-key-dialog__input { position: relative; display: block; }
+.openrouter-key-dialog__input input {
+  width: 100%;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 10px 48px 10px 12px;
+  background: rgba(255, 255, 255, .38);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+.openrouter-key-dialog__input input:focus { border-color: var(--ink); outline: 1px solid var(--ink); outline-offset: 2px; }
+.openrouter-key-dialog__input button {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.openrouter-key-dialog__input button:hover,
+.openrouter-key-dialog__input button:focus-visible { color: var(--ink); outline: none; }
+.openrouter-key-dialog__field small { color: var(--muted); font-size: 9px; line-height: 1.5; }
+.openrouter-key-dialog__privacy {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 15px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+.openrouter-key-dialog__privacy svg { flex: 0 0 auto; margin-top: 1px; }
+.openrouter-key-dialog__error { margin: 13px 0 0; color: var(--accent); font-size: 10px; line-height: 1.45; }
+
+.openrouter-key-dialog > footer {
+  min-height: 68px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding: 13px 20px 14px 24px;
+}
+.openrouter-key-dialog > footer .primary-button { min-width: 126px; }
+.openrouter-key-dialog > footer .primary-button:disabled { opacity: .42; cursor: default; }
+.openrouter-key-dialog__spinner { animation: spin .8s linear infinite; }
+
+.openrouter-key-dialog__success {
+  min-height: 250px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  padding: 38px 24px;
+  text-align: center;
+}
+.openrouter-key-dialog__success > span {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 15px;
+  border: 1px solid #819485;
+  border-radius: 50%;
+  color: #55785e;
+}
+.openrouter-key-dialog__success h3 { margin: 0 0 7px; font-size: 20px; font-weight: 480; }
+.openrouter-key-dialog__success p { max-width: 330px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+
+@media (max-width: 620px) {
+  .openrouter-key-overlay { align-items: end; padding: 10px; }
+  .openrouter-key-dialog { max-height: calc(100dvh - 20px); }
+  .openrouter-key-dialog > header { padding: 17px 15px 15px 18px; }
+  .openrouter-key-dialog > header h2 { font-size: 21px; }
+  .openrouter-key-dialog__body { padding: 19px 18px 17px; }
+  .openrouter-key-dialog__steps li:first-child { align-items: flex-start; flex-wrap: wrap; padding-block: 10px; }
+  .openrouter-key-dialog__steps li:first-child > span { min-width: calc(100% - 36px); }
+  .openrouter-key-dialog__steps li:first-child > a { margin-left: 34px; }
+  .openrouter-key-dialog > footer { padding: 12px 15px; }
 }
 
 .profile-api-key {

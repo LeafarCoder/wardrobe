@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, Eye, EyeSlash, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { BrandIcon } from "./BrandIcon.jsx";
 import { CITY_SUGGESTIONS } from "./city-suggestions.js";
@@ -9,6 +9,11 @@ import { formatDate, getLocale, LANGUAGE_OPTIONS, setLocale, tr, useLocale } fro
 import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
 import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
+import {
+  isValidOpenRouterKey,
+  notifyOpenRouterKeyRequired,
+  OPENROUTER_KEY_REQUIRED_EVENT,
+} from "./openrouter-key.js";
 import { ProductStage } from "./ProductStage.jsx";
 import { AI_TASKS, formatAiCost, normalizeAiPreferences } from "./ai-preferences.js";
 import { garmentVariationColors, normalizeHexColor } from "./garment-recolor.js";
@@ -304,6 +309,7 @@ async function profileApi(path, options) {
     const error = new Error(tr(value.error || "The profile could not be saved."));
     error.status = response.status;
     error.code = value.code;
+    notifyOpenRouterKeyRequired(error);
     throw error;
   }
   return value;
@@ -3439,6 +3445,144 @@ function ProfileApiKeyEditor({ user, value, onChange }) {
   );
 }
 
+function OpenRouterKeyDialog({ busy, error, saved, onClose, onSave }) {
+  const [value, setValue] = useState("");
+  const [visible, setVisible] = useState(false);
+  const inputRef = useRef(null);
+  const doneButtonRef = useRef(null);
+
+  useEffect(() => {
+    (saved ? doneButtonRef : inputRef).current?.focus({ preventScroll: true });
+  }, [saved]);
+
+  const keepFocus = (event) => {
+    if (event.key === "Escape" && !busy) {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const controls = [...event.currentTarget.querySelectorAll("a[href], button:not(:disabled), input:not(:disabled)")];
+    if (!controls.length) return;
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  return (
+    <div
+      className="openrouter-key-overlay"
+      role="presentation"
+      onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}
+    >
+      <form
+        className="openrouter-key-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="openrouter-key-title"
+        aria-describedby="openrouter-key-description"
+        onKeyDown={keepFocus}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (isValidOpenRouterKey(value) && !busy) onSave(value.trim());
+        }}
+      >
+        <header>
+          <div>
+            <p>{tr("Image generation setup")}</p>
+            <h2 id="openrouter-key-title">{tr(saved ? "Your key is ready" : "Add your OpenRouter key")}</h2>
+          </div>
+          <button type="button" onClick={onClose} disabled={busy} aria-label={tr("Close OpenRouter setup")}>
+            <X size={20} aria-hidden="true" />
+          </button>
+        </header>
+
+        {saved ? (
+          <div className="openrouter-key-dialog__success">
+            <span><Check size={23} weight="bold" aria-hidden="true" /></span>
+            <h3>{tr("OpenRouter key saved")}</h3>
+            <p>{tr("Close this window and try your image generation again.")}</p>
+          </div>
+        ) : (
+          <div className="openrouter-key-dialog__body">
+            <div className="openrouter-key-dialog__intro">
+              <span><Key size={21} weight="light" aria-hidden="true" /></span>
+              <p id="openrouter-key-description">
+                {tr("Wardrobe could not find an OpenRouter key for your account. Add one here to create garment and modeled images.")}
+              </p>
+            </div>
+
+            <ol className="openrouter-key-dialog__steps">
+              <li>
+                <span>{tr("Open your OpenRouter API keys page.")}</span>
+                <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer noopener">
+                  {tr("Open openrouter.ai/keys")}
+                  <ArrowSquareOut size={13} aria-hidden="true" />
+                </a>
+              </li>
+              <li>{tr("Sign in or create an OpenRouter account.")}</li>
+              <li>{tr("Choose Create key, give it a name such as Wardrobe, and copy the complete key.")}</li>
+              <li>{tr("Add credits to your OpenRouter account before generating images.")}</li>
+            </ol>
+
+            <div className="openrouter-key-dialog__field">
+              <label htmlFor="openrouter-key-input">{tr("Paste your API key")}</label>
+              <span className="openrouter-key-dialog__input">
+                <input
+                  id="openrouter-key-input"
+                  ref={inputRef}
+                  type={visible ? "text" : "password"}
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck="false"
+                  placeholder="sk-or-v1-…"
+                  value={value}
+                  onChange={(event) => setValue(event.target.value)}
+                  aria-describedby="openrouter-key-format"
+                />
+                <button
+                  type="button"
+                  onClick={() => setVisible((current) => !current)}
+                  aria-label={tr(visible ? "Hide API key" : "Show API key")}
+                >
+                  {visible ? <EyeSlash size={17} aria-hidden="true" /> : <Eye size={17} aria-hidden="true" />}
+                </button>
+              </span>
+              <small id="openrouter-key-format">{tr("The complete key begins with sk-or-. Paste it exactly as OpenRouter shows it.")}</small>
+            </div>
+
+            <p className="openrouter-key-dialog__privacy">
+              <LockKey size={14} aria-hidden="true" />
+              {tr("Saved only on the Wardrobe server. It is never included in your photos, prompts, or browser storage.")}
+            </p>
+            {error && <p className="openrouter-key-dialog__error" role="alert">{error}</p>}
+          </div>
+        )}
+
+        <footer>
+          {saved ? (
+            <button ref={doneButtonRef} className="primary-button" type="button" onClick={onClose}>{tr("Done")}</button>
+          ) : (
+            <>
+              <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>{tr("Not now")}</button>
+              <button className="primary-button" type="submit" disabled={!isValidOpenRouterKey(value) || busy}>
+                {busy ? <SpinnerGap className="openrouter-key-dialog__spinner" size={15} aria-hidden="true" /> : <Check size={15} weight="bold" aria-hidden="true" />}
+                {tr(busy ? "Saving key…" : "Save API key")}
+              </button>
+            </>
+          )}
+        </footer>
+      </form>
+    </div>
+  );
+}
+
 function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
   const preferences = normalizeAiPreferences(value);
   const update = (taskId, model) => onChange(normalizeAiPreferences({ ...preferences, [taskId]: model }));
@@ -4571,6 +4715,10 @@ export function App() {
   const [profileEditor, setProfileEditor] = useState(null);
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileError, setProfileError] = useState("");
+  const [openRouterKeyDialogOpen, setOpenRouterKeyDialogOpen] = useState(false);
+  const [openRouterKeyBusy, setOpenRouterKeyBusy] = useState(false);
+  const [openRouterKeyError, setOpenRouterKeyError] = useState("");
+  const [openRouterKeySaved, setOpenRouterKeySaved] = useState(false);
   const [items, setItems] = useState([]);
   const [activeType, setActiveType] = useState("all");
   const [filters, setFilters] = useState(() => normalizeWardrobeFilters(DEFAULT_WARDROBE_FILTERS));
@@ -4621,9 +4769,23 @@ export function App() {
       setMergeKeepId(null);
       setMergeBusy(false);
       setMergeError("");
+      setOpenRouterKeyDialogOpen(false);
+      setOpenRouterKeyBusy(false);
+      setOpenRouterKeyError("");
+      setOpenRouterKeySaved(false);
     };
     window.addEventListener("wardrobe:unauthorized", onUnauthorized);
     return () => window.removeEventListener("wardrobe:unauthorized", onUnauthorized);
+  }, []);
+
+  useEffect(() => {
+    const openKeySetup = () => {
+      setOpenRouterKeyError("");
+      setOpenRouterKeySaved(false);
+      setOpenRouterKeyDialogOpen(true);
+    };
+    window.addEventListener(OPENROUTER_KEY_REQUIRED_EVENT, openKeySetup);
+    return () => window.removeEventListener(OPENROUTER_KEY_REQUIRED_EVENT, openKeySetup);
   }, []);
 
   useEffect(() => {
@@ -4745,16 +4907,20 @@ export function App() {
     setMergeKeepId(null);
     setMergeBusy(false);
     setMergeError("");
+    setOpenRouterKeyDialogOpen(false);
+    setOpenRouterKeyBusy(false);
+    setOpenRouterKeyError("");
+    setOpenRouterKeySaved(false);
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!plannerOpen && !savedViewDialogOpen && !savedViewDeleteCandidate && !mergeCandidateItem) return undefined;
+    if (!plannerOpen && !savedViewDialogOpen && !savedViewDeleteCandidate && !mergeCandidateItem && !openRouterKeyDialogOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [mergeCandidateItem, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
+  }, [mergeCandidateItem, openRouterKeyDialogOpen, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
 
   const customOrderedItems = useMemo(() => {
     const sourcePositions = new Map(items.map((item, index) => [item.id, index]));
@@ -5231,6 +5397,30 @@ export function App() {
     }
   };
 
+  const closeOpenRouterKeyDialog = () => {
+    if (openRouterKeyBusy) return;
+    setOpenRouterKeyDialogOpen(false);
+    setOpenRouterKeyError("");
+    setOpenRouterKeySaved(false);
+  };
+
+  const saveOpenRouterKey = async (openRouterApiKey) => {
+    setOpenRouterKeyBusy(true);
+    setOpenRouterKeyError("");
+    try {
+      const result = await profileApi("/api/users/openrouter-key", {
+        method: "PATCH",
+        body: JSON.stringify({ openRouterApiKey }),
+      });
+      setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+      setOpenRouterKeySaved(true);
+    } catch (requestError) {
+      setOpenRouterKeyError(requestError.message);
+    } finally {
+      setOpenRouterKeyBusy(false);
+    }
+  };
+
   const addImportedItem = useCallback((newItem) => {
     setItems((current) => current.some((item) => item.id === newItem.id)
       ? current.map((item) => item.id === newItem.id ? { ...item, ...newItem } : item)
@@ -5351,6 +5541,10 @@ export function App() {
       setCurrentUserId(null);
       setItems([]);
       setPlannerOpen(false);
+      setOpenRouterKeyDialogOpen(false);
+      setOpenRouterKeyBusy(false);
+      setOpenRouterKeyError("");
+      setOpenRouterKeySaved(false);
       closeViewer();
     }
   };
@@ -5592,6 +5786,15 @@ export function App() {
           key={`${currentUser.id}:${currentUser.updatedAt}`}
           userId={currentUser.id}
           onGarmentApproved={addImportedItem}
+        />
+      )}
+      {openRouterKeyDialogOpen && (
+        <OpenRouterKeyDialog
+          busy={openRouterKeyBusy}
+          error={openRouterKeyError}
+          saved={openRouterKeySaved}
+          onClose={closeOpenRouterKeyDialog}
+          onSave={saveOpenRouterKey}
         />
       )}
       {profileEditor && (

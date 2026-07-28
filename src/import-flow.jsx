@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowCounterClockwise, ArrowsLeftRight, Camera, Check, Clipboard, CoatHanger, Crop, Dress, FolderOpen, Handbag, ImageSquare, Pants, Plus, Sneaker, SpinnerGap, Trash, TShirt, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
 import { formatNumber, getLocale, tr } from "./i18n.js";
 import { LightSelect } from "./LightSelect.jsx";
+import { notifyOpenRouterKeyRequired } from "./openrouter-key.js";
 import { ProductStage } from "./ProductStage.jsx";
 import "./import-flow.css";
 
@@ -837,6 +838,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
   const [setup, setSetup] = useState(null);
 
   const showError = useCallback((error, title = "Import failed") => {
+    notifyOpenRouterKeyRequired(error);
     setToast({ id: Date.now(), tone: "error", title: tr(title), message: readableError(error) });
   }, []);
   const showCameraError = useCallback((error, message) => {
@@ -903,6 +905,9 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
 
   const submitFiles = useCallback(async (files) => {
     if (!setup?.ready) {
+      if (setup?.provider === "openrouter" && setup?.hasApiKey === false) {
+        notifyOpenRouterKeyRequired({ code: "openrouter_key_missing" });
+      }
       setOpen(true);
       showError(setupError(setup), "Import setup required");
       return;
@@ -1244,6 +1249,13 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
         : null;
   const progress = 0;
   const hasImportActivity = Boolean(jobs.length || notice || analysis || setupLoading || setupRequired);
+  const openImportTray = () => {
+    if (setupRequired && setup?.provider === "openrouter" && setup?.hasApiKey === false) {
+      notifyOpenRouterKeyRequired({ code: "openrouter_key_missing" });
+    }
+    if (setupRequired || hasImportActivity) setOpen(true);
+    else showSourcePicker();
+  };
 
   return (
     <>
@@ -1251,7 +1263,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
       <input ref={inputRef} type="file" accept="image/*" multiple hidden disabled={!setup?.ready || Boolean(analysis)} onChange={(event) => { submitFiles(event.target.files); event.target.value = ""; }} />
       <div className="import-drop-overlay" data-active={dragging && !setupRequired} aria-hidden={!dragging || setupRequired}><div className="import-drop-target is-over"><UploadSimple size={34} weight="light" /><h2>{tr("Drop clothing images")}</h2><p>{tr("A single garment or a photo of a full outfit works. Your wardrobe stays exactly where you left it.")}</p></div></div>
       <aside className={`import-tray${hasImportActivity ? " is-expanded" : ""}`} aria-label={tr("Wardrobe imports")}>
-        <button className="import-tray__button" type="button" onClick={() => setupRequired || hasImportActivity ? setOpen(true) : showSourcePicker()} aria-label={tr(setupRequired ? "Open setup instructions" : hasImportActivity ? "Open import progress" : "Add clothes")}>{activeStatus?.tone === "processing" ? <SpinnerGap size={19} className="import-spinner" /> : activeStatus?.tone === "error" ? <WarningCircle size={19} /> : readyCount ? <span>{readyCount}</span> : notice ? <X size={18} /> : <span className="import-tray__photo-icon" aria-hidden="true"><ImageSquare size={20} weight="regular" /><Plus className="import-tray__photo-plus" size={10} weight="bold" /></span>}</button>
+        <button className="import-tray__button" type="button" onClick={openImportTray} aria-label={tr(setupRequired ? "Open setup instructions" : hasImportActivity ? "Open import progress" : "Add clothes")}>{activeStatus?.tone === "processing" ? <SpinnerGap size={19} className="import-spinner" /> : activeStatus?.tone === "error" ? <WarningCircle size={19} /> : readyCount ? <span>{readyCount}</span> : notice ? <X size={18} /> : <span className="import-tray__photo-icon" aria-hidden="true"><ImageSquare size={20} weight="regular" /><Plus className="import-tray__photo-plus" size={10} weight="bold" /></span>}</button>
         <div className="import-tray__actions">{active && <img className="import-tray__preview" src={active.stages?.garment?.assetUrl || active.stages?.garment?.failedAssetUrl || active.stages?.crop?.assetUrl || active.originalAssetUrl} alt="" />}<span className="import-tray__label">{activeStatus?.text || tr("Add clothes")}</span></div>
       </aside>
       <div className="import-popover-backdrop" data-open={open} onMouseDown={(event) => event.target === event.currentTarget && closeImporter()}>
