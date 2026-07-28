@@ -129,6 +129,7 @@ test("an owner can prepare a wardrobe for an exact Google email before first sig
     const payload = response.json();
     assert.equal(payload.user.email, "partner@example.com");
     assert.equal(payload.user.accountStatus, "prepared");
+    assert.equal(payload.user.tutorial.status, "pending");
     assert.equal(payload.user.googleSubject, undefined);
     assert.equal(payload.user.preparedByUserId, undefined);
     assert.equal(payload.currentUserId, payload.user.id);
@@ -139,6 +140,7 @@ test("an owner can prepare a wardrobe for an exact Google email before first sig
     assert.equal(prepared.googleSubject, null);
     assert.equal(prepared.preparedByUserId, "default");
     assert.ok(prepared.accountPreparedAt);
+    assert.equal(prepared.tutorial.status, "pending");
 
     const duplicateResponse = mockResponse();
     await api.handler(mockRequest("/api/users", {
@@ -226,6 +228,18 @@ test("an owner can edit the selected tenant while non-owners remain isolated", a
     const saved = JSON.parse(await readFile(usersFile, "utf8"));
     assert.equal(saved.users.find((user) => user.id === TARGET_ID).wardrobeGroupMode, "color");
     assert.equal(saved.users.find((user) => user.id === "default").wardrobeGroupMode, "none");
+
+    const tutorialResponse = mockResponse();
+    await api.handler(mockRequest(`/api/users/tutorial?user=${TARGET_ID}`, {
+      status: "active",
+      step: "upload",
+    }), tutorialResponse, () => {});
+    assert.equal(tutorialResponse.statusCode, 200);
+    assert.equal(tutorialResponse.json().user.id, "default");
+    assert.equal(tutorialResponse.json().user.tutorial.step, "upload");
+    const tutorialStore = JSON.parse(await readFile(usersFile, "utf8"));
+    assert.equal(tutorialStore.users.find((user) => user.id === "default").tutorial.step, "upload");
+    assert.equal(tutorialStore.users.find((user) => user.id === TARGET_ID).tutorial.step, "profile");
 
     const missingScopeResponse = mockResponse();
     await api.handler(mockRequest(`/api/users/${TARGET_ID}`, {

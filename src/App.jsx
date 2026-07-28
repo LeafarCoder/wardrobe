@@ -12,6 +12,7 @@ import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
 import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { OutfitStudio } from "./OutfitStudio.jsx";
+import { TutorialWalkthrough } from "./TutorialWalkthrough.jsx";
 import {
   isValidOpenRouterKey,
   notifyOpenRouterKeyRequired,
@@ -487,6 +488,7 @@ function GalleryItem({
       )}
       aria-pressed={selected}
       data-testid={`wardrobe-item-${item.id}`}
+      data-tutorial="garment-card"
     >
       <span
         className="gallery-item__media"
@@ -2220,7 +2222,7 @@ function ItemViewer({
 
   return (
     <>
-    <div className="viewer-entry" aria-hidden={deleteCandidate || garmentDeleteOpen || sourcePhotoOpen || mediaPreviewOpen || colorEditorOpen || variantStudioOpen || modeledVariantPickerOpen ? "true" : undefined}>
+    <div className="viewer-entry" data-tutorial="garment-panel" aria-hidden={deleteCandidate || garmentDeleteOpen || sourcePhotoOpen || mediaPreviewOpen || colorEditorOpen || variantStudioOpen || modeledVariantPickerOpen ? "true" : undefined}>
     <aside className={`viewer editing${hasHeroImage ? " has-hero-image" : ""}${shaking ? " shake" : ""}`} aria-label={tr("Selected wardrobe item")}>
       <button className="viewer-icon-close" type="button" onClick={requestClose} aria-label={tr("Close viewer")}>
         <X size={24} weight="light" aria-hidden="true" />
@@ -3800,7 +3802,7 @@ function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
   );
 }
 
-function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave }) {
+function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, onStartTutorial }) {
   const isNew = !user;
   const accountEditable = canManageAccount && (isNew || user?.accountStatus === "prepared");
   const originalLanguageRef = useRef(user?.language || getLocale());
@@ -4043,7 +4045,7 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave })
               </div>
 
               <div className="profile-fields profile-basics-fields">
-                <label><span>{tr("Name")}</span><input required maxLength="80" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Rafael" /></label>
+                <label data-tutorial="profile-name"><span>{tr("Name")}</span><input required maxLength="80" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Rafael" /></label>
                 <label><span>{tr("Age")} <small>{tr("optional")}</small></span><input type="number" min="1" max="120" value={draft.age} onChange={(event) => setDraft({ ...draft, age: event.target.value })} placeholder="32" /></label>
                 <label className="profile-field-wide profile-city-field">
                   <span>{tr("City")} <small>{tr("optional")}</small></span>
@@ -4080,6 +4082,16 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave })
                   />
                 </label>
               </div>
+              {!isNew && onStartTutorial && (
+                <div className="profile-tutorial-card">
+                  <span><Sparkle size={17} weight="regular" /></span>
+                  <div>
+                    <strong>{tr("Wardrobe walkthrough")}</strong>
+                    <small>{tr("Replay the guided introduction to importing clothes, garment details, plans, and Outfit Studio.")}</small>
+                  </div>
+                  <button type="button" onClick={onStartTutorial}>{tr("Start walkthrough")}</button>
+                </div>
+              )}
             </section>
           )}
           {activeTab === "sizes" && (
@@ -4606,6 +4618,7 @@ function WardrobePlanner({
     >
       <section
         className="planner-dialog"
+        data-tutorial="planner-dialog"
         role="dialog"
         aria-modal={viewerItemId ? "false" : "true"}
         aria-labelledby="planner-title"
@@ -4918,6 +4931,8 @@ export function App() {
   const [plannerBusy, setPlannerBusy] = useState(false);
   const [plannerError, setPlannerError] = useState("");
   const [outfitStudioOpen, setOutfitStudioOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState("profile");
   const [sortMode, setSortMode] = useState("custom");
   const [groupMode, setGroupMode] = useState("none");
   const [organizationStatus, setOrganizationStatus] = useState("");
@@ -4934,6 +4949,7 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const suppressOpenAfterDrag = useRef(false);
+  const autoTutorialUserRef = useRef(null);
 
   useEffect(() => {
     profileApi("/api/auth/status")
@@ -5075,6 +5091,35 @@ export function App() {
   }, [auth?.authenticated, currentUserId]);
 
   const currentUser = users.find((user) => user.id === currentUserId) || null;
+
+  const persistTutorial = useCallback(async (status, step) => {
+    const result = await profileApi("/api/users/tutorial", {
+      method: "PATCH",
+      body: JSON.stringify({ status, step }),
+    });
+    setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+    return result.user;
+  }, []);
+
+  useEffect(() => {
+    const ownWardrobe = currentUser?.id && currentUser.id === auth?.user?.id;
+    const state = currentUser?.tutorial;
+    if (!ownWardrobe) {
+      setTutorialOpen(false);
+      return;
+    }
+    if (!["pending", "active"].includes(state?.status)) return;
+    if (autoTutorialUserRef.current === currentUser.id) return;
+    autoTutorialUserRef.current = currentUser.id;
+    const step = state.step || "profile";
+    setTutorialStep(step);
+    setTutorialOpen(true);
+    if (step === "profile") {
+      setProfileError("");
+      setProfileEditor(currentUser.id);
+    }
+    if (state.status === "pending") void persistTutorial("active", step).catch((requestError) => setError(requestError.message));
+  }, [auth?.user?.id, currentUser, persistTutorial]);
 
   useEffect(() => {
     if (!profileEditor && currentUser?.language && currentUser.language !== locale) setLocale(currentUser.language);
@@ -5582,6 +5627,45 @@ export function App() {
     window.location.assign(withWardrobeUser("/api/export", currentUserId));
   };
 
+  const advanceTutorial = (step) => {
+    if (step === "upload") setProfileEditor(null);
+    if (step === "garment") window.dispatchEvent(new Event("wardrobe:close-import"));
+    if (step === "explore") closeViewer();
+    setTutorialStep(step);
+    void persistTutorial("active", step).catch((requestError) => setError(requestError.message));
+  };
+
+  const startTutorial = () => {
+    if (!currentUser || currentUser.id !== auth?.user?.id) return;
+    setPlannerOpen(false);
+    setOutfitStudioOpen(false);
+    closeViewer();
+    setTutorialStep("profile");
+    setTutorialOpen(true);
+    setProfileError("");
+    setProfileEditor(currentUser.id);
+    void persistTutorial("active", "profile").catch((requestError) => setError(requestError.message));
+  };
+
+  const cancelTutorial = () => {
+    setTutorialOpen(false);
+    void persistTutorial("dismissed", tutorialStep).catch((requestError) => setError(requestError.message));
+  };
+
+  const finishTutorial = () => {
+    setTutorialOpen(false);
+    void persistTutorial("completed", "finish").catch((requestError) => setError(requestError.message));
+  };
+
+  const openTutorialImporter = () => window.dispatchEvent(new Event("wardrobe:open-import"));
+
+  const openTutorialPlanner = () => {
+    closeViewer();
+    setPlannerError("");
+    setPlannerOpen(true);
+    advanceTutorial("finish");
+  };
+
   const saveProfile = async (input) => {
     setProfileBusy(true);
     setProfileError("");
@@ -5599,6 +5683,10 @@ export function App() {
       if (!editingUser) {
         setCurrentUserId(result.currentUserId);
         setActiveType("all");
+      }
+      if (tutorialOpen && tutorialStep === "profile" && editingUser?.id === auth?.user?.id) {
+        setTutorialStep("upload");
+        void persistTutorial("active", "upload").catch((requestError) => setError(requestError.message));
       }
       setProfileEditor(null);
     } catch (requestError) {
@@ -5699,6 +5787,12 @@ export function App() {
       }
     }
     setOutfitStudioOpen(true);
+  };
+
+  const openTutorialOutfitStudio = () => {
+    closeViewer();
+    advanceTutorial("finish");
+    void openOutfitStudio();
   };
 
   const closeOpenRouterKeyDialog = () => {
@@ -5930,7 +6024,7 @@ export function App() {
               <span>{tr(items.length === 1 ? "{count} garment" : "{count} garments", { count: items.length })}</span>
             </p>
           </div>
-          <div className="discovery-toolbar">
+          <div className="discovery-toolbar" data-tutorial="wardrobe-tools">
             <button
               className={filterRailOpen ? "active" : ""}
               type="button"
@@ -6192,6 +6286,7 @@ export function App() {
           canManageAccount={isOwner}
           onClose={() => !profileBusy && setProfileEditor(null)}
           onSave={saveProfile}
+          onStartTutorial={users.find((user) => user.id === profileEditor)?.id === auth?.user?.id ? startTutorial : null}
         />
       )}
       {savedViewDialogOpen && (
@@ -6239,6 +6334,21 @@ export function App() {
           onReorder={reorderWardrobeOutfits}
           onGenerate={generateWardrobeOutfitLook}
           onDeleteLook={deleteWardrobeOutfitLook}
+        />
+      )}
+      {tutorialOpen && currentUser?.id === auth?.user?.id && (
+        <TutorialWalkthrough
+          step={tutorialStep}
+          userName={currentUser.name}
+          garmentCount={items.length}
+          hasSelectedGarment={Boolean(selectedItem)}
+          onAdvance={advanceTutorial}
+          onCancel={cancelTutorial}
+          onOpenProfile={() => { setProfileError(""); setProfileEditor(currentUser.id); }}
+          onOpenImporter={openTutorialImporter}
+          onOpenPlanner={openTutorialPlanner}
+          onOpenOutfitStudio={openTutorialOutfitStudio}
+          onFinish={finishTutorial}
         />
       )}
     </div>

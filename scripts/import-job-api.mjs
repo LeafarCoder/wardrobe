@@ -50,6 +50,7 @@ import {
   paginateAiActivities,
   summarizeAiUsage,
 } from "../src/ai-preferences.js";
+import { normalizeTutorialState, updateTutorialState } from "../src/tutorial.js";
 
 const API_ROOT = "/api/import/jobs";
 const ASSET_ROOT = "/api/import/assets";
@@ -3536,6 +3537,9 @@ export function wardrobeImportApi(options = {}) {
       savedViews: normalizeSavedViews(input.savedViews ?? existing.savedViews),
       wardrobePlans: normalizeWardrobePlans(input.wardrobePlans ?? existing.wardrobePlans),
       wardrobeOutfits: normalizeWardrobeOutfits(input.wardrobeOutfits ?? existing.wardrobeOutfits),
+      // Missing state belongs to installations that predate onboarding, so it
+      // must not surprise every existing person with a first-login tour.
+      tutorial: normalizeTutorialState(existing.tutorial, { defaultStatus: "completed" }),
       wardrobeSortMode: WARDROBE_SORT_MODES.has(rawSortMode) ? rawSortMode : "custom",
       wardrobeGroupMode: WARDROBE_GROUP_MODES.has(rawGroupMode)
         ? rawGroupMode
@@ -3802,6 +3806,7 @@ export function wardrobeImportApi(options = {}) {
         googleSubject: identity.subject,
         email,
         referenceImages: [],
+        tutorial: { status: "pending", step: "profile" },
         createdAt: now,
         updatedAt: now,
       });
@@ -5771,6 +5776,7 @@ Interpret this correction semantically in whatever language it is written. It ov
               accountClaimedAt: null,
               preparedByUserId: signedInIdentity.id,
               referenceImages,
+              tutorial: { status: "pending", step: "profile" },
               createdAt: now,
               updatedAt: now,
             });
@@ -5799,6 +5805,23 @@ Interpret this correction semantically in whatever language it is written. It ov
           await saveUsersStore(store);
         });
         return json(res, 200, { currentUserId: input.userId });
+      }
+      if (url.pathname === `${USERS_ROOT}/tutorial` && req.method === "PATCH") {
+        const input = await body(req, 8 * 1024);
+        const profile = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const index = store.users.findIndex((candidate) => candidate.id === signedInIdentity.id);
+          if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+          const now = new Date().toISOString();
+          store.users[index] = {
+            ...store.users[index],
+            tutorial: updateTutorialState(store.users[index].tutorial, input, now),
+            updatedAt: now,
+          };
+          await saveUsersStore(store);
+          return store.users[index];
+        });
+        return json(res, 200, { user: publicProfile(profile) });
       }
       if (url.pathname === `${USERS_ROOT}/openrouter-key` && req.method === "PATCH") {
         const input = await body(req, 16 * 1024);

@@ -115,6 +115,7 @@ function ImportSourcePicker({ disabled, notice, onChooseFiles, onDropFiles, onRe
   return (
     <div
       className="import-source-picker"
+      data-tutorial="import-source"
       aria-label={tr("Choose how to add clothing images")}
     >
       <div className="import-source-picker__intro">
@@ -533,7 +534,7 @@ function ImportQueueBoard({ jobs, drafts, selectedId, busyId, onReview, onRetry,
     </section>
   );
   return (
-    <div className="import-queue-board">
+    <div className="import-queue-board" data-tutorial="import-review">
       {lane("inspect", "1", "Identify & compare", "Check detected crops and resolve likely duplicates.", inspection)}
       {lane("create", "2", "Create garments", "Generate, refine, and approve clean garment images.", creation)}
     </div>
@@ -1257,20 +1258,31 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
     else showSourcePicker();
   };
 
+  useEffect(() => {
+    const openFromTutorial = () => openImportTray();
+    const closeFromTutorial = () => closeImporter();
+    window.addEventListener("wardrobe:open-import", openFromTutorial);
+    window.addEventListener("wardrobe:close-import", closeFromTutorial);
+    return () => {
+      window.removeEventListener("wardrobe:open-import", openFromTutorial);
+      window.removeEventListener("wardrobe:close-import", closeFromTutorial);
+    };
+  });
+
   return (
     <>
       <ImportToast toast={toast} onDismiss={() => setToast(null)} />
       <input ref={inputRef} type="file" accept="image/*" multiple hidden disabled={!setup?.ready || Boolean(analysis)} onChange={(event) => { submitFiles(event.target.files); event.target.value = ""; }} />
       <div className="import-drop-overlay" data-active={dragging && !setupRequired} aria-hidden={!dragging || setupRequired}><div className="import-drop-target is-over"><UploadSimple size={34} weight="light" /><h2>{tr("Drop clothing images")}</h2><p>{tr("A single garment or a photo of a full outfit works. Your wardrobe stays exactly where you left it.")}</p></div></div>
       <aside className={`import-tray${hasImportActivity ? " is-expanded" : ""}`} aria-label={tr("Wardrobe imports")}>
-        <button className="import-tray__button" type="button" onClick={openImportTray} aria-label={tr(setupRequired ? "Open setup instructions" : hasImportActivity ? "Open import progress" : "Add clothes")}>{activeStatus?.tone === "processing" ? <SpinnerGap size={19} className="import-spinner" /> : activeStatus?.tone === "error" ? <WarningCircle size={19} /> : readyCount ? <span>{readyCount}</span> : notice ? <X size={18} /> : <span className="import-tray__photo-icon" aria-hidden="true"><ImageSquare size={20} weight="regular" /><Plus className="import-tray__photo-plus" size={10} weight="bold" /></span>}</button>
+        <button className="import-tray__button" data-tutorial="import-add" type="button" onClick={openImportTray} aria-label={tr(setupRequired ? "Open setup instructions" : hasImportActivity ? "Open import progress" : "Add clothes")}>{activeStatus?.tone === "processing" ? <SpinnerGap size={19} className="import-spinner" /> : activeStatus?.tone === "error" ? <WarningCircle size={19} /> : readyCount ? <span>{readyCount}</span> : notice ? <X size={18} /> : <span className="import-tray__photo-icon" aria-hidden="true"><ImageSquare size={20} weight="regular" /><Plus className="import-tray__photo-plus" size={10} weight="bold" /></span>}</button>
         <div className="import-tray__actions">{active && <img className="import-tray__preview" src={active.stages?.garment?.assetUrl || active.stages?.garment?.failedAssetUrl || active.stages?.crop?.assetUrl || active.originalAssetUrl} alt="" />}<span className="import-tray__label">{activeStatus?.text || tr("Add clothes")}</span></div>
       </aside>
       <div className="import-popover-backdrop" data-open={open} onMouseDown={(event) => event.target === event.currentTarget && closeImporter()}>
         <section className="import-popover" ref={sourcePickerRef} role="dialog" aria-modal="true" aria-labelledby="import-title" tabIndex={-1} onPaste={(event) => !cameraOpen && (sourcePickerOpen || !jobs.length) && handlePaste(event)}>
           <header className="import-popover__header"><div><p className="import-popover__eyebrow">{tr("Wardrobe import")}</p><h2 className="import-popover__title" id="import-title">{analysis ? tr("Analyzing your image") : cameraOpen ? tr("Take a photo") : !setupRequired && (sourcePickerOpen || !jobs.length) ? tr("Add clothes") : readyCount ? tr("{count} ready for review", { count: readyCount }) : activeStatus?.tone === "error" ? tr("Import needs attention") : jobs.length ? tr("Preparing new garments") : notice?.text || tr("Add to your wardrobe")}</h2></div><button className="import-icon-button" type="button" onClick={closeImporter} aria-label={tr("Close import")}><X size={20} /></button></header>
           {analysis ? (
-            <div className={`import-analysis${analysis.photos?.length > 1 ? " has-multiple" : ""}`} role="status" aria-live="polite">
+            <div className={`import-analysis${analysis.photos?.length > 1 ? " has-multiple" : ""}`} data-tutorial="import-analysis" role="status" aria-live="polite">
               <div className="import-analysis__photos" aria-label={tr("Photos being analyzed")}>
                 {analysis.photos?.map((photo, index) => {
                   const current = index + 1 === analysis.current;

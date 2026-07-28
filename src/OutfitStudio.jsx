@@ -448,7 +448,7 @@ export function OutfitStudio({
 
   return (
     <div className="outfit-studio-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
-      <section className="outfit-studio" role="dialog" aria-modal="true" aria-labelledby="outfit-studio-title">
+      <section className="outfit-studio" data-tutorial="outfit-studio" role="dialog" aria-modal="true" aria-labelledby="outfit-studio-title">
         <header className="outfit-studio-header">
           <div>
             <span>{tr("Visual outfit builder")}</span>

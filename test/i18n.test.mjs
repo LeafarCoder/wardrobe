@@ -43,6 +43,7 @@ test("every literal interface translation key has a Portuguese translation", asy
     new URL("../src/GarmentColorPreview.jsx", import.meta.url),
     new URL("../src/MonthYearPicker.jsx", import.meta.url),
     new URL("../src/OutfitStudio.jsx", import.meta.url),
+    new URL("../src/TutorialWalkthrough.jsx", import.meta.url),
   ];
   const keys = new Set();
   for (const file of files) {
