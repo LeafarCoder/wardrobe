@@ -1,11 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  discardedAssetsAfterMerge,
   duplicateCandidateScore,
   importedRecordAssets,
+  mergeImportedRecords,
   refineDetectedBoundingBoxes,
   recordWithSourcePhotos,
   sourcePhotosForRecord,
+  wardrobePlansAfterGarmentMerge,
 } from "../scripts/import-job-api.mjs";
 
 test("finds a strong same-category duplicate without auto-matching unrelated garments", () => {
@@ -140,4 +143,62 @@ test("keeps every unique source-photo occurrence and exposes its assets", () => 
   assert.deepEqual(sourcePhotosForRecord(record).map((photo) => photo.id), ["first", "second"]);
   assert.equal(record.originalImage, "/api/import/library/source-one.png");
   assert.ok(importedRecordAssets(record).includes("/api/import/library/source-two.png"));
+});
+
+test("merges existing garments without losing either original-photo occurrence", () => {
+  const keeper = recordWithSourcePhotos({
+    id: "import-keeper",
+    name: "Linen shirt",
+    image: "/api/import/library/keeper-garment.png",
+    imagePreview: "/api/import/library/keeper-preview.webp",
+  }, [{
+    id: "original",
+    image: "/api/import/library/keeper-source.png",
+    preview: "/api/import/library/keeper-source-preview.webp",
+    importJobId: "keeper-job",
+  }]);
+  const discarded = recordWithSourcePhotos({
+    id: "import-discarded",
+    name: "Duplicate shirt",
+    image: "/api/import/library/discarded-garment.png",
+    imagePreview: "/api/import/library/discarded-preview.webp",
+    modeledLooks: [{ id: "look", image: "/api/import/library/discarded-look.png" }],
+  }, [{
+    id: "original",
+    image: "/api/import/library/discarded-source.png",
+    preview: "/api/import/library/discarded-source-preview.webp",
+    importJobId: "discarded-job",
+  }]);
+
+  const merged = mergeImportedRecords(keeper, discarded, "2026-07-28T12:00:00.000Z");
+  const sources = sourcePhotosForRecord(merged);
+  const removedAssets = discardedAssetsAfterMerge(merged, discarded);
+
+  assert.equal(merged.id, keeper.id);
+  assert.equal(merged.name, keeper.name);
+  assert.equal(merged.updatedAt, "2026-07-28T12:00:00.000Z");
+  assert.deepEqual(sources.map((photo) => photo.id), ["original", "original-2"]);
+  assert.deepEqual(sources.map((photo) => photo.importJobId), ["keeper-job", "discarded-job"]);
+  assert.equal(merged.originalImage, "/api/import/library/keeper-source.png");
+  assert.ok(removedAssets.includes("/api/import/library/discarded-garment.png"));
+  assert.ok(removedAssets.includes("/api/import/library/discarded-look.png"));
+  assert.equal(removedAssets.includes("/api/import/library/discarded-source.png"), false);
+  assert.equal(removedAssets.includes("/api/import/library/discarded-source-preview.webp"), false);
+});
+
+test("retargets saved plan references when an existing garment is merged", () => {
+  const plans = wardrobePlansAfterGarmentMerge([{
+    id: "trip",
+    input: { kind: "trip", title: "Weekend" },
+    result: {
+      recommendedItems: [
+        { itemId: "import-keeper", reason: "Layer" },
+        { itemId: "import-discarded", reason: "Duplicate layer" },
+      ],
+      outfitIdeas: [{ name: "Travel", itemIds: ["import-discarded", "import-shoes"] }],
+    },
+  }], "import-keeper", "import-discarded");
+
+  assert.deepEqual(plans[0].result.recommendedItems.map((item) => item.itemId), ["import-keeper"]);
+  assert.deepEqual(plans[0].result.outfitIdeas[0].itemIds, ["import-keeper", "import-shoes"]);
 });

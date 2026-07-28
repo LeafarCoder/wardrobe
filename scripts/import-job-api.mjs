@@ -848,6 +848,30 @@ export function recordWithSourcePhotos(record, photos) {
   };
 }
 
+export function mergeImportedRecords(keeper = {}, discarded = {}, updatedAt = new Date().toISOString()) {
+  const sourcePhotos = [];
+  const seenAssets = new Set();
+  const seenIds = new Set();
+  for (const photo of [...sourcePhotosForRecord(keeper), ...sourcePhotosForRecord(discarded)]) {
+    const assetKey = photo.image.split("?")[0];
+    if (seenAssets.has(assetKey)) continue;
+    seenAssets.add(assetKey);
+    const baseId = String(photo.id || "source").replace(/[^a-z0-9-]/gi, "-").slice(0, 88) || "source";
+    let id = baseId;
+    let suffix = 2;
+    while (seenIds.has(id)) {
+      id = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+    seenIds.add(id);
+    sourcePhotos.push({ ...photo, id });
+  }
+  return recordWithSourcePhotos({
+    ...keeper,
+    updatedAt,
+  }, sourcePhotos);
+}
+
 const DUPLICATE_GENERIC_TOKENS = new Set([
   "a", "an", "the", "garment", "piece", "clothing", "item",
   "de", "da", "do", "das", "dos", "uma", "um", "peca", "roupa",
@@ -1050,6 +1074,35 @@ export function importedRecordAssets(record = {}) {
     record.modeledImage,
     ...modeledLooksForRecord(record).flatMap((look) => [look.image, look.preview]),
   ].filter(Boolean))];
+}
+
+export function discardedAssetsAfterMerge(mergedRecord = {}, discardedRecord = {}) {
+  const retained = new Set(importedRecordAssets(mergedRecord).map((asset) => asset.split("?")[0]));
+  return importedRecordAssets(discardedRecord).filter((asset) => !retained.has(asset.split("?")[0]));
+}
+
+export function wardrobePlansAfterGarmentMerge(value, keeperId, discardedId) {
+  return normalizeWardrobePlans(value).map((plan) => {
+    const recommendedIds = new Set();
+    const recommendedItems = plan.result.recommendedItems.flatMap((item) => {
+      const itemId = item.itemId === discardedId ? keeperId : item.itemId;
+      if (!itemId || recommendedIds.has(itemId)) return [];
+      recommendedIds.add(itemId);
+      return [{ ...item, itemId }];
+    });
+    const outfitIdeas = plan.result.outfitIdeas.map((outfit) => ({
+      ...outfit,
+      itemIds: [...new Set(outfit.itemIds.map((itemId) => itemId === discardedId ? keeperId : itemId))],
+    }));
+    return {
+      ...plan,
+      result: {
+        ...plan.result,
+        recommendedItems,
+        outfitIdeas,
+      },
+    };
+  });
 }
 
 export function wardrobePlanAssets(value = []) {
@@ -2845,6 +2898,33 @@ export function wardrobeImportApi(options = {}) {
     });
   };
 
+  const recordExistingGarmentMerge = (userId, keeperId, discardedId) => {
+    importHistoryWriteQueue = importHistoryWriteQueue.catch(() => {}).then(async () => {
+      const history = await readImportHistory();
+      let changed = false;
+      history.uploads = history.uploads.map((upload) => {
+        if (upload?.userId !== userId || !Array.isArray(upload.items)) return upload;
+        let uploadChanged = false;
+        const items = upload.items.map((item) => {
+          if (item?.garmentId !== discardedId && item?.mergedIntoId !== discardedId) return item;
+          changed = true;
+          uploadChanged = true;
+          return {
+            ...item,
+            outcome: "merged",
+            duplicateStatus: "merged",
+            garmentId: keeperId,
+            mergedIntoId: keeperId,
+            updatedAt: new Date().toISOString(),
+          };
+        });
+        return uploadChanged ? { ...upload, items, updatedAt: new Date().toISOString() } : upload;
+      });
+      if (changed) await atomicJson(importHistoryFile, history);
+    });
+    return importHistoryWriteQueue;
+  };
+
   const aiUsageSummary = async (userId) => {
     await Promise.all([
       usageWriteQueue.catch(() => {}),
@@ -4064,6 +4144,62 @@ export function wardrobeImportApi(options = {}) {
     return records[index];
   }
 
+  async function mergeExistingGarments(keeperId, discardedId, user) {
+    const merged = await withLibrary(async () => {
+      const records = await loadImported();
+      const keeperIndex = records.findIndex((record) => record.id === keeperId && record.userId === user.id);
+      const discardedIndex = records.findIndex((record) => record.id === discardedId && record.userId === user.id);
+      if (keeperIndex < 0 || discardedIndex < 0) {
+        throw apiError("One of these wardrobe garments no longer exists.", 404, "wardrobe_item_not_found");
+      }
+      const discardedRecord = records[discardedIndex];
+      const mergedRecord = mergeImportedRecords(records[keeperIndex], discardedRecord);
+      const cleanupAssets = discardedAssetsAfterMerge(mergedRecord, discardedRecord);
+      const next = records
+        .filter((record) => record !== discardedRecord)
+        .map((record) => record.id === keeperId && record.userId === user.id ? mergedRecord : record);
+      await saveImported(next);
+      return { record: mergedRecord, discardedRecord, cleanupAssets };
+    });
+
+    const cleanupResults = await Promise.allSettled(merged.cleanupAssets.map((asset) => rm(
+      path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+      { force: true },
+    )));
+    if (cleanupResults.some((result) => result.status === "rejected")) {
+      console.warn(`[wardrobe] Some unused generated assets from merged garment ${discardedId} could not be removed.`);
+    }
+
+    let profile = null;
+    try {
+      profile = await withUsers(async () => {
+        const store = await loadUsersStore();
+        const index = store.users.findIndex((candidate) => candidate.id === user.id);
+        if (index < 0) return null;
+        const wardrobePlans = wardrobePlansAfterGarmentMerge(
+          store.users[index].wardrobePlans,
+          keeperId,
+          discardedId,
+        );
+        store.users[index] = {
+          ...store.users[index],
+          wardrobePlans,
+          updatedAt: new Date().toISOString(),
+        };
+        await saveUsersStore(store);
+        return store.users[index];
+      });
+    } catch (error) {
+      console.warn(`[wardrobe] Garments merged, but saved plan references could not be updated: ${error.message}`);
+    }
+    await recordExistingGarmentMerge(user.id, keeperId, discardedId).catch((error) => {
+      console.warn(`[wardrobe] Garments merged, but import history could not be retargeted: ${error.message}`);
+    });
+
+    console.info(`[wardrobe] Merged existing garment "${merged.discardedRecord.name}" into "${merged.record.name}" and retained ${sourcePhotosForRecord(merged.record).length} source photos.`);
+    return { record: merged.record, profile };
+  }
+
   async function backfillOriginalFocus() {
     if (!booleanSetting("WARDROBE_BACKFILL_ORIGINAL_FOCUS", false)) return;
     const records = await loadImported();
@@ -4929,6 +5065,21 @@ Interpret this correction semantically in whatever language it is written. It ov
       }
       if (url.pathname === "/api/import/config" && req.method === "GET") {
         return json(res, 200, await setupStatus(user.id, payerProfile));
+      }
+      if (url.pathname === "/api/import/wardrobe/merge" && req.method === "POST") {
+        const input = await body(req, 8 * 1024);
+        const keeperId = typeof input.keepId === "string" ? input.keepId.trim() : "";
+        const discardedId = typeof input.discardId === "string" ? input.discardId.trim() : "";
+        const validItemId = (value) => /^[a-z0-9-]{1,100}$/i.test(value);
+        if (!validItemId(keeperId) || !validItemId(discardedId) || keeperId === discardedId) {
+          throw apiError("Choose two different wardrobe garments to merge.", 400, "invalid_garment_merge");
+        }
+        const merged = await mergeExistingGarments(keeperId, discardedId, user);
+        return json(res, 200, {
+          item: publicImportedRecord(merged.record, user.id),
+          removedId: discardedId,
+          ...(merged.profile ? { user: publicProfile(merged.profile) } : {}),
+        });
       }
       if (url.pathname === "/api/import/wardrobe/organization" && req.method === "PUT") {
         const input = await body(req, 256 * 1024);

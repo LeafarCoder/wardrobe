@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowsDownUp, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { BrandIcon } from "./BrandIcon.jsx";
 import { CITY_SUGGESTIONS } from "./city-suggestions.js";
@@ -407,6 +407,8 @@ function GalleryItem({
   item,
   display,
   selected,
+  mergeMode = false,
+  mergeSource = false,
   onOpen,
   draggable = false,
   dragging = false,
@@ -440,7 +442,7 @@ function GalleryItem({
 
   return (
     <button
-      className={`gallery-item${detailsVisible ? " has-details" : ""}${hasTileBackground ? " has-tile-background" : ""}${selected ? " selected" : ""}${dragging ? " is-dragging" : ""}${dropTarget ? " is-drop-target" : ""}`}
+      className={`gallery-item${detailsVisible ? " has-details" : ""}${hasTileBackground ? " has-tile-background" : ""}${selected ? " selected" : ""}${mergeMode ? " is-merge-option" : ""}${mergeSource ? " is-merge-source" : ""}${dragging ? " is-dragging" : ""}${dropTarget ? " is-drop-target" : ""}`}
       type="button"
       draggable={draggable}
       onClick={() => onOpen(item.id)}
@@ -450,7 +452,14 @@ function GalleryItem({
       onDragOver={(event) => onDragOver?.(event, item.id)}
       onDrop={(event) => onDrop?.(event, item.id)}
       onDragEnd={onDragEnd}
-      aria-label={tr(draggable ? "View {name}. Drag to change its position" : "View {name}", { name: item.name || type })}
+      aria-label={tr(
+        mergeSource
+          ? "Current garment: {name}"
+          : mergeMode
+            ? "Select {name} to merge"
+            : draggable ? "View {name}. Drag to change its position" : "View {name}",
+        { name: item.name || type },
+      )}
       aria-pressed={selected}
       data-testid={`wardrobe-item-${item.id}`}
     >
@@ -1247,6 +1256,122 @@ function GarmentVariantStudio({ item, garment, onClose, onCreate }) {
   );
 }
 
+function GarmentMergeDialog({ first, second, keepId, busy, error, onKeep, onCancel, onConfirm }) {
+  const cancelButtonRef = useRef(null);
+  const discarded = keepId ? (keepId === first.id ? second : first) : null;
+  const discardedSourceCount = discarded ? itemSourcePhotos(discarded).length : 0;
+
+  useEffect(() => {
+    cancelButtonRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  const keepFocus = (event) => {
+    if (event.key === "Escape" && !busy) {
+      event.preventDefault();
+      onCancel();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const buttons = [...event.currentTarget.querySelectorAll("button:not(:disabled)")];
+    if (!buttons.length) return;
+    const firstButton = buttons[0];
+    const lastButton = buttons[buttons.length - 1];
+    if (event.shiftKey && document.activeElement === firstButton) {
+      event.preventDefault();
+      lastButton.focus();
+    } else if (!event.shiftKey && document.activeElement === lastButton) {
+      event.preventDefault();
+      firstButton.focus();
+    }
+  };
+
+  return (
+    <div
+      className="garment-merge-overlay"
+      role="presentation"
+      onMouseDown={(event) => event.target === event.currentTarget && !busy && onCancel()}
+    >
+      <section
+        className="garment-merge-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="garment-merge-title"
+        aria-describedby="garment-merge-description"
+        onKeyDown={keepFocus}
+      >
+        <header>
+          <div>
+            <p>{tr("Merge garments")}</p>
+            <h2 id="garment-merge-title">{tr("Which garment do you want to keep?")}</h2>
+          </div>
+          <button type="button" onClick={onCancel} disabled={busy} aria-label={tr("Cancel garment merge")}>
+            <X size={20} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="garment-merge-dialog__body">
+          <p id="garment-merge-description">
+            {tr("The garment you keep will retain its name, details, and generated images.")}
+          </p>
+          <div className="garment-merge-dialog__options">
+            {[first, second].map((item) => {
+              const selected = keepId === item.id;
+              const sourceCount = itemSourcePhotos(item).length;
+              return (
+                <button
+                  className={selected ? "is-selected" : ""}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => onKeep(item.id)}
+                  disabled={busy}
+                  key={item.id}
+                >
+                  <ProductStage className="garment-merge-dialog__image" staticStage>
+                    <OptimizedImage
+                      src={item.imagePreview || item.image}
+                      alt=""
+                      sizes="(max-width: 620px) calc(50vw - 44px), 260px"
+                      breakpoints={[180, 240, 320, 480]}
+                      priority
+                      reveal
+                    />
+                  </ProductStage>
+                  <span className="garment-merge-dialog__item-copy">
+                    <strong>{item.name || tr(TYPE_MAP[item.part]?.singular || "Wardrobe item")}</strong>
+                    <small>{tr(TYPE_MAP[item.part]?.singular || "Wardrobe item")}{item.brand ? ` · ${item.brand}` : ""}</small>
+                    <small>{tr(sourceCount === 1 ? "{count} original photo" : "{count} original photos", { count: sourceCount })}</small>
+                  </span>
+                  <span className="garment-merge-dialog__choice">
+                    {selected && <Check size={14} weight="bold" aria-hidden="true" />}
+                    {tr(selected ? "Keeping this garment" : "Keep this garment")}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className={`garment-merge-dialog__note${discarded ? " is-ready" : ""}`} aria-live="polite">
+            {discarded
+              ? tr(
+                  discardedSourceCount === 1
+                    ? "The other garment will be removed, and its original photo will be added to the garment you keep."
+                    : "The other garment will be removed, and its {count} original photos will be added to the garment you keep.",
+                  { count: discardedSourceCount },
+                )
+              : tr("Select one garment above to continue.")}
+          </p>
+          {error && <p className="garment-merge-dialog__error" role="alert">{error}</p>}
+        </div>
+        <footer>
+          <button ref={cancelButtonRef} className="secondary-button" type="button" onClick={onCancel} disabled={busy}>{tr("Cancel")}</button>
+          <button className="primary-button" type="button" onClick={onConfirm} disabled={!keepId || busy}>
+            {busy ? <SpinnerGap className="modeled-request__spinner" size={15} aria-hidden="true" /> : <ArrowsLeftRight size={15} aria-hidden="true" />}
+            {tr(busy ? "Merging…" : "Confirm merge")}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function ItemViewer({
   item,
   currency,
@@ -1258,6 +1383,10 @@ function ItemViewer({
   onDeleteModeled,
   onDirtyChange,
   blockedSwitchSignal,
+  canMerge,
+  mergeSelecting,
+  onBeginMerge,
+  onCancelMerge,
 }) {
   const deleteLookButtonRef = useRef(null);
   const deleteCancelButtonRef = useRef(null);
@@ -1741,6 +1870,23 @@ function ItemViewer({
     }
   };
 
+  const requestGarmentMerge = () => {
+    if (mergeSelecting) {
+      onCancelMerge();
+      return;
+    }
+    if (!canMerge || deletingGarment || deletingModeled || generatingModeled) return;
+    if (isDirty) {
+      setViewerToast({
+        title: tr("Save this garment first"),
+        message: tr("Save your changes before merging this garment."),
+      });
+      nudgeUnsaved(false);
+      return;
+    }
+    onBeginMerge(item.id);
+  };
+
   const closeSourcePhoto = () => {
     setSourcePhotoOpen(false);
     setSourceCropVisible(false);
@@ -2039,6 +2185,20 @@ function ItemViewer({
             />
           )}
         />
+
+        <div className={`viewer-merge-action${mergeSelecting ? " is-active" : ""}`}>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={requestGarmentMerge}
+            disabled={!mergeSelecting && (!canMerge || deletingGarment || deletingModeled || generatingModeled)}
+            title={!canMerge ? tr("Add another garment before merging.") : undefined}
+          >
+            {mergeSelecting ? <X size={15} aria-hidden="true" /> : <ArrowsLeftRight size={15} aria-hidden="true" />}
+            {tr(mergeSelecting ? "Cancel garment merge" : "Merge with existing garment")}
+          </button>
+          {mergeSelecting && <small>{tr("Choose the second garment from the wardrobe on the left.")}</small>}
+        </div>
 
         {closeBlocked && <p className="unsaved-notice" role="status">{tr("Save or cancel changes before leaving this item.")}</p>}
 
@@ -4430,6 +4590,11 @@ export function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [viewerDirty, setViewerDirty] = useState(false);
   const [blockedSwitchSignal, setBlockedSwitchSignal] = useState(0);
+  const [mergeSourceId, setMergeSourceId] = useState(null);
+  const [mergeCandidateId, setMergeCandidateId] = useState(null);
+  const [mergeKeepId, setMergeKeepId] = useState(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const suppressOpenAfterDrag = useRef(false);
@@ -4451,6 +4616,11 @@ export function App() {
       setPlannerOpen(false);
       setViewerDirty(false);
       setBlockedSwitchSignal(0);
+      setMergeSourceId(null);
+      setMergeCandidateId(null);
+      setMergeKeepId(null);
+      setMergeBusy(false);
+      setMergeError("");
     };
     window.addEventListener("wardrobe:unauthorized", onUnauthorized);
     return () => window.removeEventListener("wardrobe:unauthorized", onUnauthorized);
@@ -4541,6 +4711,8 @@ export function App() {
     if (!profileEditor && currentUser?.language && currentUser.language !== locale) setLocale(currentUser.language);
   }, [currentUser?.language, locale, profileEditor]);
   const selectedItem = items.find((item) => item.id === selectedId) || null;
+  const mergeSourceItem = items.find((item) => item.id === mergeSourceId) || null;
+  const mergeCandidateItem = items.find((item) => item.id === mergeCandidateId) || null;
   const wardrobeDisplay = normalizeWardrobeDisplayPreferences(currentUser?.wardrobeDisplay);
   const gridDensity = wardrobeDisplay.density;
 
@@ -4568,16 +4740,21 @@ export function App() {
     setSavedViewDeleteBusy(false);
     setPlannerOpen(false);
     setPlannerError("");
+    setMergeSourceId(null);
+    setMergeCandidateId(null);
+    setMergeKeepId(null);
+    setMergeBusy(false);
+    setMergeError("");
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!plannerOpen && !savedViewDialogOpen && !savedViewDeleteCandidate) return undefined;
+    if (!plannerOpen && !savedViewDialogOpen && !savedViewDeleteCandidate && !mergeCandidateItem) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
+  }, [mergeCandidateItem, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
 
   const customOrderedItems = useMemo(() => {
     const sourcePositions = new Map(items.map((item, index) => [item.id, index]));
@@ -4613,6 +4790,7 @@ export function App() {
     }
     return filtered;
   }, [activeType, customOrderedItems, filters, sortMode]);
+  const galleryItems = mergeSourceId ? customOrderedItems : visibleItems;
 
   const facets = useMemo(() => collectFacetOptions(items), [items]);
   const typeCounts = useMemo(() => Object.fromEntries(TYPES.map((type) => [
@@ -4628,8 +4806,8 @@ export function App() {
   }), [groupMode, visibleItems]);
 
   const visibleItemIndex = useMemo(
-    () => new Map(visibleItems.map((item, index) => [item.id, index])),
-    [visibleItems],
+    () => new Map(galleryItems.map((item, index) => [item.id, index])),
+    [galleryItems],
   );
 
   useEffect(() => {
@@ -4844,8 +5022,70 @@ export function App() {
     window.setTimeout(() => { suppressOpenAfterDrag.current = false; }, 150);
   };
 
+  const beginGarmentMerge = (id) => {
+    if (items.length < 2 || !items.some((item) => item.id === id)) return;
+    setMergeSourceId(id);
+    setMergeCandidateId(null);
+    setMergeKeepId(null);
+    setMergeError("");
+    setFilterRailOpen(false);
+  };
+
+  const cancelGarmentMerge = useCallback(() => {
+    if (mergeBusy) return;
+    setMergeSourceId(null);
+    setMergeCandidateId(null);
+    setMergeKeepId(null);
+    setMergeError("");
+  }, [mergeBusy]);
+
+  const confirmGarmentMerge = async () => {
+    if (!mergeSourceItem || !mergeCandidateItem || !mergeKeepId || mergeBusy) return;
+    const discardId = mergeKeepId === mergeSourceItem.id ? mergeCandidateItem.id : mergeSourceItem.id;
+    setMergeBusy(true);
+    setMergeError("");
+    try {
+      const result = await profileApi("/api/import/wardrobe/merge", {
+        method: "POST",
+        body: JSON.stringify({ keepId: mergeKeepId, discardId }),
+      });
+      setItems((current) => current
+        .filter((item) => item.id !== result.removedId)
+        .map((item) => item.id === result.item.id ? { ...item, ...result.item } : item));
+      if (result.user) {
+        setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+      }
+      removePersistedEdit(result.removedId, currentUserId);
+      removePersistedDeletedItem(result.removedId, currentUserId);
+      removePersistedEdit(result.item.id, currentUserId);
+      removePersistedDeletedItem(result.item.id, currentUserId);
+      setSelectedId(result.item.id);
+      setViewerDirty(false);
+      setBlockedSwitchSignal(0);
+      setMergeSourceId(null);
+      setMergeCandidateId(null);
+      setMergeKeepId(null);
+      setMergeError("");
+    } catch (requestError) {
+      setMergeError(readableError(requestError));
+    } finally {
+      setMergeBusy(false);
+    }
+  };
+
   const openItem = (id) => {
     if (suppressOpenAfterDrag.current) return;
+    if (mergeSourceId) {
+      if (viewerDirty) {
+        setBlockedSwitchSignal((current) => current + 1);
+        return;
+      }
+      if (id === mergeSourceId) return;
+      setMergeCandidateId(id);
+      setMergeKeepId(null);
+      setMergeError("");
+      return;
+    }
     if (viewerDirty && selectedId && id !== selectedId) {
       setBlockedSwitchSignal((current) => current + 1);
       return;
@@ -4859,6 +5099,10 @@ export function App() {
     setViewerDirty(false);
     setBlockedSwitchSignal(0);
     setSelectedId(null);
+    setMergeSourceId(null);
+    setMergeCandidateId(null);
+    setMergeKeepId(null);
+    setMergeError("");
   }, []);
 
   const saveItem = async (updatedItem) => {
@@ -5117,7 +5361,7 @@ export function App() {
   }
 
   return (
-    <div className={`app-shell${selectedItem ? " has-selection" : ""}`}>
+    <div className={`app-shell${selectedItem ? " has-selection" : ""}${mergeSourceItem ? " is-merging" : ""}`}>
       <main className="gallery-pane">
         <header className="gallery-header">
           <div className="gallery-meta-row">
@@ -5130,6 +5374,7 @@ export function App() {
             <button
               className={filterRailOpen ? "active" : ""}
               type="button"
+              disabled={Boolean(mergeSourceItem)}
               onClick={() => setFilterRailOpen((current) => !current)}
               aria-expanded={filterRailOpen}
               aria-controls="wardrobe-filter-rail"
@@ -5216,7 +5461,17 @@ export function App() {
               />
             </div>
             <div className="wardrobe-results">
-              {!!savedViews.length && (
+              {mergeSourceItem && (
+                <div className="merge-selection-banner" role="status">
+                  <ArrowsLeftRight size={20} weight="light" aria-hidden="true" />
+                  <span>
+                    <strong>{tr("Select a garment to merge")}</strong>
+                    <small>{tr("Choose the second garment for {name} from the wardrobe below.", { name: mergeSourceItem.name })}</small>
+                  </span>
+                  <button type="button" onClick={cancelGarmentMerge}>{tr("Cancel")}</button>
+                </div>
+              )}
+              {!mergeSourceItem && !!savedViews.length && (
                 <div className="saved-view-bar">
                   <div className="saved-view-chips">
                     <button type="button" className={!activeSavedViewId ? "active" : ""} onClick={clearFilters}>{tr("All wardrobe")}</button>
@@ -5230,7 +5485,7 @@ export function App() {
                   <small className="saved-view-count">{tr("{visible} of {total} garments", { visible: visibleItems.length, total: items.length })}</small>
                 </div>
               )}
-              {!visibleItems.length ? (
+              {!galleryItems.length ? (
                 <div className="filtered-empty">
                   <MagnifyingGlass size={28} weight="light" aria-hidden="true" />
                   <h2>{tr("No garments match this view")}</h2>
@@ -5238,8 +5493,8 @@ export function App() {
                   <button type="button" onClick={clearFilters}>{tr("Clear filters")}</button>
                 </div>
               ) : (
-                <section className={`gallery-grid density-${gridDensity}${groupMode !== "none" ? " is-grouped" : ""}`} aria-label={tr("{category} wardrobe items", { category: tr(TYPE_MAP[activeType]?.label || "All") })}>
-                  {groupMode !== "none"
+                <section className={`gallery-grid density-${gridDensity}${groupMode !== "none" && !mergeSourceItem ? " is-grouped" : ""}${mergeSourceItem ? " is-merge-selecting" : ""}`} aria-label={mergeSourceItem ? tr("Choose a garment to merge") : tr("{category} wardrobe items", { category: tr(TYPE_MAP[activeType]?.label || "All") })}>
+                  {groupMode !== "none" && !mergeSourceItem
                     ? wardrobeSections.flatMap((section) => [
                         <header className="wardrobe-section-heading" key={`heading-${section.id}`}>
                           {!!section.tones?.length && (
@@ -5266,15 +5521,17 @@ export function App() {
                           />
                         )),
                       ])
-                    : visibleItems.map((item) => (
+                    : galleryItems.map((item) => (
                         <GalleryItem
                           key={item.id}
                           item={item}
                           display={wardrobeDisplay}
                           selected={selectedId === item.id}
+                          mergeMode={Boolean(mergeSourceItem)}
+                          mergeSource={mergeSourceItem?.id === item.id}
                           onOpen={openItem}
                           priority={(visibleItemIndex.get(item.id) ?? Infinity) < 8}
-                          draggable={sortMode === "custom" && groupMode === "none" && organizationStatus !== "saving" && !selectedFilterCount}
+                          draggable={!mergeSourceItem && sortMode === "custom" && groupMode === "none" && organizationStatus !== "saving" && !selectedFilterCount}
                           dragging={draggedId === item.id}
                           dropTarget={dropTargetId === item.id}
                           onDragStart={beginItemDrag}
@@ -5302,6 +5559,22 @@ export function App() {
           onDeleteModeled={deleteModeledLook}
           onDirtyChange={setViewerDirty}
           blockedSwitchSignal={blockedSwitchSignal}
+          canMerge={items.length > 1}
+          mergeSelecting={mergeSourceItem?.id === selectedItem.id}
+          onBeginMerge={beginGarmentMerge}
+          onCancelMerge={cancelGarmentMerge}
+        />
+      )}
+      {mergeSourceItem && mergeCandidateItem && (
+        <GarmentMergeDialog
+          first={mergeSourceItem}
+          second={mergeCandidateItem}
+          keepId={mergeKeepId}
+          busy={mergeBusy}
+          error={mergeError}
+          onKeep={setMergeKeepId}
+          onCancel={cancelGarmentMerge}
+          onConfirm={confirmGarmentMerge}
         />
       )}
       {!!currentUser && (
