@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, Eye, EyeSlash, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, Eye, EyeSlash, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, Link, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { BrandIcon } from "./BrandIcon.jsx";
 import { CareIcon } from "./CareIcon.jsx";
+import { ConnectionsDialog } from "./ConnectionsDialog.jsx";
 import { CITY_SUGGESTIONS } from "./city-suggestions.js";
 import { GarmentColorPreview } from "./GarmentColorPreview.jsx";
 import { DayDatePicker } from "./DayDatePicker.jsx";
@@ -73,6 +74,13 @@ import { withWardrobeUser } from "./user-scope.js";
 
 const STORAGE_KEY = "open-wardrobe-edits-v1";
 const DELETED_STORAGE_KEY = "open-wardrobe-deleted-v1";
+const EMPTY_CONNECTION_DATA = Object.freeze({
+  incomingInvites: [],
+  outgoingInvites: [],
+  grantedToMe: [],
+  sharedByMe: [],
+  notificationCount: 0,
+});
 
 const TYPES = [
   { id: "all", label: "All" },
@@ -2846,7 +2854,7 @@ function InfoTooltip({ label, children, className = "" }) {
   );
 }
 
-function ProfileMenu({ users, currentUser, canCreate, onCreate, onSelect, onEdit, onExport, onLogout }) {
+function ProfileMenu({ users, currentUser, canCreate, connectionCount, onConnections, onCreate, onSelect, onEdit, onExport, onLogout }) {
   const detailsRef = useRef(null);
   const closeMenu = () => { if (detailsRef.current) detailsRef.current.open = false; };
 
@@ -2921,6 +2929,9 @@ function ProfileMenu({ users, currentUser, canCreate, onCreate, onSelect, onEdit
           </>
         )}
         <div className="profile-menu__actions">
+          <button className="profile-menu__export" type="button" onClick={() => { onConnections(); closeMenu(); }}>
+            <Link size={14} /> {tr("Connections")}{connectionCount > 0 && <span className="profile-menu__notification">{connectionCount}</span>}
+          </button>
           <button className="profile-menu__export" type="button" onClick={() => { onExport(); closeMenu(); }} title={tr("Includes only your own wardrobe and photos")}>
             <DownloadSimple size={14} /> {tr("Download data")}
           </button>
@@ -4886,6 +4897,11 @@ export function App() {
   const [profileEditor, setProfileEditor] = useState(null);
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileError, setProfileError] = useState("");
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [connectionsData, setConnectionsData] = useState(EMPTY_CONNECTION_DATA);
+  const [connectionsBusy, setConnectionsBusy] = useState("");
+  const [connectionsError, setConnectionsError] = useState("");
+  const [studioConnections, setStudioConnections] = useState([]);
   const [openRouterKeyDialogOpen, setOpenRouterKeyDialogOpen] = useState(false);
   const [openRouterKeyBusy, setOpenRouterKeyBusy] = useState(false);
   const [openRouterKeyError, setOpenRouterKeyError] = useState("");
@@ -4936,6 +4952,11 @@ export function App() {
       setSelectedId(null);
       setPlannerOpen(false);
       setOutfitStudioOpen(false);
+      setConnectionsOpen(false);
+      setConnectionsData(EMPTY_CONNECTION_DATA);
+      setConnectionsBusy("");
+      setConnectionsError("");
+      setStudioConnections([]);
       setViewerDirty(false);
       setBlockedSwitchSignal(0);
       setMergeSourceId(null);
@@ -4974,6 +4995,16 @@ export function App() {
         setError(requestError.message);
         setLoading(false);
       });
+  }, [auth?.authenticated]);
+
+  useEffect(() => {
+    if (!auth?.authenticated) return;
+    profileApi("/api/users/connections")
+      .then((result) => {
+        setConnectionsData(result);
+        if (result.incomingInvites?.length) setConnectionsOpen(true);
+      })
+      .catch((requestError) => setConnectionsError(requestError.message));
   }, [auth?.authenticated]);
 
   useEffect(() => {
@@ -5091,13 +5122,13 @@ export function App() {
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!plannerOpen && !outfitStudioOpen && !savedViewDialogOpen && !savedViewDeleteCandidate && !mergeCandidateItem && !openRouterKeyDialogOpen) return undefined;
+    if (!plannerOpen && !outfitStudioOpen && !connectionsOpen && !savedViewDialogOpen && !savedViewDeleteCandidate && !mergeCandidateItem && !openRouterKeyDialogOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [mergeCandidateItem, openRouterKeyDialogOpen, outfitStudioOpen, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
+  }, [connectionsOpen, mergeCandidateItem, openRouterKeyDialogOpen, outfitStudioOpen, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
 
   const customOrderedItems = useMemo(() => {
     const sourcePositions = new Map(items.map((item, index) => [item.id, index]));
@@ -5577,6 +5608,99 @@ export function App() {
     }
   };
 
+  const refreshConnections = async (includeOutfit = false) => {
+    const result = await profileApi(`/api/users/connections${includeOutfit ? "?include=outfit" : ""}`);
+    setConnectionsData(result);
+    if (includeOutfit) setStudioConnections(result.companions || []);
+    return result;
+  };
+
+  const inviteConnection = async (input) => {
+    setConnectionsBusy("invite");
+    setConnectionsError("");
+    try {
+      await profileApi("/api/users/connections/invitations", { method: "POST", body: JSON.stringify(input) });
+      await refreshConnections();
+      return true;
+    } catch (requestError) {
+      setConnectionsError(requestError.message);
+      return false;
+    } finally {
+      setConnectionsBusy("");
+    }
+  };
+
+  const respondToConnection = async (inviteId, decision, permissions) => {
+    setConnectionsBusy(inviteId);
+    setConnectionsError("");
+    try {
+      await profileApi(`/api/users/connections/invitations/${encodeURIComponent(inviteId)}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ decision, permissions }),
+      });
+      await refreshConnections();
+    } catch (requestError) {
+      setConnectionsError(requestError.message);
+    } finally {
+      setConnectionsBusy("");
+    }
+  };
+
+  const cancelConnectionInvite = async (inviteId) => {
+    setConnectionsBusy(inviteId);
+    setConnectionsError("");
+    try {
+      await profileApi(`/api/users/connections/invitations/${encodeURIComponent(inviteId)}`, { method: "DELETE" });
+      await refreshConnections();
+    } catch (requestError) {
+      setConnectionsError(requestError.message);
+    } finally {
+      setConnectionsBusy("");
+    }
+  };
+
+  const updateConnection = async (connectionId, permissions) => {
+    setConnectionsBusy(connectionId);
+    setConnectionsError("");
+    try {
+      await profileApi(`/api/users/connections/${encodeURIComponent(connectionId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ permissions }),
+      });
+      await refreshConnections();
+    } catch (requestError) {
+      setConnectionsError(requestError.message);
+    } finally {
+      setConnectionsBusy("");
+    }
+  };
+
+  const disconnectConnection = async (connectionId) => {
+    setConnectionsBusy(connectionId);
+    setConnectionsError("");
+    try {
+      const result = await profileApi(`/api/users/connections/${encodeURIComponent(connectionId)}`, { method: "DELETE" });
+      if (result.user) setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+      await refreshConnections();
+    } catch (requestError) {
+      setConnectionsError(requestError.message);
+    } finally {
+      setConnectionsBusy("");
+    }
+  };
+
+  const openOutfitStudio = async () => {
+    setStudioConnections([]);
+    if (currentUserId === auth?.user?.id) {
+      try {
+        await refreshConnections(true);
+      } catch (requestError) {
+        setError(requestError.message);
+      }
+    }
+    setOutfitStudioOpen(true);
+  };
+
   const closeOpenRouterKeyDialog = () => {
     if (openRouterKeyBusy) return;
     setOpenRouterKeyDialogOpen(false);
@@ -5760,6 +5884,11 @@ export function App() {
       setAuth((current) => ({ enabled: current?.enabled !== false, authenticated: false }));
       setUsers([]);
       setIsOwner(false);
+      setConnectionsOpen(false);
+      setConnectionsData(EMPTY_CONNECTION_DATA);
+      setConnectionsBusy("");
+      setConnectionsError("");
+      setStudioConnections([]);
       setCurrentUserId(null);
       setItems([]);
       setPlannerOpen(false);
@@ -5804,7 +5933,7 @@ export function App() {
               <CalendarDots size={16} weight="regular" aria-hidden="true" />
               {tr("Plan")}
             </button>
-            <button type="button" onClick={() => setOutfitStudioOpen(true)}>
+            <button type="button" onClick={openOutfitStudio}>
               <Sparkle size={16} weight="regular" aria-hidden="true" />
               {tr("Outfit Studio")}
             </button>
@@ -6003,6 +6132,8 @@ export function App() {
           users={users}
           currentUser={currentUser}
           canCreate={isOwner}
+          connectionCount={connectionsData.notificationCount || 0}
+          onConnections={() => { setConnectionsError(""); setConnectionsOpen(true); }}
           onCreate={() => { setProfileError(""); setProfileEditor("new"); }}
           onSelect={selectUser}
           onEdit={() => { setProfileError(""); setProfileEditor(currentUser.id); }}
@@ -6024,6 +6155,19 @@ export function App() {
           saved={openRouterKeySaved}
           onClose={closeOpenRouterKeyDialog}
           onSave={saveOpenRouterKey}
+        />
+      )}
+      {connectionsOpen && (
+        <ConnectionsDialog
+          data={connectionsData}
+          busy={connectionsBusy}
+          error={connectionsError}
+          onClose={() => !connectionsBusy && setConnectionsOpen(false)}
+          onInvite={inviteConnection}
+          onRespond={respondToConnection}
+          onCancelInvite={cancelConnectionInvite}
+          onUpdate={updateConnection}
+          onDisconnect={disconnectConnection}
         />
       )}
       {profileEditor && (
@@ -6072,6 +6216,7 @@ export function App() {
         <OutfitStudio
           user={currentUser}
           items={items}
+          connections={studioConnections}
           onClose={() => setOutfitStudioOpen(false)}
           onSave={saveWardrobeOutfit}
           onDelete={deleteWardrobeOutfit}

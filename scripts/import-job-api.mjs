@@ -26,6 +26,15 @@ import {
 import { garmentColorVariants, normalizeVariantThreshold } from "../src/garment-variants.js";
 import { normalizeCareInstructions } from "../src/garment-care.js";
 import {
+  connectionCanShare,
+  connectionGrant,
+  hasConnectionPermission,
+  normalizeAccountConnections,
+  normalizeConnectionInvites,
+  normalizeConnectionPermissions,
+} from "../src/account-connections.js";
+import {
+  normalizeOutfitCompanions,
   normalizeOutfitContext,
   normalizeOutfitGarments,
   normalizeOutfitPresentation,
@@ -763,6 +772,7 @@ function logAiCall({ provider, model, operation, response, result = {}, startedA
     trace.outfitId ? `outfit=${cleanLogValue(trace.outfitId)}` : null,
     trace.attempt ? `attempt=${trace.attempt}` : null,
     trace.personReferenceCount ? `person_refs=${trace.personReferenceCount}` : null,
+    trace.companionCount ? `companions=${trace.companionCount}` : null,
     trace.resolution ? `resolution=${cleanLogValue(trace.resolution)}` : null,
     response ? `status=${response.status}` : "status=network_error",
     `duration=${(durationMs / 1000).toFixed(2)}s`,
@@ -806,6 +816,7 @@ function logAiCall({ provider, model, operation, response, result = {}, startedA
       outfitTitle: trace.outfitTitle || null,
       draftId: trace.draftId || null,
       sourceFileName: trace.sourceFileName || null,
+      companionCount: trace.companionCount || 0,
       createdAt: new Date().toISOString(),
     }).catch((error) => {
       console.warn(`[wardrobe:ai] Could not save AI usage: ${error.message}`);
@@ -1824,12 +1835,23 @@ No text, captions, watermark, collage, split screen, product mockup, extra peopl
 }
 
 export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile = {}, outfit = {}, garments = []) {
-  const count = Math.max(1, Math.min(3, Math.round(personReferenceCount)));
-  const identityReferences = count === 1
-    ? "Image 1 is the identity reference for the wardrobe owner."
-    : `Images 1 through ${count} are complementary identity references of the same person. Preserve one consistent identity and do not blend, duplicate, or alter the person.`;
+  const people = Array.isArray(personReferenceCount) && personReferenceCount.length
+    ? personReferenceCount
+    : [{ profile, referenceCount: Math.max(1, Math.min(3, Math.round(personReferenceCount)) ) }];
+  let referenceIndex = 1;
+  const identityReferences = people.map((person, personIndex) => {
+    const count = Math.max(1, Math.min(3, Math.round(person.referenceCount || 1)));
+    const start = referenceIndex;
+    const end = start + count - 1;
+    referenceIndex = end + 1;
+    const label = person.profile?.name || `Person ${personIndex + 1}`;
+    return count === 1
+      ? `Image ${start} is the identity reference for ${label}.`
+      : `Images ${start} through ${end} are complementary identity references for ${label}; combine only those images into that one identity.`;
+  }).join(" ");
+  const count = referenceIndex - 1;
   const garmentReferences = garments.map((garment, index) => (
-    `Image ${count + index + 1} is the exact reference for "${garment.name}" (${garment.part || "garment"}).`
+    `Image ${count + index + 1} is the exact reference for "${garment.name}" (${garment.part || "garment"}), to be worn by ${garment.wearerName || profile.name || "the wardrobe owner"}.`
   )).join(" ");
   const requirements = garments.map((garment) => [
     garment.name,
@@ -1840,12 +1862,12 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
   ].filter(Boolean).join(" — ")).join("; ");
   const context = normalizeOutfitContext(outfit.context);
   const presentation = normalizeOutfitPresentation(outfit.presentation);
-  const profileDetails = [
-    profile.name ? `The wardrobe owner is ${profile.name}.` : null,
-    profile.age ? `They are ${profile.age} years old.` : null,
-    profile.fashionStyle ? `Preferred style: ${profile.fashionStyle}.` : null,
-    profile.preferences ? `Personal styling preferences and constraints: ${profile.preferences}.` : null,
-  ].filter(Boolean).join(" ");
+  const profileDetails = people.map((person, index) => [
+    `${person.profile?.name || `Person ${index + 1}`} is person ${index + 1}.`,
+    person.profile?.age ? `They are ${person.profile.age} years old.` : null,
+    person.profile?.fashionStyle ? `Their preferred style is ${person.profile.fashionStyle}.` : null,
+    person.profile?.preferences ? `Their personal constraints are ${person.profile.preferences}.` : null,
+  ].filter(Boolean).join(" ")).join(" ");
   const presentationDirection = [
     presentation.background !== "automatic" ? `Background: ${presentation.background}.` : "Choose a tasteful background appropriate to the outfit context.",
     presentation.style !== "automatic" ? `Photographic style: ${presentation.style}.` : "Use a natural editorial fashion-photography style.",
@@ -1857,9 +1879,9 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
 
 References: ${identityReferences} ${garmentReferences}
 
-Mandatory outfit: Dress the referenced person in EVERY supplied garment together in one coherent look. Preserve the exact product identity, silhouette, color version shown in its reference, material, pattern, fit, construction, logo, and distinctive detail. Do not omit, replace, merge, redesign, recolor, or invent any supplied garment. Garment details: ${requirements}.
+Mandatory outfit: Dress the referenced ${people.length === 1 ? "person" : "people"} in EVERY supplied garment assigned to them. Preserve the exact product identity, silhouette, color version shown in its reference, material, pattern, fit, construction, logo, and distinctive detail. Do not omit, replace, merge, redesign, recolor, swap between people, or invent any supplied garment. Garment details: ${requirements}.
 
-Person: ${profileDetails} Preserve the recognizable face, hair, apparent age, skin tone, body proportions, and identity from the person references. Show exactly one person with realistic anatomy.
+People: ${profileDetails} Preserve each person's recognizable face, hair, apparent age, skin tone, body proportions, and identity from only their own reference group. Show exactly ${people.length} ${people.length === 1 ? "person" : "people"} with realistic anatomy. Keep the identities distinct; never blend faces, bodies, ages, or features between people. Place them together naturally in the requested scene.
 
 Context: Occasion ${context.occasion || "not specified"}; weather ${context.weather.join(", ") || "not specified"}; season ${context.season || "not specified"}. Make the styling, layering, light, and setting believable for that context.
 
@@ -3127,6 +3149,7 @@ export function wardrobeImportApi(options = {}) {
         outfitTitle: entry.outfitTitle ? cleanLogValue(entry.outfitTitle).slice(0, 160) : null,
         draftId: /^[a-z0-9-]{1,80}$/i.test(entry.draftId || "") ? entry.draftId : null,
         sourceFileName: entry.sourceFileName ? cleanLogValue(entry.sourceFileName).slice(0, 220) : null,
+        companionCount: Number.isInteger(entry.companionCount) ? Math.max(0, Math.min(3, entry.companionCount)) : 0,
         createdAt: entry.createdAt || new Date().toISOString(),
       });
       await atomicJson(aiUsageFile, ledger);
@@ -3451,6 +3474,8 @@ export function wardrobeImportApi(options = {}) {
       const value = JSON.parse(await readFile(usersFile, "utf8"));
       if (!Array.isArray(value.users) || !value.users.length) throw new Error("users.json contains no profiles");
       if (!value.users.some((user) => user.id === value.currentUserId)) value.currentUserId = value.users[0].id;
+      value.connectionInvites = normalizeConnectionInvites(value.connectionInvites);
+      value.connections = normalizeAccountConnections(value.connections);
       return value;
     } catch (error) {
       if (error.code === "ENOENT") return null;
@@ -3459,7 +3484,147 @@ export function wardrobeImportApi(options = {}) {
   }
 
   async function saveUsersStore(store) {
-    await atomicJson(usersFile, { version: 1, currentUserId: store.currentUserId, users: store.users });
+    await atomicJson(usersFile, {
+      version: 2,
+      currentUserId: store.currentUserId,
+      users: store.users,
+      connectionInvites: normalizeConnectionInvites(store.connectionInvites),
+      connections: normalizeAccountConnections(store.connections),
+    });
+  }
+
+  const connectionAvatarUrl = (userId) => `${USERS_ROOT}/connections/avatar/${encodeURIComponent(userId)}`;
+
+  const connectionPerson = (profile, showAvatar = false) => profile ? ({
+    id: profile.id,
+    name: profile.name,
+    email: profile.email || null,
+    referenceCount: profile.referenceImages?.length || 0,
+    referenceImages: showAvatar && profile.referenceImages?.length ? [{ avatarUrl: connectionAvatarUrl(profile.id) }] : [],
+  }) : null;
+
+  const sharedGarmentForViewer = (record, viewerId) => {
+    const publicRecord = publicImportedRecord(record, viewerId);
+    return {
+      id: publicRecord.id,
+      userId: record.userId,
+      name: publicRecord.name,
+      part: publicRecord.part,
+      color: publicRecord.color,
+      secondaryColor: publicRecord.secondaryColor || null,
+      brand: publicRecord.brand || "",
+      tags: publicRecord.tags || [],
+      materials: publicRecord.materials || [],
+      seasons: publicRecord.seasons || [],
+      image: publicRecord.image,
+      imagePreview: publicRecord.imagePreview,
+      thumbnail: publicRecord.thumbnail,
+      colorVariants: publicRecord.colorVariants,
+    };
+  };
+
+  async function connectionPayload(store, userId, includeOutfit = false) {
+    const profileById = new Map(store.users.map((profile) => [profile.id, profile]));
+    const incomingInvites = store.connectionInvites
+      .filter((invite) => invite.recipientUserId === userId && invite.status === "pending")
+      .map((invite) => ({
+        ...invite,
+        recipientEmail: undefined,
+        requester: connectionPerson(profileById.get(invite.requesterUserId), true),
+      }));
+    const outgoingInvites = store.connectionInvites
+      .filter((invite) => invite.requesterUserId === userId && invite.status === "pending")
+      .map((invite) => ({
+        ...invite,
+        recipient: connectionPerson(profileById.get(invite.recipientUserId)),
+      }));
+    const grantedToMe = store.connections
+      .filter((connection) => connection.recipientUserId === userId)
+      .map((connection) => ({
+        ...connection,
+        person: connectionPerson(profileById.get(connection.grantorUserId), connection.permissions.referenceImages),
+      }));
+    const sharedByMe = store.connections
+      .filter((connection) => connection.grantorUserId === userId)
+      .map((connection) => ({
+        ...connection,
+        person: connectionPerson(profileById.get(connection.recipientUserId)),
+      }));
+    const result = {
+      incomingInvites,
+      outgoingInvites,
+      grantedToMe,
+      sharedByMe,
+      notificationCount: incomingInvites.length,
+    };
+    if (!includeOutfit) return result;
+    const records = await loadImported();
+    result.companions = grantedToMe
+      .filter((connection) => connection.permissions.referenceImages)
+      .map((connection) => ({
+        connectionId: connection.id,
+        relationship: connection.relationship,
+        permissions: connection.permissions,
+        person: connection.person,
+        garments: connection.permissions.garments
+          ? records.filter((record) => record.userId === connection.grantorUserId)
+            .map((record) => sharedGarmentForViewer(record, userId))
+          : [],
+      }));
+    return result;
+  }
+
+  async function clearConnectionModeledLooks(store, grantorUserId, recipientUserId) {
+    const recipient = store.users.find((profile) => profile.id === recipientUserId);
+    if (!recipient) return [];
+    const removedAssets = [];
+    const outfits = normalizeWardrobeOutfits(recipient.wardrobeOutfits).map((outfit) => {
+      const usesConnection = outfit.companions.includes(grantorUserId)
+        || outfit.garments.some((garment) => garment.ownerId === grantorUserId || garment.wearerId === grantorUserId);
+      if (!usesConnection || !outfit.modeledLooks.length) return outfit;
+      removedAssets.push(...outfit.modeledLooks.flatMap((look) => [look.image, look.preview].filter(Boolean)));
+      return { ...outfit, modeledLooks: [], updatedAt: new Date().toISOString() };
+    });
+    recipient.wardrobeOutfits = outfits;
+    recipient.updatedAt = new Date().toISOString();
+    return removedAssets;
+  }
+
+  function resolveOutfitAccess(store, userId, rawGarments, rawCompanions, records) {
+    const companions = normalizeOutfitCompanions(rawCompanions).filter((id) => id !== userId);
+    for (const companionId of companions) {
+      if (!connectionCanShare(store.connections, companionId, userId, "referenceImages")) {
+        throw apiError("A selected companion no longer shares reference photos with you.", 403, "outfit_companion_access_revoked");
+      }
+    }
+    const recordMap = new Map(records.map((record) => [record.id, record]));
+    const garments = normalizeOutfitGarments(rawGarments).map((selection) => {
+      const record = recordMap.get(selection.itemId);
+      if (!record) throw apiError("One or more selected garments are no longer available.", 409, "outfit_garment_missing");
+      if (record.userId !== userId) {
+        if (!connectionCanShare(store.connections, record.userId, userId, "garments")) {
+          throw apiError("One or more selected garments are no longer available.", 409, "outfit_garment_missing");
+        }
+        if (!companions.includes(record.userId)) {
+          throw apiError("Add the garment owner as a companion before using their clothes.", 400, "outfit_garment_owner_missing");
+        }
+      }
+      if (selection.variantId && !garmentColorVariants(record).some((variant) => variant.id === selection.variantId)) {
+        throw apiError("One of the selected garment color versions no longer exists.", 409, "outfit_variant_missing");
+      }
+      return {
+        itemId: record.id,
+        variantId: selection.variantId,
+        ownerId: record.userId,
+        wearerId: record.userId,
+      };
+    });
+    for (const wearerId of [userId, ...companions]) {
+      if (garments.filter((garment) => garment.wearerId === wearerId).length > 6) {
+        throw apiError("Choose up to six garments for each person.", 400, "outfit_person_garment_limit");
+      }
+    }
+    return { garments, companions };
   }
 
   // Resolves the wardrobe a verified Google identity owns, creating one on first
@@ -4452,19 +4617,16 @@ export function wardrobeImportApi(options = {}) {
       if (!outfit.garments.length) throw apiError("Add at least one garment before generating a modeled look.", 400, "outfit_empty");
 
       const records = await loadImported();
-      const recordMap = new Map(records
-        .filter((record) => record.userId === user.id)
-        .map((record) => [record.id, record]));
-      const selections = outfit.garments.map((selection) => {
+      const access = resolveOutfitAccess(store, user.id, outfit.garments, outfit.companions, records);
+      const profileMap = new Map(store.users.map((candidate) => [candidate.id, candidate]));
+      const people = [profile, ...access.companions.map((id) => profileMap.get(id)).filter(Boolean)];
+      const recordMap = new Map(records.map((record) => [record.id, record]));
+      const selections = access.garments.map((selection) => {
         const record = recordMap.get(selection.itemId);
-        if (!record) throw apiError("One or more garments in this outfit are no longer in the wardrobe.", 409, "outfit_garment_missing");
         const variant = selection.variantId
           ? garmentColorVariants(record).find((candidate) => candidate.id === selection.variantId)
           : null;
-        if (selection.variantId && !variant) {
-          throw apiError("One of the selected garment color versions no longer exists.", 409, "outfit_variant_missing");
-        }
-        return { record, variant, image: variant?.image || record.image };
+        return { record, variant, image: variant?.image || record.image, wearerId: selection.wearerId };
       });
 
       const provider = providerWithProfilePreferences(aiProvider(payerProfile?.id || user.id), profile, payerProfile);
@@ -4476,7 +4638,18 @@ export function wardrobeImportApi(options = {}) {
           `${provider.id}_key_missing`,
         );
       }
-      const personReferences = await loadProfileReferenceImages(profile);
+      const peopleWithReferences = await Promise.all(people.map(async (person) => {
+        const references = (await loadProfileReferenceImages(person)).slice(0, 2);
+        return {
+          // A reference-photo grant is not permission to disclose the companion's
+          // private profile preferences. Only the requesting person's own styling
+          // context is included beyond the visual references.
+          profile: person.id === profile.id ? person : { id: person.id, name: person.name },
+          references,
+          referenceCount: references.length,
+        };
+      }));
+      const personReferences = peopleWithReferences.flatMap((person) => person.references);
       const garmentReferences = await Promise.all(selections.map(async (selection, index) => {
         const fileName = path.basename(new URL(selection.image, "http://localhost").pathname);
         return {
@@ -4488,13 +4661,14 @@ export function wardrobeImportApi(options = {}) {
       const editImage = provider.id === "openrouter" ? openRouterEdit : openAIEdit;
       const modeledModel = modeledModelForReferenceCount(provider, personReferences.length);
       const prompt = buildOutfitStudioModeledPrompt(
-        personReferences.length,
+        peopleWithReferences,
         profile,
         outfit,
-        selections.map(({ record, variant }) => ({
+        selections.map(({ record, variant, wearerId }) => ({
           ...record,
           color: variant?.primaryColor || record.color,
           secondaryColor: variant?.secondaryColor || record.secondaryColor,
+          wearerName: profileMap.get(wearerId)?.name || "the wardrobe owner",
         })),
       );
       console.info(`[wardrobe] Generating Outfit Studio look "${outfit.name}" with ${provider.label} / ${modeledModel} using ${selections.length} garment reference${selections.length === 1 ? "" : "s"}...`);
@@ -4514,6 +4688,7 @@ export function wardrobeImportApi(options = {}) {
           outfitTitle: outfit.name,
           attempt: outfit.modeledLooks.length + 1,
           personReferenceCount: personReferences.length,
+          companionCount: people.length - 1,
         },
       }));
 
@@ -4676,17 +4851,13 @@ export function wardrobeImportApi(options = {}) {
           keeperId,
           discardedId,
         );
-        const wardrobeOutfits = wardrobeOutfitsAfterGarmentMerge(
-          store.users[index].wardrobeOutfits,
-          keeperId,
-          discardedId,
-        );
-        store.users[index] = {
-          ...store.users[index],
-          wardrobePlans,
-          wardrobeOutfits,
-          updatedAt: new Date().toISOString(),
-        };
+        const now = new Date().toISOString();
+        store.users = store.users.map((profile) => ({
+          ...profile,
+          ...(profile.id === user.id ? { wardrobePlans } : {}),
+          wardrobeOutfits: wardrobeOutfitsAfterGarmentMerge(profile.wardrobeOutfits, keeperId, discardedId),
+          ...(profile.id === user.id ? { updatedAt: now } : {}),
+        }));
         await saveUsersStore(store);
         return store.users[index];
       });
@@ -5064,9 +5235,15 @@ Interpret this correction semantically in whatever language it is written. It ov
 
     const jsonFile = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
     yield* yieldBuffer("wardrobe-data/data/users.json", jsonFile({
-      version: 1,
+      version: 2,
       currentUserId: profile.id,
       users: [profile],
+      connectionInvites: store.connectionInvites.filter((invite) => (
+        invite.requesterUserId === userId || invite.recipientUserId === userId
+      )),
+      connections: store.connections.filter((connection) => (
+        connection.grantorUserId === userId || connection.recipientUserId === userId
+      )),
     }));
     yield* yieldBuffer("wardrobe-data/data/library.json", jsonFile(owned));
     yield* yieldBuffer("wardrobe-data/data/ai-usage.json", jsonFile({
@@ -5249,6 +5426,201 @@ Interpret this correction semantically in whatever language it is written. It ov
           isOwner,
           users: (isOwner ? profileStore.users : [signedInUser]).map(publicProfile),
         });
+      }
+      if (url.pathname === `${USERS_ROOT}/connections` && req.method === "GET") {
+        const store = await loadUsersStore();
+        return json(res, 200, await connectionPayload(
+          store,
+          signedInIdentity.id,
+          url.searchParams.get("include") === "outfit",
+        ));
+      }
+      if (url.pathname === `${USERS_ROOT}/connections/invitations` && req.method === "POST") {
+        const input = await body(req, 32 * 1024);
+        const recipientEmail = normalizeEmail(input.email);
+        if (!validAccountEmail(recipientEmail)) {
+          throw apiError("Enter the exact Google email used by the other Wardrobe account.", 400, "invalid_connection_email");
+        }
+        const requestedPermissions = normalizeConnectionPermissions(input.permissions);
+        if (!hasConnectionPermission(requestedPermissions)) {
+          throw apiError("Request access to reference photos, garments, or both.", 400, "connection_permission_required");
+        }
+        const invite = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const recipient = store.users.find((profile) => normalizeEmail(profile.email) === recipientEmail);
+          if (!recipient) {
+            throw apiError("No Wardrobe account uses that Google email yet.", 404, "connection_account_not_found");
+          }
+          if (recipient.id === signedInIdentity.id) {
+            throw apiError("You cannot connect your account to itself.", 400, "connection_self_invite");
+          }
+          if (connectionGrant(store.connections, recipient.id, signedInIdentity.id)) {
+            throw apiError("That person is already sharing with you.", 409, "connection_exists");
+          }
+          if (store.connectionInvites.some((candidate) => (
+            candidate.requesterUserId === signedInIdentity.id
+            && candidate.recipientUserId === recipient.id
+            && candidate.status === "pending"
+          ))) {
+            throw apiError("An invitation to this person is already waiting for a response.", 409, "connection_invite_pending");
+          }
+          const created = {
+            id: randomUUID(),
+            requesterUserId: signedInIdentity.id,
+            recipientUserId: recipient.id,
+            recipientEmail,
+            relationship: cleanProfileText(input.relationship, 40) || "Connected person",
+            requestedPermissions,
+            status: "pending",
+            createdAt: new Date().toISOString(),
+            respondedAt: null,
+          };
+          store.connectionInvites.push(created);
+          await saveUsersStore(store);
+          return created;
+        });
+        return json(res, 201, { invite: { ...invite, recipientEmail: undefined } });
+      }
+      const connectionResponseMatch = url.pathname.match(/^\/api\/users\/connections\/invitations\/([a-f0-9-]{36})\/respond$/i);
+      if (connectionResponseMatch && req.method === "POST") {
+        const input = await body(req, 16 * 1024);
+        const decision = input.decision === "accept" ? "accepted" : input.decision === "decline" ? "declined" : null;
+        if (!decision) throw apiError("Choose whether to accept or decline this invitation.", 400, "invalid_connection_decision");
+        const result = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const invite = store.connectionInvites.find((candidate) => candidate.id === connectionResponseMatch[1]);
+          if (!invite || invite.recipientUserId !== signedInIdentity.id) {
+            throw apiError("Connection invitation not found.", 404, "connection_invite_not_found");
+          }
+          if (invite.status !== "pending") {
+            throw apiError("This invitation has already been answered.", 409, "connection_invite_answered");
+          }
+          invite.status = decision;
+          invite.respondedAt = new Date().toISOString();
+          let connection = null;
+          if (decision === "accepted") {
+            const requested = normalizeConnectionPermissions(invite.requestedPermissions);
+            const chosen = normalizeConnectionPermissions(input.permissions);
+            const permissions = {
+              referenceImages: requested.referenceImages && chosen.referenceImages,
+              garments: requested.garments && chosen.garments,
+            };
+            if (!hasConnectionPermission(permissions)) {
+              throw apiError("Select at least one thing to share, or decline the invitation.", 400, "connection_permission_required");
+            }
+            const now = new Date().toISOString();
+            connection = {
+              id: randomUUID(),
+              inviteId: invite.id,
+              grantorUserId: invite.recipientUserId,
+              recipientUserId: invite.requesterUserId,
+              relationship: invite.relationship,
+              permissions,
+              createdAt: now,
+              updatedAt: now,
+            };
+            store.connections = store.connections.filter((candidate) => !(
+              candidate.grantorUserId === connection.grantorUserId
+              && candidate.recipientUserId === connection.recipientUserId
+            ));
+            store.connections.push(connection);
+          }
+          await saveUsersStore(store);
+          return { invite, connection };
+        });
+        return json(res, 200, result);
+      }
+      const connectionInviteMatch = url.pathname.match(/^\/api\/users\/connections\/invitations\/([a-f0-9-]{36})$/i);
+      if (connectionInviteMatch && req.method === "DELETE") {
+        await withUsers(async () => {
+          const store = await loadUsersStore();
+          const invite = store.connectionInvites.find((candidate) => candidate.id === connectionInviteMatch[1]);
+          if (!invite || invite.requesterUserId !== signedInIdentity.id || invite.status !== "pending") {
+            throw apiError("Pending connection invitation not found.", 404, "connection_invite_not_found");
+          }
+          invite.status = "cancelled";
+          invite.respondedAt = new Date().toISOString();
+          await saveUsersStore(store);
+        });
+        return json(res, 200, { cancelled: true });
+      }
+      const connectionMatch = url.pathname.match(/^\/api\/users\/connections\/([a-f0-9-]{36})$/i);
+      if (connectionMatch && req.method === "PATCH") {
+        const input = await body(req, 16 * 1024);
+        const permissions = normalizeConnectionPermissions(input.permissions);
+        if (!hasConnectionPermission(permissions)) {
+          throw apiError("Keep at least one permission, or disconnect this person.", 400, "connection_permission_required");
+        }
+        let removedAssets = [];
+        const connection = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const candidate = store.connections.find((entry) => entry.id === connectionMatch[1]);
+          if (!candidate || candidate.grantorUserId !== signedInIdentity.id) {
+            throw apiError("Connection not found.", 404, "connection_not_found");
+          }
+          const reduced = Object.entries(candidate.permissions).some(([permission, granted]) => granted && !permissions[permission]);
+          candidate.permissions = permissions;
+          candidate.updatedAt = new Date().toISOString();
+          if (reduced) removedAssets = await clearConnectionModeledLooks(store, candidate.grantorUserId, candidate.recipientUserId);
+          await saveUsersStore(store);
+          return candidate;
+        });
+        await Promise.all(removedAssets.map((asset) => rm(
+          path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+          { force: true },
+        )));
+        return json(res, 200, { connection });
+      }
+      if (connectionMatch && req.method === "DELETE") {
+        let removedAssets = [];
+        const updatedRecipient = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const candidate = store.connections.find((entry) => entry.id === connectionMatch[1]);
+          if (!candidate || ![candidate.grantorUserId, candidate.recipientUserId].includes(signedInIdentity.id)) {
+            throw apiError("Connection not found.", 404, "connection_not_found");
+          }
+          removedAssets = await clearConnectionModeledLooks(store, candidate.grantorUserId, candidate.recipientUserId);
+          store.connections = store.connections.filter((entry) => entry.id !== candidate.id);
+          const invite = store.connectionInvites.find((entry) => entry.id === candidate.inviteId);
+          if (invite) invite.status = "revoked";
+          await saveUsersStore(store);
+          return store.users.find((profile) => profile.id === candidate.recipientUserId) || null;
+        });
+        await Promise.all(removedAssets.map((asset) => rm(
+          path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+          { force: true },
+        )));
+        return json(res, 200, {
+          disconnected: true,
+          ...(updatedRecipient?.id === signedInIdentity.id ? { user: publicProfile(updatedRecipient) } : {}),
+        });
+      }
+      const connectionAvatarMatch = url.pathname.match(/^\/api\/users\/connections\/avatar\/(default|[a-f0-9-]{36})$/i);
+      if (connectionAvatarMatch && req.method === "GET") {
+        const targetId = connectionAvatarMatch[1];
+        const store = await loadUsersStore();
+        const allowed = targetId === signedInIdentity.id
+          || store.connections.some((connection) => (
+            connection.permissions.referenceImages
+            && connection.recipientUserId === signedInIdentity.id
+            && connection.grantorUserId === targetId
+          ))
+          || store.connectionInvites.some((invite) => (
+            invite.status === "pending"
+            && invite.recipientUserId === signedInIdentity.id
+            && invite.requesterUserId === targetId
+          ));
+        if (!allowed) throw apiError("Profile image not found.", 404, "connection_avatar_not_found");
+        const target = store.users.find((profile) => profile.id === targetId);
+        const reference = target?.referenceImages?.[0];
+        if (!reference) throw apiError("Profile image not found.", 404, "connection_avatar_not_found");
+        const fileName = reference.avatarFileName || reference.fileName;
+        const file = path.join(profileReferenceDir(target.id), fileName);
+        const details = await stat(file);
+        res.setHeader("Content-Type", fileName === reference.avatarFileName ? "image/webp" : reference.mime || imageMime(file));
+        res.setHeader("Content-Length", details.size);
+        res.setHeader("Cache-Control", "private, no-store");
+        return res.end(await readFile(file));
       }
       if (url.pathname === USERS_ROOT && req.method === "POST") {
         if (!isOwner) throw apiError("Only a wardrobe owner can prepare another person's account.", 403, "profile_creation_disabled");
@@ -5446,31 +5818,22 @@ Interpret this correction semantically in whatever language it is written. It ov
       const user = signedInUser;
       if (url.pathname === "/api/import/outfits" && req.method === "POST") {
         const input = await body(req, 64 * 1024);
-        const garments = normalizeOutfitGarments(input);
-        if (!garments.length) throw apiError("Add at least one garment to save this outfit.", 400, "outfit_empty");
         const records = await loadImported();
-        const recordMap = new Map(records
-          .filter((record) => record.userId === user.id)
-          .map((record) => [record.id, record]));
-        for (const garment of garments) {
-          const record = recordMap.get(garment.itemId);
-          if (!record) throw apiError("One or more selected garments are no longer in this wardrobe.", 409, "outfit_garment_missing");
-          if (garment.variantId && !garmentColorVariants(record).some((variant) => variant.id === garment.variantId)) {
-            throw apiError("One of the selected garment color versions no longer exists.", 409, "outfit_variant_missing");
-          }
-        }
         const now = new Date().toISOString();
         const id = randomUUID();
         const saved = await withUsers(async () => {
           const store = await loadUsersStore();
           const index = store.users.findIndex((candidate) => candidate.id === user.id);
           if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+          const { garments, companions } = resolveOutfitAccess(store, user.id, input, input.companions, records);
+          if (!garments.length) throw apiError("Add at least one garment to save this outfit.", 400, "outfit_empty");
           const existing = normalizeWardrobeOutfits(store.users[index].wardrobeOutfits);
           if (existing.length >= 100) throw apiError("This wardrobe already has the maximum number of saved outfits.", 409, "outfit_limit");
           const outfit = normalizeWardrobeOutfits([{
             id,
             name: input.name,
             garments,
+            companions,
             context: normalizeOutfitContext(input.context),
             presentation: normalizeOutfitPresentation(input.presentation),
             source: input.source,
@@ -5545,9 +5908,6 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (outfitMatch && req.method === "PATCH") {
         const input = await body(req, 64 * 1024);
         const records = await loadImported();
-        const recordMap = new Map(records
-          .filter((record) => record.userId === user.id)
-          .map((record) => [record.id, record]));
         const saved = await withUsers(async () => {
           const store = await loadUsersStore();
           const index = store.users.findIndex((candidate) => candidate.id === user.id);
@@ -5556,20 +5916,21 @@ Interpret this correction semantically in whatever language it is written. It ov
           const outfitIndex = outfits.findIndex((candidate) => candidate.id === outfitMatch[1]);
           if (outfitIndex < 0) throw apiError("Saved outfit not found.", 404, "outfit_not_found");
           const existing = outfits[outfitIndex];
-          const garments = Object.hasOwn(input, "garments") ? normalizeOutfitGarments(input) : existing.garments;
+          const access = resolveOutfitAccess(
+            store,
+            user.id,
+            Object.hasOwn(input, "garments") ? input : existing.garments,
+            Object.hasOwn(input, "companions") ? input.companions : existing.companions,
+            records,
+          );
+          const { garments, companions } = access;
           if (!garments.length) throw apiError("Add at least one garment to save this outfit.", 400, "outfit_empty");
-          for (const garment of garments) {
-            const record = recordMap.get(garment.itemId);
-            if (!record) throw apiError("One or more selected garments are no longer in this wardrobe.", 409, "outfit_garment_missing");
-            if (garment.variantId && !garmentColorVariants(record).some((variant) => variant.id === garment.variantId)) {
-              throw apiError("One of the selected garment color versions no longer exists.", 409, "outfit_variant_missing");
-            }
-          }
           const now = new Date().toISOString();
           outfits[outfitIndex] = normalizeWardrobeOutfits([{
             ...existing,
             name: Object.hasOwn(input, "name") ? input.name : existing.name,
             garments,
+            companions,
             context: Object.hasOwn(input, "context") ? normalizeOutfitContext(input.context) : existing.context,
             presentation: Object.hasOwn(input, "presentation") ? normalizeOutfitPresentation(input.presentation) : existing.presentation,
             source: Object.hasOwn(input, "source") ? input.source : existing.source,
@@ -5999,7 +6360,12 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (libraryAssetMatch && req.method === "GET") {
         const requestedAsset = libraryAssetMatch[1];
         const ownedAssets = await libraryAssetIndex();
+        const sharedOwnerId = [...ownedAssets.entries()].find(([ownerId, assets]) => (
+          assets.has(requestedAsset)
+          && connectionCanShare(profileStore.connections, ownerId, signedInIdentity.id, "garments")
+        ))?.[0];
         const allowed = ownedAssets.get(user.id)?.has(requestedAsset)
+          || Boolean(sharedOwnerId)
           || wardrobePlanAssets(user.wardrobePlans).some(
             (asset) => path.basename(new URL(asset, "http://localhost").pathname) === requestedAsset,
           )

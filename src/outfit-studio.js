@@ -50,7 +50,8 @@ export const OUTFIT_POSES = [
 ];
 
 export const OUTFIT_SEASONS = ["spring", "summer", "autumn", "winter"];
-export const OUTFIT_MAX_GARMENTS = 6;
+export const OUTFIT_MAX_GARMENTS_PER_PERSON = 6;
+export const OUTFIT_MAX_GARMENTS = 12;
 
 const OCCASION_IDS = new Set(OUTFIT_OCCASIONS.map((option) => option.id));
 const WEATHER_IDS = new Set(OUTFIT_WEATHER.map((option) => option.id));
@@ -121,8 +122,20 @@ export function normalizeOutfitGarments(value = {}) {
     if (!itemId || seen.has(itemId)) return [];
     seen.add(itemId);
     const variantId = cleanText(item.variantId, 100) || null;
-    return [{ itemId, variantId }];
+    const ownerId = cleanText(item.ownerId, 80) || null;
+    const wearerId = cleanText(item.wearerId, 80) || ownerId;
+    return [{ itemId, variantId, ownerId, wearerId }];
   }).slice(0, OUTFIT_MAX_GARMENTS);
+}
+
+export function normalizeOutfitCompanions(value = []) {
+  const seen = new Set();
+  return (Array.isArray(value) ? value : []).flatMap((entry) => {
+    const userId = cleanText(typeof entry === "string" ? entry : entry?.userId, 80);
+    if (!userId || seen.has(userId)) return [];
+    seen.add(userId);
+    return [userId];
+  }).slice(0, 3);
 }
 
 function normalizeModeledLooks(value) {
@@ -159,6 +172,7 @@ export function normalizeWardrobeOutfits(value = []) {
       id,
       name: cleanText(outfit.name, 100) || `Outfit ${index + 1}`,
       garments: normalizeOutfitGarments(outfit),
+      companions: normalizeOutfitCompanions(outfit.companions),
       context: normalizeOutfitContext(outfit.context),
       presentation: normalizeOutfitPresentation(outfit.presentation),
       source: SOURCE_IDS.has(outfit.source) ? outfit.source : "manual",

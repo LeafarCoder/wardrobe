@@ -23,7 +23,7 @@ import {
   normalizeOutfitContext,
   normalizeOutfitPresentation,
   OUTFIT_BACKGROUNDS,
-  OUTFIT_MAX_GARMENTS,
+  OUTFIT_MAX_GARMENTS_PER_PERSON,
   OUTFIT_OCCASIONS,
   OUTFIT_POSES,
   OUTFIT_SEASONS,
@@ -49,6 +49,7 @@ function blankDraft() {
     id: null,
     name: "",
     garments: [],
+    companions: [],
     context: normalizeOutfitContext({}),
     presentation: normalizeOutfitPresentation({}),
     source: "manual",
@@ -107,6 +108,7 @@ function ChipGroup({ title, options, value, multiple = false, onChange }) {
 export function OutfitStudio({
   user,
   items,
+  connections = [],
   onClose,
   onSave,
   onDelete,
@@ -117,6 +119,7 @@ export function OutfitStudio({
   const [draft, setDraft] = useState(blankDraft);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
+  const [activeWardrobeId, setActiveWardrobeId] = useState(user.id);
   const [localCandidates, setLocalCandidates] = useState([]);
   const [aiCandidates, setAiCandidates] = useState([]);
   const [activeAiIndex, setActiveAiIndex] = useState(0);
@@ -127,10 +130,18 @@ export function OutfitStudio({
   const [deleteId, setDeleteId] = useState(null);
   const [deleteLookId, setDeleteLookId] = useState(null);
   const draftId = useRef(crypto.randomUUID());
-  const itemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const connectionMap = useMemo(() => new Map(connections.map((connection) => [connection.person.id, connection])), [connections]);
+  const allItems = useMemo(() => [
+    ...items.map((item) => ({ ...item, userId: user.id })),
+    ...connections.flatMap((connection) => connection.garments || []),
+  ], [connections, items, user.id]);
+  const itemMap = useMemo(() => new Map(allItems.map((item) => [item.id, item])), [allItems]);
   const savedOutfits = user.wardrobeOutfits || [];
   const selectedIds = new Set(draft.garments.map((entry) => entry.itemId));
-  const filteredItems = items.filter((item) => {
+  const activeItems = activeWardrobeId === user.id
+    ? items
+    : connectionMap.get(activeWardrobeId)?.garments || [];
+  const filteredItems = activeItems.filter((item) => {
     const words = `${item.name || ""} ${item.brand || ""} ${(item.tags || []).join(" ")}`.toLocaleLowerCase();
     return (category === "all" || item.part === category) && words.includes(search.trim().toLocaleLowerCase());
   });
@@ -158,11 +169,31 @@ export function OutfitStudio({
 
   const addGarment = (itemId) => {
     if (selectedIds.has(itemId)) return;
-    if (draft.garments.length >= OUTFIT_MAX_GARMENTS) {
-      setError(tr("An outfit can contain up to six garments."));
+    const item = itemMap.get(itemId);
+    if (!item) return;
+    const wearerId = item.userId || user.id;
+    if (draft.garments.filter((entry) => (entry.wearerId || entry.ownerId || user.id) === wearerId).length >= OUTFIT_MAX_GARMENTS_PER_PERSON) {
+      setError(tr("Choose up to six garments for each person."));
       return;
     }
-    changeDraft({ garments: [...draft.garments, { itemId, variantId: null }], source: "manual" });
+    const companions = wearerId === user.id || draft.companions.includes(wearerId)
+      ? draft.companions
+      : [...draft.companions, wearerId];
+    changeDraft({
+      garments: [...draft.garments, { itemId, variantId: null, ownerId: wearerId, wearerId }],
+      companions,
+      source: "manual",
+    });
+  };
+
+  const toggleCompanion = (personId) => {
+    const active = draft.companions.includes(personId);
+    const companions = active ? draft.companions.filter((id) => id !== personId) : [...draft.companions, personId];
+    const garments = active
+      ? draft.garments.filter((entry) => (entry.ownerId || itemMap.get(entry.itemId)?.userId) !== personId)
+      : draft.garments;
+    if (activeWardrobeId === personId && active) setActiveWardrobeId(user.id);
+    changeDraft({ companions, garments, source: "manual" });
   };
 
   const removeGarment = (itemId) => {
@@ -347,7 +378,35 @@ export function OutfitStudio({
               )) : <p>{tr("Your saved outfits will appear here.")}</p>}
             </div>
 
-            <h3>{tr("Your wardrobe")}</h3>
+            <div className="outfit-people-heading"><span>{tr("People in this scene")}</span><small>{tr("Your account is always included")}</small></div>
+            <div className="outfit-people-list">
+              <button type="button" className="active" aria-pressed="true">
+                <span className="outfit-person-avatar">{user.referenceImages?.[0] ? <img src={user.referenceImages[0].avatarUrl || user.referenceImages[0].url} alt="" /> : user.name?.[0]}</span>
+                <span><strong>{tr("Me")}</strong><small>{user.name}</small></span><Check size={14} />
+              </button>
+              {connections.map((connection) => {
+                const active = draft.companions.includes(connection.person.id);
+                const reference = connection.person.referenceImages?.[0];
+                return (
+                  <button type="button" className={active ? "active" : ""} aria-pressed={active} disabled={!connection.person.referenceCount} onClick={() => toggleCompanion(connection.person.id)} key={connection.person.id}>
+                    <span className="outfit-person-avatar">{reference ? <img src={reference.avatarUrl} alt="" /> : connection.person.name?.[0]}</span>
+                    <span><strong>{connection.person.name}</strong><small>{connection.person.referenceCount ? connection.relationship : tr("Needs a reference photo")}</small></span>{active ? <Check size={14} /> : <Plus size={14} />}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="outfit-wardrobe-heading">
+              <h3>{tr("Choose clothes for")}</h3>
+              <div>
+                <button type="button" className={activeWardrobeId === user.id ? "active" : ""} onClick={() => setActiveWardrobeId(user.id)}>{tr("Me")}</button>
+                {draft.companions.map((personId) => {
+                  const connection = connectionMap.get(personId);
+                  if (!connection?.permissions.garments) return null;
+                  return <button type="button" className={activeWardrobeId === personId ? "active" : ""} onClick={() => setActiveWardrobeId(personId)} key={personId}>{connection.person.name}</button>;
+                })}
+              </div>
+            </div>
             <label className="outfit-search"><MagnifyingGlass size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tr("Search garments")} /></label>
             <div className="outfit-category-tabs">
               {CATEGORY_OPTIONS.map((option) => <button type="button" className={category === option.id ? "active" : ""} key={option.id} onClick={() => setCategory(option.id)}>{tr(option.label)}</button>)}
@@ -383,7 +442,7 @@ export function OutfitStudio({
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => { event.preventDefault(); addGarment(event.dataTransfer.getData("application/x-wardrobe-garment")); }}
             >
-              <div className="outfit-board-heading"><span>{tr("Outfit board")}</span><small>{tr("{count} of 6 pieces", { count: draft.garments.length })}</small></div>
+              <div className="outfit-board-heading"><span>{tr("Outfit board")}</span><small>{tr("{count} selected pieces", { count: draft.garments.length })}</small></div>
               {!draft.garments.length ? (
                 <div className="outfit-board-empty"><CoatHanger size={34} /><strong>{tr("Add garments from your wardrobe")}</strong><p>{tr("Click or drag up to six pieces here. Suggestions will not replace this board until you choose one.")}</p></div>
               ) : (
@@ -395,7 +454,7 @@ export function OutfitStudio({
                     return (
                       <article key={selection.itemId}>
                         <OptimizedImage src={garmentImage(item, selection)} alt={item.name} sizes="180px" />
-                        <div><strong>{item.name}</strong><small>{tr(CATEGORY_OPTIONS.find((option) => option.id === item.part)?.label || "Garment")}</small></div>
+                        <div><strong>{item.name}</strong><small>{(selection.wearerId || item.userId) === user.id ? tr("For me") : tr("For {name}", { name: connectionMap.get(selection.wearerId || item.userId)?.person.name || tr("Companion") })} · {tr(CATEGORY_OPTIONS.find((option) => option.id === item.part)?.label || "Garment")}</small></div>
                         <nav>
                           <button type="button" onClick={() => moveGarment(index, -1)} disabled={!index} aria-label={tr("Move {name} earlier", { name: item.name })}><ArrowUp /></button>
                           <button type="button" onClick={() => moveGarment(index, 1)} disabled={index === draft.garments.length - 1} aria-label={tr("Move {name} later", { name: item.name })}><ArrowDown /></button>
@@ -419,9 +478,10 @@ export function OutfitStudio({
             <section className="outfit-suggestions">
               <div className="outfit-section-heading"><div><span>{tr("Suggestions")}</span><h3>{tr("Explore three complete options")}</h3></div><p>{tr("Local suggestions are free and private. AI refinement is paid and may replace garments.")}</p></div>
               <div className="outfit-suggestion-actions">
-                <button type="button" onClick={suggestLocally}><DiceFive />{tr("Suggest locally")}</button>
-                <button type="button" className="primary" onClick={refineWithAi} disabled={busy === "refine" || !items.length}>{busy === "refine" ? <SpinnerGap className="spin" /> : <MagicWand />}{tr("Refine with AI")}</button>
+                <button type="button" onClick={suggestLocally} disabled={Boolean(draft.companions.length)}><DiceFive />{tr("Suggest locally")}</button>
+                <button type="button" className="primary" onClick={refineWithAi} disabled={busy === "refine" || !items.length || Boolean(draft.companions.length)}>{busy === "refine" ? <SpinnerGap className="spin" /> : <MagicWand />}{tr("Refine with AI")}</button>
               </div>
+              {!!draft.companions.length && <p className="outfit-companion-note">{tr("Suggestions stay off for multi-person scenes so they do not replace clothes you assigned to each person.")}</p>}
               {!!localCandidates.length && <div className="outfit-candidate-grid">{localCandidates.map((candidate) => <button type="button" key={candidate.id} onClick={() => applyCandidate(candidate, "local")}><strong>{candidate.name}</strong><div>{candidate.itemIds.map((id) => <MiniGarment key={id} item={itemMap.get(id)} />)}</div><p>{candidate.explanation}</p><span>{tr("Use this outfit")}</span></button>)}</div>}
 
               {!!aiCandidates.length && activeAi && (

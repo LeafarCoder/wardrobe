@@ -1,0 +1,55 @@
+.connections-backdrop { position: fixed; inset: 0; z-index: 72; display: grid; place-items: center; padding: 28px; background: rgba(25, 23, 20, .36); backdrop-filter: blur(7px); }
+.connections-dialog { width: min(760px, 100%); max-height: min(880px, calc(100dvh - 56px)); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: 1px solid var(--ink); background: var(--paper); box-shadow: 18px 20px 0 rgba(25, 25, 25, .07); }
+.connections-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); padding: 22px 24px 19px; }
+.connections-dialog > header span { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 9px; letter-spacing: .11em; text-transform: uppercase; }
+.connections-dialog > header h2 { margin: 7px 0 4px; font-size: 25px; font-weight: 520; letter-spacing: -.035em; }
+.connections-dialog > header p { max-width: 560px; margin: 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.connections-dialog > header button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: transparent; cursor: pointer; }
+.connections-body { min-height: 0; overflow: auto; padding: 24px; }
+.connections-section { display: grid; gap: 14px; border-bottom: 1px solid var(--line); padding: 0 0 23px; }
+.connections-section + .connections-section { padding-top: 23px; }
+.connections-section.is-notification { margin: -4px -4px 0; border: 1px solid #cabd9c; padding: 18px; background: #f7f1e4; }
+.connections-heading { display: flex; align-items: flex-start; gap: 10px; }
+.connections-heading > svg { margin-top: 2px; color: var(--muted); }
+.connections-heading span { color: var(--muted); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; }
+.connections-heading h3 { margin: 3px 0 0; font-size: 15px; font-weight: 560; }
+.connection-person-row { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.connection-avatar { width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 50%; object-fit: cover; color: var(--muted); }
+.connection-person-row > div:nth-child(2) { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.connection-person-row strong { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.connection-person-row small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.connection-person-row > button, .connection-revoke { border: 0; padding: 7px 8px; background: transparent; color: var(--muted); font-size: 9px; text-decoration: underline; cursor: pointer; }
+.connection-person-row > button.confirm, .connection-revoke.confirm { background: #8d3f35; color: white; text-decoration: none; }
+.connection-invite { display: grid; gap: 13px; }
+.connection-invite > p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.connection-permissions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.connection-permissions label { position: relative; display: block; cursor: pointer; }
+.connection-permissions input { position: absolute; opacity: 0; pointer-events: none; }
+.connection-permissions label > span { min-height: 66px; display: grid; grid-template-columns: auto 1fr; align-content: center; column-gap: 8px; border: 1px solid var(--line); padding: 10px 11px; background: rgba(255,255,255,.32); }
+.connection-permissions label > span svg { grid-row: 1 / 3; color: var(--muted); }
+.connection-permissions label > span strong { font-size: 10px; }
+.connection-permissions label > span small { color: var(--muted); font-size: 8px; line-height: 1.35; }
+.connection-permissions input:checked + span { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+.connection-permissions input:checked + span svg, .connection-permissions input:checked + span small { color: rgba(248,245,239,.7); }
+.connection-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.connection-actions button, .connection-create > button { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--line); padding: 8px 13px; background: transparent; font-size: 10px; cursor: pointer; }
+.connection-actions button.primary, .connection-create > button.primary { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+.connection-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.connection-tags span { border: 1px solid var(--line); padding: 4px 6px; color: var(--muted); font-size: 8px; }
+.connection-shared { display: grid; gap: 11px; border: 1px solid var(--line); padding: 13px; }
+.connection-shared .connection-revoke { justify-self: end; color: #8d3f35; }
+.connection-empty { margin: 0; color: var(--muted); font-size: 10px; }
+.connection-create { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.connection-create > label { display: grid; gap: 6px; }
+.connection-create > label span { font-size: 9px; font-weight: 600; }
+.connection-create input { min-width: 0; border: 1px solid var(--line); padding: 10px 11px; background: rgba(255,255,255,.35); color: var(--ink); font: inherit; font-size: 11px; }
+.connection-create .connection-permissions, .connection-create > button { grid-column: 1 / -1; }
+.connection-create > button { justify-self: start; }
+.connection-pending { display: grid; gap: 5px; border-top: 1px dashed var(--line); padding-top: 13px; }
+.connection-pending strong { font-size: 9px; }
+.connection-pending span { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 9px; }
+.connection-pending span button { margin-left: auto; border: 0; padding: 4px 6px; background: transparent; color: var(--muted); font-size: 8px; text-decoration: underline; cursor: pointer; }
+.connection-pending span button.confirm { background: #8d3f35; color: white; text-decoration: none; }
+.connection-privacy-note { margin: 20px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.connections-error { margin: 12px 0 0; color: #8d3f35; font-size: 10px; }
+@media (max-width: 620px) { .connections-backdrop { padding: 0; } .connections-dialog { width: 100%; max-height: 100dvh; height: 100dvh; border: 0; box-shadow: none; } .connection-permissions, .connection-create { grid-template-columns: 1fr; } .connection-create .connection-permissions, .connection-create > button { grid-column: 1; } }

@@ -126,6 +126,31 @@ test("grounds an Outfit Studio image in every chosen garment and presentation co
   assert.match(prompt, /Warm candlelight/);
 });
 
+test("keeps connected people and their assigned garments distinct in Outfit Studio", () => {
+  const prompt = buildOutfitStudioModeledPrompt(
+    [
+      { profile: { name: "Rafael", age: 34 }, referenceCount: 2 },
+      { profile: { name: "Sara", age: 31 }, referenceCount: 1 },
+    ],
+    { name: "Rafael" },
+    {
+      context: { occasion: "walk", weather: ["mild"], season: "spring" },
+      presentation: { background: "park", style: "candid", pose: "walking" },
+    },
+    [
+      { name: "Navy jacket", part: "wholebody_up", wearerName: "Rafael" },
+      { name: "Cream dress", part: "wholebody", wearerName: "Sara" },
+    ],
+  );
+
+  assert.match(prompt, /Images 1 through 2 are complementary identity references for Rafael/);
+  assert.match(prompt, /Image 3 is the identity reference for Sara/);
+  assert.match(prompt, /Image 4 is the exact reference for "Navy jacket".*worn by Rafael/);
+  assert.match(prompt, /Image 5 is the exact reference for "Cream dress".*worn by Sara/);
+  assert.match(prompt, /Show exactly 2 people/);
+  assert.match(prompt, /never blend faces, bodies, ages, or features/i);
+});
+
 test("uses a compact strict schema for three AI outfit candidates", () => {
   const prompt = outfitRefinementPrompt(
     { garments: [{ itemId: "shirt" }], context: { occasion: "work", weather: ["mild"], season: "spring" } },

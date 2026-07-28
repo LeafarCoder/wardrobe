@@ -467,6 +467,18 @@ button { font: inherit; }
   grid-column: auto;
   border-left: 0;
 }
+.profile-menu__notification {
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #9b493e;
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+}
 .profile-menu__actions button:hover,
 .profile-menu__actions button:focus-visible,
 .profile-menu__actions a:hover,

@@ -47,15 +47,18 @@ test("normalizes saved outfits, retargets merges, and collects modeled assets", 
     id: "saved-one",
     name: "Dinner",
     garments: [
-      { itemId: "discarded", variantId: "blue" },
+      { itemId: "discarded", variantId: "blue", ownerId: "partner", wearerId: "partner" },
       { itemId: "keeper" },
       { itemId: "discarded" },
     ],
+    companions: ["partner", "partner", ""],
     context: { occasion: "dinner", weather: ["mild", "unknown"], season: "summer" },
     presentation: { background: "restaurant", style: "editorial", pose: "sitting", direction: "Warm evening" },
     modeledLooks: [{ id: "look", image: "/look.png", preview: "/look.webp" }],
   }]);
   assert.equal(outfits[0].garments.length, 2);
+  assert.deepEqual(outfits[0].companions, ["partner"]);
+  assert.equal(outfits[0].garments[0].wearerId, "partner");
   assert.deepEqual(outfits[0].context.weather, ["mild"]);
   const merged = wardrobeOutfitsAfterGarmentMerge(outfits, "keeper", "discarded");
   assert.deepEqual(merged[0].garments.map((item) => item.itemId), ["keeper"]);
