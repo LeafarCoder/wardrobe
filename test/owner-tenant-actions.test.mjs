@@ -4,16 +4,21 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
-import { createSessionToken, wardrobeImportApi } from "../scripts/import-job-api.mjs";
+import {
+  createSessionToken,
+  preparedAccountForEmail,
+  validAccountEmail,
+  wardrobeImportApi,
+} from "../scripts/import-job-api.mjs";
 import { withWardrobeUser } from "../src/user-scope.js";
 
 const SESSION_SECRET = "owner-tenant-actions-test-secret";
 const TARGET_ID = "11111111-1111-4111-8111-111111111111";
 
-function mockRequest(url, input, sessionUserId = "default") {
+function mockRequest(url, input, sessionUserId = "default", method = "PATCH") {
   const request = Readable.from([Buffer.from(JSON.stringify(input))]);
   request.url = url;
-  request.method = "PATCH";
+  request.method = method;
   request.headers = {
     "content-type": "application/json",
     cookie: `wardrobe_session=${createSessionToken(SESSION_SECRET, sessionUserId)}`,
@@ -42,6 +47,15 @@ function mockResponse() {
   };
 }
 
+function mockGetRequest(url, cookie = "") {
+  const request = Readable.from([]);
+  request.url = url;
+  request.method = "GET";
+  request.headers = { host: "localhost", cookie };
+  request.socket = { remoteAddress: "127.0.0.1" };
+  return request;
+}
+
 test("adds the selected wardrobe context without disturbing existing query parameters", () => {
   assert.equal(
     withWardrobeUser(`/api/users/${TARGET_ID}`, TARGET_ID),
@@ -52,6 +66,115 @@ test("adds the selected wardrobe context without disturbing existing query param
     `/api/users/${TARGET_ID}/ai-usage?offset=20&user=${TARGET_ID}`,
   );
   assert.equal(withWardrobeUser("/api/export", ""), "/api/export");
+});
+
+test("prepared Google account matching is exact, normalized, and email-shaped", () => {
+  const users = [{
+    id: TARGET_ID,
+    email: "Partner@Example.com",
+    accountPreparedAt: "2026-07-28T18:00:00.000Z",
+  }];
+  assert.equal(validAccountEmail(" partner@example.com "), true);
+  assert.equal(validAccountEmail("not-an-email"), false);
+  assert.equal(preparedAccountForEmail(users, "partner@example.com")?.id, TARGET_ID);
+  assert.equal(preparedAccountForEmail(users, "somebody@example.com"), null);
+  assert.equal(preparedAccountForEmail([{ ...users[0], accountPreparedAt: null }], "partner@example.com"), null);
+});
+
+test("an owner can prepare a wardrobe for an exact Google email before first sign-in", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "wardrobe-prepared-account-"));
+  const dataDir = path.join(root, "data");
+  const usersFile = path.join(dataDir, "users.json");
+  const api = wardrobeImportApi({
+    env: {
+      WARDROBE_DATA_DIR: dataDir,
+      GOOGLE_CLIENT_ID: "test-client",
+      GOOGLE_CLIENT_SECRET: "test-client-secret",
+      WARDROBE_SESSION_SECRET: SESSION_SECRET,
+      WARDROBE_OWNER_EMAILS: "owner@example.com",
+    },
+    fetch: async (url) => {
+      if (String(url).includes("/token")) {
+        return new Response(JSON.stringify({ access_token: "test-access-token" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        sub: "partner-google-subject",
+        email: "PARTNER@example.com",
+        email_verified: true,
+        name: "Partner",
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  try {
+    await api.initialize(root);
+    const initial = JSON.parse(await readFile(usersFile, "utf8"));
+    initial.users[0].email = "owner@example.com";
+    await writeFile(usersFile, JSON.stringify(initial, null, 2));
+
+    const response = mockResponse();
+    await api.handler(mockRequest("/api/users", {
+      name: "Partner",
+      accountEmail: " Partner@Example.com ",
+      language: "pt-PT",
+    }, "default", "POST"), response, () => {});
+
+    assert.equal(response.statusCode, 201);
+    const payload = response.json();
+    assert.equal(payload.user.email, "partner@example.com");
+    assert.equal(payload.user.accountStatus, "prepared");
+    assert.equal(payload.user.googleSubject, undefined);
+    assert.equal(payload.user.preparedByUserId, undefined);
+    assert.equal(payload.currentUserId, payload.user.id);
+
+    const saved = JSON.parse(await readFile(usersFile, "utf8"));
+    const prepared = saved.users.find((user) => user.id === payload.user.id);
+    assert.equal(prepared.email, "partner@example.com");
+    assert.equal(prepared.googleSubject, null);
+    assert.equal(prepared.preparedByUserId, "default");
+    assert.ok(prepared.accountPreparedAt);
+
+    const duplicateResponse = mockResponse();
+    await api.handler(mockRequest("/api/users", {
+      name: "Duplicate",
+      accountEmail: "PARTNER@example.com",
+    }, "default", "POST"), duplicateResponse, () => {});
+    assert.equal(duplicateResponse.statusCode, 409);
+    assert.equal(duplicateResponse.json().code, "account_email_in_use");
+
+    const startResponse = mockResponse();
+    await api.handler(mockGetRequest("/api/auth/google/start"), startResponse, () => {});
+    assert.equal(startResponse.statusCode, 302);
+    const authorizationUrl = new URL(startResponse.getHeader("location"));
+    const oauthCookie = String(startResponse.getHeader("set-cookie")).split(";")[0];
+    const callbackResponse = mockResponse();
+    await api.handler(mockGetRequest(
+      `/api/auth/google/callback?code=test-code&state=${encodeURIComponent(authorizationUrl.searchParams.get("state"))}`,
+      oauthCookie,
+    ), callbackResponse, () => {});
+    assert.equal(callbackResponse.statusCode, 302);
+    assert.equal(callbackResponse.getHeader("location"), "/?signin=ok");
+
+    const ordinaryStore = JSON.parse(await readFile(usersFile, "utf8"));
+    const claimed = ordinaryStore.users.find((user) => user.id === payload.user.id);
+    assert.equal(claimed.googleSubject, "partner-google-subject");
+    assert.ok(claimed.accountClaimedAt);
+    const forbiddenResponse = mockResponse();
+    await api.handler(mockRequest("/api/users", {
+      name: "Not allowed",
+      accountEmail: "other@example.com",
+    }, payload.user.id, "POST"), forbiddenResponse, () => {});
+    assert.equal(forbiddenResponse.statusCode, 403);
+    assert.equal(forbiddenResponse.json().code, "profile_creation_disabled");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("an owner can edit the selected tenant while non-owners remain isolated", async () => {

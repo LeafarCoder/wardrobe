@@ -2,6 +2,15 @@ function CrossMark() {
   return <path d="M8 8l20 20M28 8L8 28" strokeWidth="2.3" strokeLinecap="round" />;
 }
 
+function NoBadge() {
+  return (
+    <g>
+      <rect x="20" y="25" width="12" height="7" rx="2.2" fill="currentColor" stroke="none" />
+      <text x="26" y="30.2" textAnchor="middle" stroke="none" fill="white" fontSize="4.8" fontWeight="750">NO</text>
+    </g>
+  );
+}
+
 export function CareIcon({ group, option, size = 38, className = "" }) {
   const prohibited = option?.startsWith("do-not-");
   const temperature = option?.match(/(?:machine|gentle)-(\d+)/)?.[1];
@@ -26,21 +35,37 @@ export function CareIcon({ group, option, size = 38, className = "" }) {
       )}
       {group === "bleaching" && (
         <>
-          <path d="M18 7l2.3 7.4L28 17l-7.7 2.6L18 27l-2.3-7.4L8 17l7.7-2.6L18 7z" strokeWidth="1.5" strokeLinejoin="round" />
-          {option === "oxygen-only" && <text x="18" y="20" textAnchor="middle" stroke="none" fill="currentColor" fontSize="7" fontWeight="650">O₂</text>}
+          <path d="M10 11h8l2 4v11H8V15l2-4zM11 8h6v3h-6z" strokeWidth="1.5" strokeLinejoin="round" />
+          <path d="M24 14c0 0-4 4.2-4 7a4 4 0 0 0 8 0c0-2.8-4-7-4-7z" strokeWidth="1.5" strokeLinejoin="round" />
+          {option === "any-bleach" && <path d="M22 21h4M24 19v4" strokeWidth="1.2" strokeLinecap="round" />}
+          {option === "oxygen-only" && <text x="24" y="22.5" textAnchor="middle" stroke="none" fill="currentColor" fontSize="5.3" fontWeight="700">O₂</text>}
+          {option === "do-not-bleach" && <NoBadge />}
         </>
       )}
       {group === "tumbleDrying" && (
         <>
-          <path d="M11 12c5-5 14-2 15 4M25 24c-5 5-14 2-15-4" strokeWidth="1.7" strokeLinecap="round" />
-          <path d="M23 12h3v3M13 24h-3v-3" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-          {option !== "do-not-tumble" && <circle cx="18" cy="18" r={option === "low" ? "1.4" : "2.2"} fill="currentColor" stroke="none" />}
+          <rect x="7" y="7" width="22" height="22" rx="3" strokeWidth="1.5" />
+          <path d="M7 13h22" strokeWidth="1.3" />
+          <circle cx="18" cy="21" r="6" strokeWidth="1.5" />
+          <circle cx="11" cy="10" r="1" fill="currentColor" stroke="none" />
+          <path d={option === "low" ? "M15 22c1-2 1-2 2 0" : "M14 22c1-2 1-2 2 0s1 2 2 0 1-2 2 0"} strokeWidth="1.2" strokeLinecap="round" />
+          {option === "do-not-tumble" && <NoBadge />}
         </>
       )}
       {group === "naturalDrying" && (
         <>
-          <path d={option?.startsWith("flat") ? "M8 22h20" : "M9 11h18M12 11v14M24 11v14"} strokeWidth="1.8" strokeLinecap="round" />
-          {option?.endsWith("shade") && <><circle cx="25" cy="10" r="3" strokeWidth="1.3" /><path d="M22 13l-9 12" strokeWidth="1.4" strokeLinecap="round" /></>}
+          {option?.startsWith("flat") ? (
+            <>
+              <path d="M7 25h22M10 21h16l-3-7H13l-3 7z" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M13 17h10" strokeWidth="1.2" strokeLinecap="round" />
+            </>
+          ) : (
+            <>
+              <path d="M6 11c7 2 17 2 24 0" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M12 13l3 2 3-2 3 2 3-2v10H12V13z" strokeWidth="1.5" strokeLinejoin="round" />
+            </>
+          )}
+          {option?.endsWith("shade") && <><path d="M23 8a4 4 0 0 1 5 5" strokeWidth="1.3" strokeLinecap="round" /><path d="M22 13h8" strokeWidth="1.3" strokeLinecap="round" /></>}
         </>
       )}
       {group === "ironing" && (
@@ -51,12 +76,14 @@ export function CareIcon({ group, option, size = 38, className = "" }) {
       )}
       {group === "professionalCare" && (
         <>
-          <path d="M10 24c0-5 3-9 8-9s8 4 8 9" strokeWidth="1.7" strokeLinecap="round" />
-          <path d="M14 15c0-5 8-5 8 0M11 25h14" strokeWidth="1.7" strokeLinecap="round" />
-          {option === "gentle-dry-clean" && <path d="M13 28h10" strokeWidth="1.4" strokeLinecap="round" />}
+          <path d="M7 14h22v14H7V14zM9 8h18l3 6H6l3-6z" strokeWidth="1.5" strokeLinejoin="round" />
+          <path d="M14 22c0-2 2-4 4-4s4 2 4 4M13 23h10" strokeWidth="1.4" strokeLinecap="round" />
+          <text x="18" y="12.5" textAnchor="middle" stroke="none" fill="currentColor" fontSize="4.7" fontWeight="750">PRO</text>
+          {option === "gentle-dry-clean" && <path d="M24 18c3-1 4 1 2 3-2 2-4 2-5 2 1-2 1-4 3-5z" strokeWidth="1" strokeLinejoin="round" />}
+          {option === "do-not-dry-clean" && <NoBadge />}
         </>
       )}
-      {prohibited && <CrossMark />}
+      {prohibited && ["washing", "ironing"].includes(group) && <CrossMark />}
     </svg>
   );
 }

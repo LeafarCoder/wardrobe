@@ -2846,7 +2846,7 @@ function InfoTooltip({ label, children, className = "" }) {
   );
 }
 
-function ProfileMenu({ users, currentUser, onSelect, onEdit, onExport, onLogout }) {
+function ProfileMenu({ users, currentUser, canCreate, onCreate, onSelect, onEdit, onExport, onLogout }) {
   const detailsRef = useRef(null);
   const closeMenu = () => { if (detailsRef.current) detailsRef.current.open = false; };
 
@@ -2890,21 +2890,35 @@ function ProfileMenu({ users, currentUser, onSelect, onEdit, onExport, onLogout 
             <PencilSimple size={15} aria-hidden="true" />
           </button>
         </div>
-        {users.length > 1 && (
-          <div className="profile-menu__users">
-            {users.map((user) => (
-              <button
-                className={user.id === currentUser?.id ? "is-current" : ""}
-                type="button"
-                key={user.id}
-                onClick={() => { onSelect(user.id); closeMenu(); }}
-              >
-                <ProfileAvatar user={user} />
-                <span><strong>{user.name}</strong><small>{user.email || user.fashionStyle || ""}</small></span>
-                {user.id === currentUser?.id && <Check size={14} weight="bold" aria-hidden="true" />}
-              </button>
-            ))}
-          </div>
+        {(canCreate || users.length > 1) && (
+          <>
+            <div className="profile-menu__people-heading">
+              <span>{tr("Wardrobes")}</span>
+              {canCreate && (
+                <button type="button" onClick={() => { onCreate(); closeMenu(); }}>
+                  <Plus size={13} aria-hidden="true" /> {tr("Prepare account")}
+                </button>
+              )}
+            </div>
+            <div className="profile-menu__users">
+              {users.map((user) => (
+                <button
+                  className={user.id === currentUser?.id ? "is-current" : ""}
+                  type="button"
+                  key={user.id}
+                  onClick={() => { onSelect(user.id); closeMenu(); }}
+                >
+                  <ProfileAvatar user={user} />
+                  <span>
+                    <strong>{user.name}</strong>
+                    <small>{user.email || user.fashionStyle || ""}</small>
+                    {user.accountStatus === "prepared" && <em>{tr("Waiting for first sign-in")}</em>}
+                  </span>
+                  {user.id === currentUser?.id && <Check size={14} weight="bold" aria-hidden="true" />}
+                </button>
+              ))}
+            </div>
+          </>
         )}
         <div className="profile-menu__actions">
           <button className="profile-menu__export" type="button" onClick={() => { onExport(); closeMenu(); }} title={tr("Includes only your own wardrobe and photos")}>
@@ -3775,12 +3789,14 @@ function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
   );
 }
 
-function ProfileEditor({ user, busy, error, onClose, onSave }) {
+function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave }) {
   const isNew = !user;
+  const accountEditable = canManageAccount && (isNew || user?.accountStatus === "prepared");
   const originalLanguageRef = useRef(user?.language || getLocale());
   const [activeTab, setActiveTab] = useState("basics");
   const [draft, setDraft] = useState({
     name: user?.name || "",
+    accountEmail: user?.email || "",
     age: user?.age || "",
     city: user?.city || "",
     language: user?.language || getLocale(),
@@ -3874,7 +3890,7 @@ function ProfileEditor({ user, busy, error, onClose, onSave }) {
 
   const submit = async (event) => {
     event.preventDefault();
-    if ((isNew || referencesChanged) && !visibleReferences.length) {
+    if (!isNew && referencesChanged && !visibleReferences.length) {
       setActiveTab("basics");
       setFileError(tr("Add at least one reference photo."));
       return;
@@ -3888,6 +3904,7 @@ function ProfileEditor({ user, busy, error, onClose, onSave }) {
     await onSave({
       ...draft,
       age: draft.age === "" ? null : Number(draft.age),
+      ...(!accountEditable ? { accountEmail: undefined } : {}),
       ...referenceUpdate,
       // Omitted entirely unless the person actually typed a new key, so saving
       // any other tab never disturbs the stored one.
@@ -3927,6 +3944,32 @@ function ProfileEditor({ user, busy, error, onClose, onSave }) {
           {error && <p className="profile-save-error" role="alert">{error}</p>}
           {activeTab === "basics" && (
             <section className="profile-tab-panel profile-basics-grid" role="tabpanel" id="profile-panel-basics" aria-labelledby="profile-tab-basics">
+              {canManageAccount && (
+                <div className="profile-account-card">
+                  <div className="profile-account-card__icon" aria-hidden="true"><GoogleLogo size={19} /></div>
+                  <label>
+                    <span>{tr("Google account email")}</span>
+                    <input
+                      type="email"
+                      required={isNew}
+                      readOnly={!accountEditable}
+                      maxLength="254"
+                      value={draft.accountEmail}
+                      onChange={(event) => setDraft({ ...draft, accountEmail: event.target.value })}
+                      placeholder="name@gmail.com"
+                      autoComplete="off"
+                    />
+                  </label>
+                  <div className="profile-account-card__copy">
+                    <strong>{tr(user?.accountStatus === "connected" ? "Connected to Google" : "Prepared for first sign-in")}</strong>
+                    <small>{tr(isNew
+                      ? "Enter the exact Google email this wardrobe will belong to. You can add clothes and photos now; the matching person will receive this wardrobe when they first sign in."
+                      : user?.accountStatus === "prepared"
+                        ? "This wardrobe is ready to use now. You may correct the email until its owner signs in for the first time."
+                        : "This wardrobe has already been claimed. Its Google email cannot be reassigned here.")}</small>
+                  </div>
+                </div>
+              )}
               <div className="profile-reference-field">
                 <div className="profile-reference-field__heading">
                   <div className="profile-reference-field__title">
@@ -4093,7 +4136,7 @@ function ProfileEditor({ user, busy, error, onClose, onSave }) {
 
         <footer>
           <button type="button" onClick={closeEditor} disabled={busy}>{tr("Cancel")}</button>
-          <button className="profile-save" type="submit" disabled={busy || !draft.name.trim()}><Check size={14} weight="bold" /> {tr(busy ? "Saving…" : "Save profile")}</button>
+          <button className="profile-save" type="submit" disabled={busy || !draft.name.trim() || (isNew && !draft.accountEmail.trim())}><Check size={14} weight="bold" /> {tr(busy ? "Saving…" : isNew ? "Prepare wardrobe" : "Save profile")}</button>
         </footer>
       </form>
       {referencePreview && (
@@ -4838,6 +4881,7 @@ export function App() {
   const [auth, setAuth] = useState(null);
   const [authError, setAuthError] = useState("");
   const [users, setUsers] = useState([]);
+  const [isOwner, setIsOwner] = useState(false);
   const [currentUserId, setCurrentUserId] = useState(null);
   const [profileEditor, setProfileEditor] = useState(null);
   const [profileBusy, setProfileBusy] = useState(false);
@@ -4886,6 +4930,7 @@ export function App() {
     const onUnauthorized = () => {
       setAuth((current) => ({ enabled: Boolean(current?.enabled), authenticated: false }));
       setUsers([]);
+      setIsOwner(false);
       setCurrentUserId(null);
       setItems([]);
       setSelectedId(null);
@@ -4922,6 +4967,7 @@ export function App() {
     profileApi("/api/users")
       .then((result) => {
         setUsers(result.users || []);
+        setIsOwner(Boolean(result.isOwner));
         setCurrentUserId(result.currentUserId);
       })
       .catch((requestError) => {
@@ -5713,6 +5759,7 @@ export function App() {
     } finally {
       setAuth((current) => ({ enabled: current?.enabled !== false, authenticated: false }));
       setUsers([]);
+      setIsOwner(false);
       setCurrentUserId(null);
       setItems([]);
       setPlannerOpen(false);
@@ -5955,6 +6002,8 @@ export function App() {
         <ProfileMenu
           users={users}
           currentUser={currentUser}
+          canCreate={isOwner}
+          onCreate={() => { setProfileError(""); setProfileEditor("new"); }}
           onSelect={selectUser}
           onEdit={() => { setProfileError(""); setProfileEditor(currentUser.id); }}
           onExport={downloadPersonalData}
@@ -5982,6 +6031,7 @@ export function App() {
           user={profileEditor === "new" ? null : users.find((user) => user.id === profileEditor)}
           busy={profileBusy}
           error={profileError}
+          canManageAccount={isOwner}
           onClose={() => !profileBusy && setProfileEditor(null)}
           onSave={saveProfile}
         />

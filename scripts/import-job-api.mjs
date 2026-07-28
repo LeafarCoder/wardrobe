@@ -497,6 +497,20 @@ export function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+export function validAccountEmail(value) {
+  const email = normalizeEmail(value);
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+export function preparedAccountForEmail(users, value) {
+  const email = normalizeEmail(value);
+  if (!email) return null;
+  return (Array.isArray(users) ? users : []).find((user) => (
+    Boolean(user?.accountPreparedAt)
+    && normalizeEmail(user.email) === email
+  )) || null;
+}
+
 // WARDROBE_ALLOWED_EMAILS holds the household. An entry may pin an existing
 // profile id so a returning person claims the wardrobe they already own:
 //   me@gmail.com=default, partner@gmail.com
@@ -2941,6 +2955,7 @@ export function wardrobeImportApi(options = {}) {
   };
   const withLibrary = criticalSection();
   const withUsers = criticalSection();
+  const fetchRequest = options.fetch || globalThis.fetch;
   const setting = (name, fallback = "") => options.env?.[name] || process.env[name] || fallback;
   const googleClientId = () => String(setting("GOOGLE_CLIENT_ID")).trim();
   const googleClientSecret = () => String(setting("GOOGLE_CLIENT_SECRET")).trim();
@@ -3347,6 +3362,9 @@ export function wardrobeImportApi(options = {}) {
       // wardrobe to another Google account.
       googleSubject: existing.googleSubject || null,
       email: normalizeEmail(existing.email) || null,
+      accountPreparedAt: existing.accountPreparedAt || null,
+      accountClaimedAt: existing.accountClaimedAt || null,
+      preparedByUserId: existing.preparedByUserId || null,
       // Server-only. Absent from a request means "leave it as it is"; an empty
       // string means the person cleared it.
       openRouterApiKey: Object.hasOwn(input, "openRouterApiKey")
@@ -3378,8 +3396,16 @@ export function wardrobeImportApi(options = {}) {
     };
   };
 
-  const publicProfile = ({ openRouterApiKey, ...profile }) => ({
+  const publicProfile = ({
+    openRouterApiKey,
+    googleSubject,
+    accountPreparedAt,
+    accountClaimedAt,
+    preparedByUserId,
+    ...profile
+  }) => ({
     ...profile,
+    accountStatus: googleSubject ? "connected" : accountPreparedAt ? "prepared" : "unassigned",
     // The key never leaves the server; the browser only learns that one exists
     // and enough of it to recognize which key is stored.
     hasOpenRouterKey: Boolean(normalizeOpenRouterApiKey(openRouterApiKey)),
@@ -3442,21 +3468,25 @@ export function wardrobeImportApi(options = {}) {
   async function profileForGoogleIdentity(identity) {
     const email = normalizeEmail(identity.email);
     const accounts = allowedAccounts();
-    if (!accounts.size) {
-      throw apiError(
-        "No wardrobe accounts are configured. Add WARDROBE_ALLOWED_EMAILS to the server environment.",
-        403,
-        "no_allowed_accounts",
-      );
-    }
-    if (!accounts.has(email)) {
-      throw apiError("This Google account is not allowed to open this wardrobe.", 403, "account_not_allowed");
-    }
     return withUsers(async () => {
       const store = await loadUsersStore();
       if (!store) throw apiError("User profiles are not initialized.", 503, "profiles_unavailable");
+      const prepared = preparedAccountForEmail(store.users, email);
+      if (!accounts.has(email) && !prepared) {
+        if (!accounts.size) {
+          throw apiError(
+            "No wardrobe accounts are configured. Add WARDROBE_ALLOWED_EMAILS or ask an owner to prepare this account.",
+            403,
+            "no_allowed_accounts",
+          );
+        }
+        throw apiError("This Google account is not allowed to open this wardrobe.", 403, "account_not_allowed");
+      }
       const bySubject = store.users.find((user) => user.googleSubject === identity.subject);
       if (bySubject) {
+        if (prepared && prepared.id !== bySubject.id) {
+          throw apiError("That Google email is already reserved for another wardrobe.", 409, "account_email_conflict");
+        }
         if (bySubject.email !== email) {
           bySubject.email = email;
           await saveUsersStore(store);
@@ -3466,16 +3496,17 @@ export function wardrobeImportApi(options = {}) {
       const claimedId = accounts.get(email);
       const byEmail = store.users.find((user) => normalizeEmail(user.email) === email && !user.googleSubject);
       const pinned = claimedId ? store.users.find((user) => user.id === claimedId) : null;
-      const target = pinned || byEmail;
+      const target = pinned || prepared || byEmail;
       if (target) {
         if (target.googleSubject && target.googleSubject !== identity.subject) {
           throw apiError("That wardrobe is already linked to a different Google account.", 409, "profile_already_linked");
         }
         target.googleSubject = identity.subject;
         target.email = email;
+        target.accountClaimedAt = new Date().toISOString();
         target.updatedAt = new Date().toISOString();
         await saveUsersStore(store);
-        console.info(`[wardrobe] Linked ${email} to the existing wardrobe "${target.name}".`);
+        console.info(`[wardrobe] Linked a verified Google identity to wardrobe ${target.id}.`);
         return target.id;
       }
       const now = new Date().toISOString();
@@ -3491,7 +3522,7 @@ export function wardrobeImportApi(options = {}) {
       });
       store.users.push(created);
       await saveUsersStore(store);
-      console.info(`[wardrobe] Created a new wardrobe for ${email}.`);
+      console.info(`[wardrobe] Created wardrobe ${created.id} from a verified Google identity.`);
       return created.id;
     });
   }
@@ -3505,7 +3536,7 @@ export function wardrobeImportApi(options = {}) {
       grant_type: "authorization_code",
       code_verifier: verifier,
     });
-    const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
+    const tokenResponse = await fetchRequest(GOOGLE_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
@@ -3517,7 +3548,7 @@ export function wardrobeImportApi(options = {}) {
     }
     // The profile comes from Google's userinfo endpoint over TLS using the token
     // we just obtained, so no local JWT verification is needed.
-    const userinfoResponse = await fetch(GOOGLE_USERINFO_URL, {
+    const userinfoResponse = await fetchRequest(GOOGLE_USERINFO_URL, {
       headers: { Authorization: `Bearer ${token.access_token}` },
     });
     const profile = await userinfoResponse.json().catch(() => ({}));
@@ -5171,7 +5202,7 @@ Interpret this correction semantically in whatever language it is written. It ov
             oauthCookie(req, "", 0),
             authCookie(req, createSessionToken(sessionSecret(), profileId), Math.floor(SESSION_MAX_AGE_MS / 1000)),
           ]);
-          console.info(`[wardrobe] ${identity.email} signed in.`);
+          console.info(`[wardrobe] Wardrobe ${profileId} signed in.`);
           return finish("signin=ok");
         } catch (error) {
           rateLimitLogin(req, true);
@@ -5220,11 +5251,49 @@ Interpret this correction semantically in whatever language it is written. It ov
         });
       }
       if (url.pathname === USERS_ROOT && req.method === "POST") {
-        throw apiError(
-          "Each wardrobe belongs to one Google account. Add the person's address to WARDROBE_ALLOWED_EMAILS and ask them to sign in.",
-          403,
-          "profile_creation_disabled",
-        );
+        if (!isOwner) throw apiError("Only a wardrobe owner can prepare another person's account.", 403, "profile_creation_disabled");
+        const input = await body(req, 60 * 1024 * 1024);
+        const email = normalizeEmail(input.accountEmail);
+        if (!validAccountEmail(email)) {
+          throw apiError("Enter the exact email address used by the person's Google account.", 400, "invalid_account_email");
+        }
+        const additions = Object.hasOwn(input, "referenceImages") ? input.referenceImages : [];
+        if (!Array.isArray(additions) || additions.length > 3) {
+          throw apiError("Choose up to three reference photos.", 400, "invalid_reference_count");
+        }
+        const created = await withUsers(async () => {
+          const store = await loadUsersStore();
+          if (!store) throw apiError("User profiles are not initialized.", 503, "profiles_unavailable");
+          if (store.users.some((user) => normalizeEmail(user.email) === email)) {
+            throw apiError("A wardrobe is already associated with that Google email.", 409, "account_email_in_use");
+          }
+          const now = new Date().toISOString();
+          const id = randomUUID();
+          const referenceImages = additions.length ? await saveProfileReferences(id, additions) : [];
+          try {
+            const profile = normalizeProfile(input, {
+              id,
+              googleSubject: null,
+              email,
+              accountPreparedAt: now,
+              accountClaimedAt: null,
+              preparedByUserId: signedInIdentity.id,
+              referenceImages,
+              createdAt: now,
+              updatedAt: now,
+            });
+            store.users.push(profile);
+            store.currentUserId = id;
+            await saveUsersStore(store);
+            return profile;
+          } catch (error) {
+            await Promise.all(referenceImages.flatMap((reference) => profileReferenceAssetNames(reference)
+              .map((fileName) => rm(path.join(profileReferenceDir(id), fileName), { force: true }))));
+            throw error;
+          }
+        });
+        console.info(`[wardrobe] Prepared wardrobe account ${created.id}.`);
+        return json(res, 201, { currentUserId: created.id, user: publicProfile(created) });
       }
       if (url.pathname === `${USERS_ROOT}/current` && req.method === "PUT") {
         if (!isOwner) throw apiError("You can only open your own wardrobe.", 403, "profile_switching_disabled");
@@ -5319,7 +5388,20 @@ Interpret this correction semantically in whatever language it is written. It ov
           const store = await loadUsersStore();
           const index = store.users.findIndex((user) => user.id === signedInUserId);
           if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
-          const existing = store.users[index];
+          let existing = store.users[index];
+          if (Object.hasOwn(input, "accountEmail")) {
+            if (!isOwner || existing.googleSubject || !existing.accountPreparedAt) {
+              throw apiError("A connected Google account cannot be reassigned from profile settings.", 403, "account_email_locked");
+            }
+            const email = normalizeEmail(input.accountEmail);
+            if (!validAccountEmail(email)) {
+              throw apiError("Enter the exact email address used by the person's Google account.", 400, "invalid_account_email");
+            }
+            if (store.users.some((user) => user.id !== existing.id && normalizeEmail(user.email) === email)) {
+              throw apiError("A wardrobe is already associated with that Google email.", 409, "account_email_in_use");
+            }
+            existing = { ...existing, email };
+          }
           const updatingReferences = Object.hasOwn(input, "referenceImages")
             || Object.hasOwn(input, "referenceImageIds");
           let referenceImages = existing.referenceImages;
