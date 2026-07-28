@@ -30,6 +30,12 @@ test("migrates the retired Gemini 3.1 Flash id to a live higher-quality route", 
   assert.equal(migrateAiModelId("google/gemini-3.1-flash-lite"), "google/gemini-3.1-flash-lite");
 });
 
+test("groups Outfit Studio text and image calls under the saved outfit", () => {
+  assert.equal(operationGroup("outfit-refine"), "outfit");
+  assert.equal(operationGroup("modeled-outfit"), "outfit");
+  assert.equal(operationGroup("modeled-plan"), "modeled");
+});
+
 test("offers only compatible live models for each AI task and includes pricing", () => {
   const analysis = AI_TASKS.find((task) => task.id === "analysisModel");
   const garment = AI_TASKS.find((task) => task.id === "garmentModel");

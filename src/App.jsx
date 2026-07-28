@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, Eye, EyeSlash, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { BrandIcon } from "./BrandIcon.jsx";
+import { CareIcon } from "./CareIcon.jsx";
 import { CITY_SUGGESTIONS } from "./city-suggestions.js";
 import { GarmentColorPreview } from "./GarmentColorPreview.jsx";
 import { DayDatePicker } from "./DayDatePicker.jsx";
@@ -9,6 +10,7 @@ import { formatDate, getLocale, LANGUAGE_OPTIONS, setLocale, tr, useLocale } fro
 import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
 import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
+import { OutfitStudio } from "./OutfitStudio.jsx";
 import {
   isValidOpenRouterKey,
   notifyOpenRouterKeyRequired,
@@ -17,6 +19,12 @@ import {
 import { ProductStage } from "./ProductStage.jsx";
 import { AI_TASKS, formatAiCost, normalizeAiPreferences } from "./ai-preferences.js";
 import { garmentVariationColors, normalizeHexColor } from "./garment-recolor.js";
+import {
+  CARE_GROUPS,
+  careInstructionCount,
+  normalizeCareInstructions,
+  selectedCareInstructions,
+} from "./garment-care.js";
 import {
   GARMENT_VARIANT_THRESHOLD_DEFAULT,
   GARMENT_VARIANT_THRESHOLD_MAX,
@@ -133,6 +141,7 @@ function editableItem(item) {
     fits: normalizeGarmentFacetList(item.fits),
     materials: normalizeGarmentFacetList(item.materials),
     seasons: normalizeGarmentSeasons(item.seasons),
+    careInstructions: normalizeCareInstructions(item.careInstructions),
   };
 }
 
@@ -259,6 +268,7 @@ function persistEdit(item, userId) {
     fits: normalizeGarmentFacetList(item.fits),
     materials: normalizeGarmentFacetList(item.materials),
     seasons: normalizeGarmentSeasons(item.seasons),
+    careInstructions: normalizeCareInstructions(item.careInstructions),
   };
   localStorage.setItem(userStorageKey(STORAGE_KEY, userId), JSON.stringify(edits));
 }
@@ -907,6 +917,88 @@ function GarmentEditorSection({ title, summary, defaultOpen = false, children })
   );
 }
 
+function CareInstructionsEditor({ value, onChange, onOpenGuide }) {
+  const normalized = normalizeCareInstructions(value);
+  const count = careInstructionCount(normalized);
+  return (
+    <GarmentEditorSection
+      title={tr("Care instructions")}
+      summary={count ? tr("{count} saved", { count }) : tr("Add the instructions shown on the garment label")}
+    >
+      <div className="care-editor">
+        <p>{tr("Choose only what appears on the physical care label. One choice can be saved in each row.")}</p>
+        {CARE_GROUPS.map((group) => (
+          <fieldset className="care-editor__group" key={group.id}>
+            <legend>{tr(group.label)}</legend>
+            <div>
+              {group.options.map((option) => {
+                const active = normalized[group.id] === option.id;
+                return (
+                  <button
+                    type="button"
+                    className={active ? "active" : ""}
+                    aria-pressed={active}
+                    title={tr(option.description)}
+                    onClick={() => onChange({
+                      ...normalized,
+                      [group.id]: active ? null : option.id,
+                    })}
+                    key={option.id}
+                  >
+                    <CareIcon group={group.id} option={option.id} size={39} />
+                    <span>{tr(option.label)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+        ))}
+        <button className="care-editor__guide" type="button" onClick={onOpenGuide} disabled={!count}>
+          <Info size={16} aria-hidden="true" />
+          {tr("View care guide")}
+        </button>
+      </div>
+    </GarmentEditorSection>
+  );
+}
+
+function CareGuideDialog({ name, instructions, onClose }) {
+  const selected = selectedCareInstructions(instructions);
+  return (
+    <div className="care-guide-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="care-guide-dialog" role="dialog" aria-modal="true" aria-labelledby="care-guide-title">
+        <header>
+          <div>
+            <p>{tr("Garment care guide")}</p>
+            <h2 id="care-guide-title">{name}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label={tr("Close care guide")}><X size={21} aria-hidden="true" /></button>
+        </header>
+        <div className="care-guide-dialog__body">
+          {selected.map((instruction) => (
+            <article key={instruction.groupId}>
+              <CareIcon group={instruction.groupId} option={instruction.id} size={48} />
+              <div>
+                <small>{tr(instruction.groupLabel)}</small>
+                <h3>{tr(instruction.label)}</h3>
+                <p>{tr(instruction.description)}</p>
+              </div>
+            </article>
+          ))}
+          <aside>
+            <Info size={17} aria-hidden="true" />
+            <p>{tr("The physical care label always takes precedence. If anything here differs from the label, follow the label or ask a professional cleaner.")}</p>
+          </aside>
+          <a href="https://www.ginetex.net/GB/labelling/care-symbols.asp" target="_blank" rel="noreferrer noopener">
+            {tr("Open the official GINETEX care-symbol guide")}
+            <ArrowSquareOut size={14} aria-hidden="true" />
+          </a>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ViewerToast({ toast, onDismiss }) {
   if (!toast) return null;
 
@@ -928,6 +1020,7 @@ function ItemEditor({
   draft,
   setDraft,
   onEditColors,
+  onOpenCareGuide,
   currency,
   colorVersions,
 }) {
@@ -1091,6 +1184,12 @@ function ItemEditor({
           </fieldset>
         </div>
       </GarmentEditorSection>
+
+      <CareInstructionsEditor
+        value={draft.careInstructions}
+        onChange={(careInstructions) => setDraft((current) => ({ ...current, careInstructions }))}
+        onOpenGuide={onOpenCareGuide}
+      />
     </div>
   );
 }
@@ -1423,6 +1522,7 @@ function ItemViewer({
   const [sourceCropVisible, setSourceCropVisible] = useState(false);
   const [sourceImageFrame, setSourceImageFrame] = useState(null);
   const [colorEditorOpen, setColorEditorOpen] = useState(false);
+  const [careGuideOpen, setCareGuideOpen] = useState(false);
   const [variantStudioOpen, setVariantStudioOpen] = useState(false);
   const [modeledVariantPickerOpen, setModeledVariantPickerOpen] = useState(false);
   const [sourcePhotoIndex, setSourcePhotoIndex] = useState(0);
@@ -1508,6 +1608,7 @@ function ItemViewer({
       fits: normalizedTags(draft.fits),
       materials: normalizedTags(draft.materials),
       seasons: normalizedTags(draft.seasons),
+      careInstructions: normalizeCareInstructions(draft.careInstructions),
     }) !== JSON.stringify({
       name: (item.name || "").trim(),
       part: item.part,
@@ -1523,6 +1624,7 @@ function ItemViewer({
       fits: normalizedTags(item.fits || []),
       materials: normalizedTags(item.materials || []),
       seasons: normalizedTags(item.seasons || []),
+      careInstructions: normalizeCareInstructions(item.careInstructions),
     });
   }, [draft, item]);
 
@@ -1550,7 +1652,9 @@ function ItemViewer({
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === "Escape") {
-        if (variantStudioOpen) {
+        if (careGuideOpen) {
+          setCareGuideOpen(false);
+        } else if (variantStudioOpen) {
           setVariantStudioOpen(false);
         } else if (modeledVariantPickerOpen) {
           setModeledVariantPickerOpen(false);
@@ -1587,7 +1691,7 @@ function ItemViewer({
       document.removeEventListener("keydown", onKeyDown);
       clearTimeout(shakeTimerRef.current);
     };
-  }, [colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, mediaPreviewOpen, modeledVariantPickerOpen, requestClose, sampling, sourcePhotoOpen, variantStudioOpen]);
+  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, mediaPreviewOpen, modeledVariantPickerOpen, requestClose, sampling, sourcePhotoOpen, variantStudioOpen]);
 
   useEffect(() => {
     if (deleteCandidate) deleteCancelButtonRef.current?.focus({ preventScroll: true });
@@ -1610,7 +1714,7 @@ function ItemViewer({
   }, [colorEditorOpen]);
 
   useEffect(() => {
-    if (!sourcePhotoOpen && !colorEditorOpen && !mediaPreviewOpen && !variantStudioOpen && !modeledVariantPickerOpen) return undefined;
+    if (!sourcePhotoOpen && !colorEditorOpen && !careGuideOpen && !mediaPreviewOpen && !variantStudioOpen && !modeledVariantPickerOpen) return undefined;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -1618,7 +1722,7 @@ function ItemViewer({
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [colorEditorOpen, mediaPreviewOpen, modeledVariantPickerOpen, sourcePhotoOpen, variantStudioOpen]);
+  }, [careGuideOpen, colorEditorOpen, mediaPreviewOpen, modeledVariantPickerOpen, sourcePhotoOpen, variantStudioOpen]);
 
   useEffect(() => {
     if (!isDirty) setCloseBlocked(false);
@@ -1652,6 +1756,7 @@ function ItemViewer({
     setSourceCropVisible(false);
     setSourceImageFrame(null);
     setColorEditorOpen(false);
+    setCareGuideOpen(false);
     setSourcePhotoIndex(0);
     setModeledIndex(Math.max(0, itemModeledLooks(item).length - 1));
     setDeleteCandidate(null);
@@ -1716,6 +1821,7 @@ function ItemViewer({
       fits: draft.fits.map((value) => value.trim()).filter(Boolean),
       materials: draft.materials.map((value) => value.trim()).filter(Boolean),
       seasons: normalizeGarmentSeasons(draft.seasons),
+      careInstructions: normalizeCareInstructions(draft.careInstructions),
     });
     setSampling(null);
     setSampleStatus(tr("Changes saved."));
@@ -2183,6 +2289,7 @@ function ItemViewer({
           draft={draft}
           setDraft={setDraft}
           onEditColors={openColorEditor}
+          onOpenCareGuide={() => setCareGuideOpen(true)}
           currency={currency}
           colorVersions={(
             <ColorVersionAction
@@ -2269,6 +2376,13 @@ function ItemViewer({
           const updated = await onCreateVariant(item.id, input);
           setColorVersionIndex(itemColorVersions(updated).length - 1);
         }}
+      />
+    )}
+    {careGuideOpen && (
+      <CareGuideDialog
+        name={draft.name || type}
+        instructions={draft.careInstructions}
+        onClose={() => setCareGuideOpen(false)}
       />
     )}
     {modeledVariantPickerOpen && (
@@ -3114,6 +3228,7 @@ function ProfileAiUsage({ user }) {
 const AI_ACTIVITY_ICONS = {
   import: ImageSquare,
   modeled: UserCircle,
+  outfit: CoatHanger,
   planner: SuitcaseRolling,
   other: Sparkle,
 };
@@ -3181,7 +3296,7 @@ function AiActivityDetails({ activity }) {
       </div>
     );
   }
-  if (activity.type === "modeled") {
+  if (activity.type === "modeled" || activity.type === "outfit") {
     return (
       <div className="ai-activity__metrics">
         <span><strong>{activity.requestCount}</strong>{tr("AI calls")}</span>
@@ -4742,6 +4857,7 @@ export function App() {
   const [plannerOpen, setPlannerOpen] = useState(false);
   const [plannerBusy, setPlannerBusy] = useState(false);
   const [plannerError, setPlannerError] = useState("");
+  const [outfitStudioOpen, setOutfitStudioOpen] = useState(false);
   const [sortMode, setSortMode] = useState("custom");
   const [groupMode, setGroupMode] = useState("none");
   const [organizationStatus, setOrganizationStatus] = useState("");
@@ -4774,6 +4890,7 @@ export function App() {
       setItems([]);
       setSelectedId(null);
       setPlannerOpen(false);
+      setOutfitStudioOpen(false);
       setViewerDirty(false);
       setBlockedSwitchSignal(0);
       setMergeSourceId(null);
@@ -4856,6 +4973,7 @@ export function App() {
                   fits: item.fits,
                   materials: item.materials,
                   seasons: item.seasons,
+                  careInstructions: item.careInstructions,
                 }),
               });
               removePersistedEdit(item.id, currentUserId);
@@ -4913,6 +5031,7 @@ export function App() {
     setSavedViewDeleteCandidate(null);
     setSavedViewDeleteBusy(false);
     setPlannerOpen(false);
+    setOutfitStudioOpen(false);
     setPlannerError("");
     setMergeSourceId(null);
     setMergeCandidateId(null);
@@ -4926,13 +5045,13 @@ export function App() {
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!plannerOpen && !savedViewDialogOpen && !savedViewDeleteCandidate && !mergeCandidateItem && !openRouterKeyDialogOpen) return undefined;
+    if (!plannerOpen && !outfitStudioOpen && !savedViewDialogOpen && !savedViewDeleteCandidate && !mergeCandidateItem && !openRouterKeyDialogOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [mergeCandidateItem, openRouterKeyDialogOpen, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
+  }, [mergeCandidateItem, openRouterKeyDialogOpen, outfitStudioOpen, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
 
   const customOrderedItems = useMemo(() => {
     const sourcePositions = new Map(items.map((item, index) => [item.id, index]));
@@ -5305,6 +5424,7 @@ export function App() {
           fits: updatedItem.fits,
           materials: updatedItem.materials,
           seasons: updatedItem.seasons,
+          careInstructions: updatedItem.careInstructions,
         }),
       });
       removePersistedEdit(updatedItem.id, currentUserId);
@@ -5529,6 +5649,47 @@ export function App() {
     }
   };
 
+  const saveWardrobeOutfit = async (input) => {
+    const endpoint = input.id
+      ? `/api/import/outfits/${encodeURIComponent(input.id)}?user=${encodeURIComponent(currentUserId)}`
+      : `/api/import/outfits?user=${encodeURIComponent(currentUserId)}`;
+    const result = await profileApi(endpoint, {
+      method: input.id ? "PATCH" : "POST",
+      body: JSON.stringify(input),
+    });
+    setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+    return result.outfit;
+  };
+
+  const deleteWardrobeOutfit = async (outfitId) => {
+    const result = await profileApi(`/api/import/outfits/${encodeURIComponent(outfitId)}?user=${encodeURIComponent(currentUserId)}`, {
+      method: "DELETE",
+    });
+    setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+    return result;
+  };
+
+  const refineWardrobeOutfit = async (input) => profileApi(
+    `/api/import/outfits/refine?user=${encodeURIComponent(currentUserId)}`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+
+  const generateWardrobeOutfitLook = async (outfitId) => {
+    const result = await profileApi(`/api/import/outfits/${encodeURIComponent(outfitId)}/modeled?user=${encodeURIComponent(currentUserId)}`, {
+      method: "POST",
+    });
+    setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+    return result;
+  };
+
+  const deleteWardrobeOutfitLook = async (outfitId, lookId) => {
+    const result = await profileApi(`/api/import/outfits/${encodeURIComponent(outfitId)}/modeled/${encodeURIComponent(lookId)}?user=${encodeURIComponent(currentUserId)}`, {
+      method: "DELETE",
+    });
+    setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+    return result;
+  };
+
   // Cmd/Ctrl + . opens the profile editor, matching the settings shortcut most
   // desktop apps use. Ignored while typing so it cannot interrupt an edit.
   useEffect(() => {
@@ -5555,6 +5716,7 @@ export function App() {
       setCurrentUserId(null);
       setItems([]);
       setPlannerOpen(false);
+      setOutfitStudioOpen(false);
       setOpenRouterKeyDialogOpen(false);
       setOpenRouterKeyBusy(false);
       setOpenRouterKeyError("");
@@ -5594,6 +5756,10 @@ export function App() {
             <button type="button" onClick={() => { setPlannerError(""); setPlannerOpen(true); }}>
               <CalendarDots size={16} weight="regular" aria-hidden="true" />
               {tr("Plan")}
+            </button>
+            <button type="button" onClick={() => setOutfitStudioOpen(true)}>
+              <Sparkle size={16} weight="regular" aria-hidden="true" />
+              {tr("Outfit Studio")}
             </button>
             <div className="wardrobe-arrangement-control sort-control">
               <span><ArrowsDownUp size={14} weight="regular" aria-hidden="true" />{tr("Sort")}</span>
@@ -5850,6 +6016,18 @@ export function App() {
             if (selectedId === id) closeViewer();
             else openItem(id);
           }}
+        />
+      )}
+      {outfitStudioOpen && currentUser && (
+        <OutfitStudio
+          user={currentUser}
+          items={items}
+          onClose={() => setOutfitStudioOpen(false)}
+          onSave={saveWardrobeOutfit}
+          onDelete={deleteWardrobeOutfit}
+          onRefine={refineWardrobeOutfit}
+          onGenerate={generateWardrobeOutfitLook}
+          onDeleteLook={deleteWardrobeOutfitLook}
         />
       )}
     </div>

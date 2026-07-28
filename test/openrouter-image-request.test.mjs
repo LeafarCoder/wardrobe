@@ -3,18 +3,22 @@ import assert from "node:assert/strict";
 import {
   analysisPrompt,
   buildGarmentPrompt,
+  buildOutfitStudioModeledPrompt,
   buildPlannedOutfitPrompt,
   editWithSafetyFallback,
   garmentSemanticMismatch,
   modeledModelForReferenceCount,
   openRouterHeaders,
   openRouterImageRequest,
+  openRouterOutfitRequest,
   openRouterPlannerRequest,
   OPENROUTER_WARDROBE_PLAN_SCHEMA,
   plannerModelCandidates,
+  parseOutfitRefinement,
   providerResponseError,
   WARDROBE_PLAN_SCHEMA,
   wardrobePlanPrompt,
+  outfitRefinementPrompt,
 } from "../scripts/import-job-api.mjs";
 
 test("makes a Portuguese bracelet correction override watch-like crop ambiguity", () => {
@@ -95,6 +99,64 @@ test("grounds a planned modeled outfit in every garment, place, date, and occasi
   assert.match(prompt, /2026-12-04 through 2026-12-07/);
   assert.match(prompt, /formal restaurant/);
   assert.match(prompt, /Cold with occasional rain/);
+});
+
+test("grounds an Outfit Studio image in every chosen garment and presentation control", () => {
+  const prompt = buildOutfitStudioModeledPrompt(
+    1,
+    { name: "Sara", fashionStyle: "minimal tailoring" },
+    {
+      name: "Dinner look",
+      context: { occasion: "dinner", weather: ["mild", "wind"], season: "autumn" },
+      presentation: { background: "restaurant", style: "cinematic", pose: "sitting", direction: "Warm candlelight" },
+    },
+    [
+      { name: "Silk shirt", part: "upperbody", color: "#eee9df" },
+      { name: "Black trousers", part: "lowerbody", color: "#202020" },
+    ],
+  );
+
+  assert.match(prompt, /Image 2 is the exact reference for "Silk shirt"/);
+  assert.match(prompt, /Image 3 is the exact reference for "Black trousers"/);
+  assert.match(prompt, /EVERY supplied garment/);
+  assert.match(prompt, /Occasion dinner; weather mild, wind; season autumn/);
+  assert.match(prompt, /Background: restaurant/);
+  assert.match(prompt, /Photographic style: cinematic/);
+  assert.match(prompt, /Pose: sitting/);
+  assert.match(prompt, /Warm candlelight/);
+});
+
+test("uses a compact strict schema for three AI outfit candidates", () => {
+  const prompt = outfitRefinementPrompt(
+    { garments: [{ itemId: "shirt" }], context: { occasion: "work", weather: ["mild"], season: "spring" } },
+    { language: "pt-PT", fashionStyle: "minimal" },
+    [
+      { id: "shirt", name: "Camisa branca", part: "upperbody", color: "#ffffff" },
+      { id: "trousers", name: "Calças pretas", part: "lowerbody", color: "#111111" },
+    ],
+  );
+  const request = openRouterOutfitRequest({ provider: { zdr: true }, model: "planner", prompt });
+
+  assert.match(prompt, /exactly three/i);
+  assert.match(prompt, /European Portuguese/);
+  assert.equal(request.response_format.json_schema.name, "outfit_refinement");
+  assert.equal(request.response_format.json_schema.strict, true);
+  assert.equal(request.provider.zdr, true);
+  assert.equal(JSON.stringify(request.response_format).includes("maxItems"), false);
+});
+
+test("filters invalid and duplicate AI outfit candidates locally", () => {
+  const provider = { id: "openrouter", label: "OpenRouter" };
+  const parsed = parseOutfitRefinement(JSON.stringify({ candidates: [
+    { name: "One", itemIds: ["shirt", "trousers", "private"], explanation: "First" },
+    { name: "Duplicate", itemIds: ["trousers", "shirt"], explanation: "Same" },
+    { name: "Two", itemIds: ["shirt"], explanation: "Second" },
+    { name: "Three", itemIds: ["trousers"], explanation: "Third" },
+  ] }), provider, new Set(["shirt", "trousers"]));
+
+  assert.equal(parsed.length, 3);
+  assert.deepEqual(parsed[0].itemIds, ["shirt", "trousers"]);
+  assert.equal(parsed.some((candidate) => candidate.itemIds.includes("private")), false);
 });
 
 test("retries a fallback model when garment quality validation rejects the primary output", async () => {

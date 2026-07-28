@@ -91,7 +91,9 @@ export function normalizeAiPreferences(value = {}) {
 }
 
 export function operationGroup(operation) {
-  return String(operation || "").startsWith("modeled") ? "modeled" : String(operation || "other");
+  const normalized = String(operation || "other");
+  if (normalized === "modeled-outfit" || normalized.startsWith("outfit-")) return "outfit";
+  return normalized.startsWith("modeled") ? "modeled" : normalized;
 }
 
 export function formatAiCost(cost) {
@@ -108,6 +110,7 @@ export const AI_OPERATION_LABELS = {
   analysis: "Photo analysis",
   garment: "Clean garments",
   modeled: "Modeled looks",
+  outfit: "Outfit Studio",
   planner: "Trip and event plans",
   other: "Other AI",
 };
@@ -115,6 +118,7 @@ export const AI_OPERATION_LABELS = {
 export const AI_ACTIVITY_LABELS = {
   import: "Imported photo",
   modeled: "Modeled look",
+  outfit: "Outfit Studio look",
   planner: "Trip and event plan",
   other: "Other AI activity",
 };
@@ -137,6 +141,8 @@ export function publicAiRequest(entry) {
     jobId: entry.jobId || null,
     garmentId: entry.garmentId || null,
     planId: entry.planId || null,
+    outfitId: entry.outfitId || null,
+    outfitTitle: entry.outfitTitle || null,
     wardrobeUserId: entry.wardrobeUserId || entry.userId || null,
     fallbackFrom: entry.fallbackFrom || null,
     upstream: entry.upstream || null,
@@ -189,9 +195,11 @@ export function aiUsageActivities(entries = [], {
   uploads = [],
   garments = [],
   plans = [],
+  outfits = [],
 } = {}) {
   const garmentById = new Map(garments.map((garment) => [garment.id, garment]));
   const planById = new Map(plans.map((plan) => [plan.id, plan]));
+  const outfitById = new Map(outfits.map((outfit) => [outfit.id, outfit]));
   const uploadById = new Map(uploads.map((upload) => [upload.id, upload]));
   const uploadByJob = new Map();
   const uploadByGarment = new Map();
@@ -205,9 +213,17 @@ export function aiUsageActivities(entries = [], {
   const uploadRequests = new Map(uploads.map((upload) => [upload.id, []]));
   const modeledRequests = new Map();
   const plannerRequests = new Map();
+  const outfitRequests = new Map();
   const otherRequests = [];
 
   for (const entry of entries) {
+    if (entry.operationGroup === "outfit") {
+      const outfitKey = entry.outfitId || `outfit:${entry.id}`;
+      const bucket = outfitRequests.get(outfitKey) || [];
+      bucket.push(entry);
+      outfitRequests.set(outfitKey, bucket);
+      continue;
+    }
     if (entry.operationGroup === "planner" || entry.operationGroup === "modeled") {
       // A modeled look and a plan are their own activities even when they descend
       // from an imported photo, so they are grouped before the upload is consulted.
@@ -346,6 +362,42 @@ export function aiUsageActivities(entries = [], {
       endDate: plan?.input?.endDate || null,
       outfitCount: plan?.result?.outfitIdeas?.length || 0,
       outfitLookCount: outfitLooks.length,
+      items: [],
+      requests,
+      ...activityTotals(requests),
+    });
+  }
+
+  for (const [outfitKey, requests] of outfitRequests) {
+    const outfit = outfitById.get(outfitKey);
+    const named = requests.find((entry) => entry.outfitTitle || entry.itemName);
+    const looks = Array.isArray(outfit?.modeledLooks) ? outfit.modeledLooks : [];
+    const garmentPreviews = (outfit?.garments || []).map((selection) => {
+      const garment = garmentById.get(selection.itemId);
+      return garment ? {
+        id: garment.id,
+        kind: "source",
+        label: garment.name,
+        image: garment.thumbnail || garment.imagePreview || garment.image,
+      } : null;
+    }).filter((preview) => preview?.image);
+    const generatedPreviews = looks.map((look) => ({
+      id: look.id,
+      kind: "generated",
+      label: outfit?.name || "Outfit Studio look",
+      image: look.preview || look.image,
+    })).filter((preview) => preview.image);
+    activities.push({
+      id: `outfit:${outfitKey}`,
+      type: "outfit",
+      label: AI_ACTIVITY_LABELS.outfit,
+      title: outfit?.name || named?.outfitTitle || named?.itemName || "Outfit Studio look",
+      image: generatedPreviews[0]?.image || garmentPreviews[0]?.image || null,
+      sourceImage: garmentPreviews[0]?.image || null,
+      previews: [...garmentPreviews, ...generatedPreviews].slice(0, 12),
+      createdAt: outfit?.createdAt || newestTimestamp(requests),
+      outfitId: outfit?.id || null,
+      lookCount: generatedPreviews.length,
       items: [],
       requests,
       ...activityTotals(requests),

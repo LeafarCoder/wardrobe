@@ -4393,6 +4393,163 @@ button { font: inherit; }
   grid-column: 1 / -1;
 }
 
+.care-editor > p {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.care-editor__group {
+  margin: 0 0 18px;
+  border: 0;
+  padding: 0;
+}
+
+.care-editor__group legend {
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 620;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.care-editor__group > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.care-editor__group button {
+  min-width: 0;
+  min-height: 78px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  padding: 7px 5px;
+  background: rgba(255, 255, 255, .2);
+  color: var(--muted);
+  text-align: center;
+  cursor: pointer;
+}
+
+.care-editor__group button span {
+  font-size: 8px;
+  line-height: 1.25;
+}
+
+.care-editor__group button:hover,
+.care-editor__group button:focus-visible {
+  border-color: var(--ink);
+  color: var(--ink);
+  outline: none;
+}
+
+.care-editor__group button.active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.care-editor__guide {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--ink);
+  padding: 9px 13px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.care-editor__guide:hover,
+.care-editor__guide:focus-visible { background: var(--ink); color: var(--paper); outline: none; }
+.care-editor__guide:disabled { opacity: .35; cursor: default; }
+
+.care-guide-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 330;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(29, 27, 24, .28);
+  backdrop-filter: blur(8px);
+}
+
+.care-guide-dialog {
+  width: min(610px, 100%);
+  max-height: min(760px, calc(100dvh - 48px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 18px 20px 0 rgba(25, 25, 25, .07);
+}
+
+.care-guide-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+  padding: 19px 20px 17px 24px;
+}
+
+.care-guide-dialog > header p { margin: 0 0 5px; color: var(--muted); font-size: 8px; letter-spacing: .13em; text-transform: uppercase; }
+.care-guide-dialog > header h2 { margin: 0; font-size: 22px; font-weight: 490; letter-spacing: -.02em; }
+.care-guide-dialog > header button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.care-guide-dialog > header button:hover,
+.care-guide-dialog > header button:focus-visible { border-color: var(--ink); outline: none; }
+
+.care-guide-dialog__body { overflow-y: auto; padding: 8px 24px 24px; }
+.care-guide-dialog__body article {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid var(--line);
+  padding: 16px 0;
+}
+.care-guide-dialog__body article > svg { color: var(--ink); }
+.care-guide-dialog__body article small { color: var(--muted); font-size: 8px; letter-spacing: .09em; text-transform: uppercase; }
+.care-guide-dialog__body article h3 { margin: 4px 0 5px; font-size: 13px; font-weight: 590; }
+.care-guide-dialog__body article p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.care-guide-dialog__body aside {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 9px;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  padding: 12px;
+  color: var(--muted);
+}
+.care-guide-dialog__body aside p { margin: 0; font-size: 9px; line-height: 1.55; }
+.care-guide-dialog__body > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 15px;
+  color: var(--ink);
+  font-size: 9px;
+  text-underline-offset: 3px;
+}
+
 .field,
 .color-field {
   min-width: 0;

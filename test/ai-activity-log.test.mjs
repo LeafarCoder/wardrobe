@@ -91,6 +91,27 @@ test("planner runs and their generated outfit images share one plan activity", (
   assert.equal(Number(planner.totalCost.toFixed(4)), 0.062);
 });
 
+test("Outfit Studio refinement and modeled generation share the saved outfit activity", () => {
+  const outfit = {
+    id: "outfit-dinner",
+    name: "Dinner look",
+    createdAt: "2026-07-24T10:00:00.000Z",
+    garments: [{ itemId: "import-a", variantId: null }],
+    modeledLooks: [{ id: "ol1", image: "/api/import/library/outfit-look.png", preview: "/api/import/library/outfit-look-preview.webp" }],
+  };
+  const activities = aiUsageActivities([
+    entry("or1", "outfit-refine", "outfit", 0.001, "2026-07-24T10:00:00.000Z", { outfitId: outfit.id, outfitTitle: outfit.name }),
+    entry("or2", "modeled-outfit", "outfit", 0.07, "2026-07-24T10:02:00.000Z", { outfitId: outfit.id, outfitTitle: outfit.name }),
+  ], { uploads: [], garments: [GARMENT], plans: [], outfits: [outfit] });
+
+  assert.equal(activities.length, 1);
+  assert.equal(activities[0].type, "outfit");
+  assert.equal(activities[0].title, "Dinner look");
+  assert.deepEqual(activities[0].requests.map((request) => request.id), ["or1", "or2"]);
+  assert.equal(activities[0].previews.some((preview) => preview.image.endsWith("outfit-look-preview.webp")), true);
+  assert.equal(activities[0].totalCost, 0.07100000000000001);
+});
+
 test("activities carry an image so a filename like IMG_2026… is recognizable", () => {
   const activities = activitiesFor();
   const importActivity = activities.find((activity) => activity.type === "import");
