@@ -2496,40 +2496,53 @@ function SignInGate({ error: statusError, configurationError }) {
 
   return (
     <main className="password-gate">
-      <div className="password-gate__panel">
-        <label className="password-gate__language">
-          <span>{tr("Language")}</span>
-          <LightSelect
-            value={getLocale()}
-            onChange={setLocale}
-            options={LANGUAGE_OPTIONS.map((language) => ({ value: language.id, label: tr(language.label) }))}
-            ariaLabel={tr("Language")}
-          />
-        </label>
-        <span className="password-gate__mark"><LockKey size={26} weight="light" aria-hidden="true" /></span>
-        <p>{tr("Private wardrobe")}</p>
-        <h1>{tr("Sign in to your wardrobe")}</h1>
-        {configurationError ? (
-          <p className="password-gate__error" role="alert">{configurationError}</p>
-        ) : (
-          <>
-            {error && <p className="password-gate__error" role="alert">{error}</p>}
-            <button
-              type="button"
-              className="password-gate__google"
-              disabled={busy}
-              onClick={() => {
-                setBusy(true);
-                window.location.href = "/api/auth/google/start";
-              }}
-            >
-              <GoogleLogo size={17} weight="bold" aria-hidden="true" />
-              <span>{tr(busy ? "Opening Google…" : "Continue with Google")}</span>
-            </button>
-            <small>{tr("Only your own clothes, photos, and details are visible to you.")}</small>
-          </>
-        )}
-      </div>
+      <section className="password-gate__panel" aria-labelledby="sign-in-title">
+        <div className="password-gate__body">
+          <p className="password-gate__eyebrow">{tr("Private wardrobe")}</p>
+          <h1 id="sign-in-title">{tr("Sign in to your wardrobe")}</h1>
+          {configurationError ? (
+            <p className="password-gate__error" role="alert">{configurationError}</p>
+          ) : (
+            <>
+              {error && <p className="password-gate__error" role="alert">{error}</p>}
+              <button
+                type="button"
+                className="password-gate__google"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  window.location.href = "/api/auth/google/start";
+                }}
+              >
+                <GoogleLogo size={17} weight="bold" aria-hidden="true" />
+                <span>{tr(busy ? "Opening Google…" : "Continue with Google")}</span>
+              </button>
+              <small>{tr("Only your own clothes, photos, and details are visible to you.")}</small>
+            </>
+          )}
+        </div>
+        <div className="password-gate__footer">
+          <div className="password-gate__languages" role="group" aria-label={tr("Language")}>
+            {LANGUAGE_OPTIONS.map((language) => {
+              const active = getLocale() === language.id;
+              const code = language.id.startsWith("pt") ? "PT" : "EN";
+              return (
+                <button
+                  key={language.id}
+                  type="button"
+                  className={active ? "is-active" : ""}
+                  onClick={() => setLocale(language.id)}
+                  aria-label={tr(language.label)}
+                  aria-pressed={active}
+                  title={tr(language.label)}
+                >
+                  <span aria-hidden="true">{code}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </section>
     </main>
   );
 }
