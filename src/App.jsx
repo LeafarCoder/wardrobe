@@ -3392,7 +3392,7 @@ function ProfileApiKeyEditor({ user, value, onChange }) {
       <div className="profile-tab-intro">
         <div>
           <h3>{tr("Your OpenRouter key")}</h3>
-          <p>{tr("Add your own key so every AI request in this wardrobe is billed to your own OpenRouter credit.")}</p>
+          <p>{tr("OpenRouter is an external service that gives Wardrobe access to the AI models that identify garments in uploaded photos and create garment and modeled images. Your API key connects those requests to your OpenRouter account and credit.")}</p>
         </div>
         <span className={stored && !pending ? "is-set" : ""}>
           {stored && !pending
@@ -3410,8 +3410,10 @@ function ProfileApiKeyEditor({ user, value, onChange }) {
         <li>{tr("Sign in with your own OpenRouter account.")}</li>
         <li>{tr("Create a new API key and copy it.")}</li>
         <li>
-          {tr("Add credits to that account.")}
-          <small>{tr("Without credit, image generation fails with a payment error.")}</small>
+          <a href="https://openrouter.ai/settings/credits" target="_blank" rel="noreferrer noopener">
+            {tr("Add credits to your OpenRouter account.")}
+          </a>
+          <small>{tr("Garment identification and image generation require available credit.")}</small>
         </li>
       </ol>
       {stored && !editing && !pending ? (
@@ -3499,7 +3501,7 @@ function OpenRouterKeyDialog({ busy, error, saved, onClose, onSave }) {
       >
         <header>
           <div>
-            <p>{tr("Image generation setup")}</p>
+            <p>{tr("AI model setup")}</p>
             <h2 id="openrouter-key-title">{tr(saved ? "Your key is ready" : "Add your OpenRouter key")}</h2>
           </div>
           <button type="button" onClick={onClose} disabled={busy} aria-label={tr("Close OpenRouter setup")}>
@@ -3518,7 +3520,7 @@ function OpenRouterKeyDialog({ busy, error, saved, onClose, onSave }) {
             <div className="openrouter-key-dialog__intro">
               <span><Key size={21} weight="light" aria-hidden="true" /></span>
               <p id="openrouter-key-description">
-                {tr("Wardrobe could not find an OpenRouter key for your account. Add one here to create garment and modeled images.")}
+                {tr("OpenRouter is an external service that gives Wardrobe access to the AI models that identify garments in uploaded photos and create garment and modeled images. Add your API key to connect those requests to your OpenRouter account and credit.")}
               </p>
             </div>
 
@@ -3532,7 +3534,13 @@ function OpenRouterKeyDialog({ busy, error, saved, onClose, onSave }) {
               </li>
               <li>{tr("Sign in or create an OpenRouter account.")}</li>
               <li>{tr("Choose Create key, give it a name such as Wardrobe, and copy the complete key.")}</li>
-              <li>{tr("Add credits to your OpenRouter account before generating images.")}</li>
+              <li>
+                <span>{tr("Add credits before using Wardrobe's AI features.")}</span>
+                <a href="https://openrouter.ai/settings/credits" target="_blank" rel="noreferrer noopener">
+                  {tr("Open credits")}
+                  <ArrowSquareOut size={13} aria-hidden="true" />
+                </a>
+              </li>
             </ol>
 
             <div className="openrouter-key-dialog__field">

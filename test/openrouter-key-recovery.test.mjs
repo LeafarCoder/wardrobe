@@ -14,6 +14,12 @@ import {
 
 const SESSION_SECRET = "openrouter-key-recovery-test-secret";
 
+test("both OpenRouter key setup surfaces link directly to account credits", async () => {
+  const source = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
+  const creditsLinks = source.match(/href="https:\/\/openrouter\.ai\/settings\/credits"/g) || [];
+  assert.equal(creditsLinks.length, 2);
+});
+
 function mockRequest(url, input) {
   const request = Readable.from([Buffer.from(JSON.stringify(input))]);
   request.url = url;

@@ -6433,7 +6433,7 @@ button { font: inherit; }
   color: var(--muted);
   font-size: 9px;
 }
-.openrouter-key-dialog__steps li:first-child > span { flex: 1; }
+.openrouter-key-dialog__steps li > span { flex: 1; }
 .openrouter-key-dialog__steps a {
   flex: 0 0 auto;
   display: inline-flex;
