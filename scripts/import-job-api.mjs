@@ -3632,12 +3632,14 @@ export function wardrobeImportApi(options = {}) {
 
   const connectionAvatarUrl = (userId) => `${USERS_ROOT}/connections/avatar/${encodeURIComponent(userId)}`;
 
-  const connectionPerson = (profile, showAvatar = false) => profile ? ({
+  const connectionPerson = (profile, showAvatar = false, viewerId = null) => profile ? ({
     id: profile.id,
     name: profile.name,
     email: profile.email || null,
     referenceCount: profile.referenceImages?.length || 0,
-    referenceImages: showAvatar && profile.referenceImages?.length ? [{ avatarUrl: connectionAvatarUrl(profile.id) }] : [],
+    referenceImages: showAvatar && profile.referenceImages?.length
+      ? [{ avatarUrl: withUser(connectionAvatarUrl(profile.id), viewerId) }]
+      : [],
   }) : null;
 
   const sharedGarmentForViewer = (record, viewerId) => {
@@ -3667,25 +3669,25 @@ export function wardrobeImportApi(options = {}) {
       .map((invite) => ({
         ...invite,
         recipientEmail: undefined,
-        requester: connectionPerson(profileById.get(invite.requesterUserId), true),
+        requester: connectionPerson(profileById.get(invite.requesterUserId), true, userId),
       }));
     const outgoingInvites = store.connectionInvites
       .filter((invite) => invite.requesterUserId === userId && invite.status === "pending")
       .map((invite) => ({
         ...invite,
-        recipient: connectionPerson(profileById.get(invite.recipientUserId)),
+        recipient: connectionPerson(profileById.get(invite.recipientUserId), false, userId),
       }));
     const grantedToMe = store.connections
       .filter((connection) => connection.recipientUserId === userId)
       .map((connection) => ({
         ...connection,
-        person: connectionPerson(profileById.get(connection.grantorUserId), connection.permissions.referenceImages),
+        person: connectionPerson(profileById.get(connection.grantorUserId), connection.permissions.referenceImages, userId),
       }));
     const sharedByMe = store.connections
       .filter((connection) => connection.grantorUserId === userId)
       .map((connection) => ({
         ...connection,
-        person: connectionPerson(profileById.get(connection.recipientUserId)),
+        person: connectionPerson(profileById.get(connection.recipientUserId), false, userId),
       }));
     const result = {
       incomingInvites,
@@ -5532,7 +5534,8 @@ Interpret this correction semantically in whatever language it is written. It ov
         return json(res, 401, { error: "Sign in with Google to continue.", code: "authentication_required" });
       }
       if (!protectedPath) return next();
-      // Everything below belongs to exactly one person: the signed-in one.
+      // Everything below belongs to the signed-in person's selected wardrobe.
+      // Only an owner can select another wardrobe through `?user=`.
       const { user: signedInUser, identity: signedInIdentity, owner: isOwner, store: profileStore } = await selectedUser(req, url);
       const signedInUserId = signedInUser.id;
       // AI spend always follows the signed-in account, so an owner working in
@@ -5565,7 +5568,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const store = await loadUsersStore();
         return json(res, 200, await connectionPayload(
           store,
-          signedInIdentity.id,
+          signedInUserId,
           url.searchParams.get("include") === "outfit",
         ));
       }
@@ -5585,14 +5588,14 @@ Interpret this correction semantically in whatever language it is written. It ov
           if (!recipient) {
             throw apiError("No Wardrobe account uses that Google email yet.", 404, "connection_account_not_found");
           }
-          if (recipient.id === signedInIdentity.id) {
+          if (recipient.id === signedInUserId) {
             throw apiError("You cannot connect your account to itself.", 400, "connection_self_invite");
           }
-          if (connectionGrant(store.connections, recipient.id, signedInIdentity.id)) {
+          if (connectionGrant(store.connections, recipient.id, signedInUserId)) {
             throw apiError("That person is already sharing with you.", 409, "connection_exists");
           }
           if (store.connectionInvites.some((candidate) => (
-            candidate.requesterUserId === signedInIdentity.id
+            candidate.requesterUserId === signedInUserId
             && candidate.recipientUserId === recipient.id
             && candidate.status === "pending"
           ))) {
@@ -5600,7 +5603,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           }
           const created = {
             id: randomUUID(),
-            requesterUserId: signedInIdentity.id,
+            requesterUserId: signedInUserId,
             recipientUserId: recipient.id,
             recipientEmail,
             relationship: cleanProfileText(input.relationship, 40) || "Connected person",
@@ -5623,7 +5626,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const result = await withUsers(async () => {
           const store = await loadUsersStore();
           const invite = store.connectionInvites.find((candidate) => candidate.id === connectionResponseMatch[1]);
-          if (!invite || invite.recipientUserId !== signedInIdentity.id) {
+          if (!invite || invite.recipientUserId !== signedInUserId) {
             throw apiError("Connection invitation not found.", 404, "connection_invite_not_found");
           }
           if (invite.status !== "pending") {
@@ -5669,7 +5672,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         await withUsers(async () => {
           const store = await loadUsersStore();
           const invite = store.connectionInvites.find((candidate) => candidate.id === connectionInviteMatch[1]);
-          if (!invite || invite.requesterUserId !== signedInIdentity.id || invite.status !== "pending") {
+          if (!invite || invite.requesterUserId !== signedInUserId || invite.status !== "pending") {
             throw apiError("Pending connection invitation not found.", 404, "connection_invite_not_found");
           }
           invite.status = "cancelled";
@@ -5689,7 +5692,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const connection = await withUsers(async () => {
           const store = await loadUsersStore();
           const candidate = store.connections.find((entry) => entry.id === connectionMatch[1]);
-          if (!candidate || candidate.grantorUserId !== signedInIdentity.id) {
+          if (!candidate || candidate.grantorUserId !== signedInUserId) {
             throw apiError("Connection not found.", 404, "connection_not_found");
           }
           const reduced = Object.entries(candidate.permissions).some(([permission, granted]) => granted && !permissions[permission]);
@@ -5710,7 +5713,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const updatedRecipient = await withUsers(async () => {
           const store = await loadUsersStore();
           const candidate = store.connections.find((entry) => entry.id === connectionMatch[1]);
-          if (!candidate || ![candidate.grantorUserId, candidate.recipientUserId].includes(signedInIdentity.id)) {
+          if (!candidate || ![candidate.grantorUserId, candidate.recipientUserId].includes(signedInUserId)) {
             throw apiError("Connection not found.", 404, "connection_not_found");
           }
           removedAssets = await clearConnectionModeledLooks(store, candidate.grantorUserId, candidate.recipientUserId);
@@ -5726,22 +5729,22 @@ Interpret this correction semantically in whatever language it is written. It ov
         )));
         return json(res, 200, {
           disconnected: true,
-          ...(updatedRecipient?.id === signedInIdentity.id ? { user: publicProfile(updatedRecipient) } : {}),
+          ...(updatedRecipient?.id === signedInUserId ? { user: publicProfile(updatedRecipient) } : {}),
         });
       }
       const connectionAvatarMatch = url.pathname.match(/^\/api\/users\/connections\/avatar\/(default|[a-f0-9-]{36})$/i);
       if (connectionAvatarMatch && req.method === "GET") {
         const targetId = connectionAvatarMatch[1];
         const store = await loadUsersStore();
-        const allowed = targetId === signedInIdentity.id
+        const allowed = targetId === signedInUserId
           || store.connections.some((connection) => (
             connection.permissions.referenceImages
-            && connection.recipientUserId === signedInIdentity.id
+            && connection.recipientUserId === signedInUserId
             && connection.grantorUserId === targetId
           ))
           || store.connectionInvites.some((invite) => (
             invite.status === "pending"
-            && invite.recipientUserId === signedInIdentity.id
+            && invite.recipientUserId === signedInUserId
             && invite.requesterUserId === targetId
           ));
         if (!allowed) throw apiError("Profile image not found.", 404, "connection_avatar_not_found");

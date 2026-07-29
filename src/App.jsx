@@ -5014,14 +5014,16 @@ export function App() {
   }, [auth?.authenticated]);
 
   useEffect(() => {
-    if (!auth?.authenticated) return;
-    profileApi("/api/users/connections")
+    if (!auth?.authenticated || !currentUserId) return;
+    setConnectionsData(EMPTY_CONNECTION_DATA);
+    setConnectionsError("");
+    profileApi(withWardrobeUser("/api/users/connections", currentUserId))
       .then((result) => {
         setConnectionsData(result);
         if (result.incomingInvites?.length) setConnectionsOpen(true);
       })
       .catch((requestError) => setConnectionsError(requestError.message));
-  }, [auth?.authenticated]);
+  }, [auth?.authenticated, currentUserId]);
 
   useEffect(() => {
     if (!auth?.authenticated || !currentUserId) return;
@@ -5697,7 +5699,11 @@ export function App() {
   };
 
   const refreshConnections = async (includeOutfit = false) => {
-    const result = await profileApi(`/api/users/connections${includeOutfit ? "?include=outfit" : ""}`);
+    if (!currentUserId) return EMPTY_CONNECTION_DATA;
+    const result = await profileApi(withWardrobeUser(
+      `/api/users/connections${includeOutfit ? "?include=outfit" : ""}`,
+      currentUserId,
+    ));
     setConnectionsData(result);
     if (includeOutfit) setStudioConnections(result.companions || []);
     return result;
@@ -5779,12 +5785,10 @@ export function App() {
 
   const openOutfitStudio = async () => {
     setStudioConnections([]);
-    if (currentUserId === auth?.user?.id) {
-      try {
-        await refreshConnections(true);
-      } catch (requestError) {
-        setError(requestError.message);
-      }
+    try {
+      await refreshConnections(true);
+    } catch (requestError) {
+      setError(requestError.message);
     }
     setOutfitStudioOpen(true);
   };
