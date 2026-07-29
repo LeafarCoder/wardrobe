@@ -3988,7 +3988,7 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
                   <div className="profile-reference-field__title">
                     <span>{tr("Reference photos")}</span>
                     <InfoTooltip className="profile-reference-help" label={tr("About reference photos")}>
-                      {tr("Reference photos help AI create styled looks that resemble you while dressing you in different clothes. Add one to three clear photos from different angles, with only you in the frame—no other people. Changes apply to future modeled looks only.")}
+                      {tr("Reference photos work best as clean identity portraits. Add one to three photos of only you: ideally a front view, a three-quarter left view, and a three-quarter right view, each at least 1024×1024 with even lighting and your face filling roughly 30–50% of the frame. Avoid sunglasses, hands or hair covering the face, strong expressions, and busy lifestyle shots. Your reference clothes and backgrounds are ignored, and your hairstyle may change in generated looks. Changes apply to future modeled looks only.")}
                     </InfoTooltip>
                   </div>
                   <small>{tr("{count}/3 added", { count: visibleReferences.length })}</small>

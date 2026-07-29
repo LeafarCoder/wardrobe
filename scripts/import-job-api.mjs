@@ -1995,12 +1995,24 @@ Avoid: ${direction.reject}; person, body, skin, hair, hand, wrist, mannequin, ha
 Critical: Use no ${chromaKey} anywhere in the product. Produce exactly one complete ${name} with a crisp, separable outer silhouette. Re-check the product subtype and every user correction before returning the image.`;
 }
 
+function modeledReferenceIndexes(start, count) {
+  return Array.from({ length: count }, (_, offset) => `Image ${start + offset}`).join(", ");
+}
+
+function modeledSubjectBinding(label, characterNumber, start, count) {
+  const images = modeledReferenceIndexes(start, count);
+  return `${label} (Character ${characterNumber}) = ${images} — ${count === 1 ? "this is the identity reference for that person" : "these are all images of the same person; use them together as complementary references for that one identity"}.`;
+}
+
+function modeledReferenceRoleRules() {
+  return `Reference roles — mandatory: Images assigned under Subjects are identity evidence only. Use them together primarily for facial geometry and distinctive facial characteristics, including eyes, eyebrows, nose, lips, cheekbones, jawline, face and chin contour, ears, skin tone and real skin texture, and apparent age. Use visible full-body information only to preserve natural body shape, height impression, and proportions. Ignore and do not copy the identity references' clothes, jewelry, accessories, pose, gesture, expression, lighting, location, framing, or background. Hairstyle may change naturally for the requested scene, but preserve the person's stable hairline and identity-defining hair color and texture unless the user explicitly requests a hair change. Images assigned under Garments control only the named clothing products: never use a garment image's person, mannequin, hanger, styling, or background as identity evidence.`;
+}
+
 export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metadata = {}) {
   const count = Math.max(1, Math.min(3, Math.round(personReferenceCount)));
-  const personImages = count === 1
-    ? "Image 1 is the identity reference for the person."
-    : `Images 1 through ${count} are complementary identity references of the same person. Use them together to preserve one consistent person; do not blend identities, duplicate the person, or copy the reference poses and backgrounds.`;
-  const garmentImage = count + 1;
+  const subject = profile.name || "Wardrobe owner";
+  const subjectBinding = modeledSubjectBinding(subject, 1, 0, count);
+  const garmentImage = count;
   const categoryDirection = metadata.part === "shoes"
     ? "The featured item is footwear. Compose this as a conventional retail fashion editorial: show the complete person in ordinary daywear, standing naturally in a head-to-toe view, with both pieces of footwear fully visible and worn normally. Keep the footwear prominent through framing and pose rather than an isolated body-part close-up. Preserve the person's apparent age exactly from the identity references."
     : "";
@@ -2017,20 +2029,26 @@ export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metad
   ].filter(Boolean).join(" ");
   const identityLock = modeledIdentityLock(profile.name || "the referenced person");
 
-  return `Create a professional horizontal 3:2 editorial fashion photograph. ${personImages} Image ${garmentImage} is the exact garment reference. Show that person wearing that garment. ${categoryDirection} ${profileDetails} ${identityLock} Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.`;
+  return `Create a professional horizontal 3:2 editorial fashion photograph.
+
+Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
+Subjects: ${subjectBinding}
+Garments: Image ${garmentImage} is the exact garment reference for "${metadata.name || "the featured garment"}".
+${modeledReferenceRoleRules()}
+
+Show ${subject} wearing the garment from Image ${garmentImage}. ${categoryDirection} ${profileDetails} ${identityLock} Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.`;
 }
 
 function modeledIdentityLock(subject = "the referenced person") {
-  return `Identity lock — highest priority: Maintain the exact identity of ${subject} from the identity reference images. Keep the same facial geometry and distinctive features: eye shape, color and spacing; eyebrows; nose shape; mouth and lip shape; cheekbones; jawline and face contour; ears; hairline, hair color and hair texture; skin tone and visible skin texture; and apparent age. Preserve the same body shape, height impression and proportions. A new expression, pose, clothing and lighting are allowed, but those identity traits must not change. Do not beautify, idealize, age up or down, slim, enlarge, symmetrize, reshape the face or body, smooth away real skin texture, add unreferenced makeup, or substitute a generic fashion-model face. When references differ in angle, expression or lighting, reconcile them as views of the same real person using their stable shared traits; never average, blend or invent an identity.`;
+  return `Identity lock — highest priority: Maintain the exact identity of ${subject} from the identity reference images. Keep the same facial geometry and distinctive features: eye shape, color and spacing; eyebrows; nose shape; mouth and lip shape; cheekbones; jawline and face contour; chin contour; ears; hairline, hair color and hair texture; skin tone and visible skin texture; and apparent age. Preserve the same body shape, height impression and proportions. A new expression, pose, hairstyle, clothing and lighting are allowed, but those identity traits must not change. Do not beautify, idealize, age up or down, slim, enlarge, symmetrize, reshape the face or body, smooth away real skin texture, add unreferenced makeup, or substitute a generic fashion-model face. When references differ in angle, expression or lighting, reconcile them as views of the same real person using their stable shared traits; never average, blend or invent an identity.`;
 }
 
 export function buildPlannedOutfitPrompt(personReferenceCount = 1, profile = {}, plan = {}, outfit = {}, garments = []) {
   const count = Math.max(1, Math.min(3, Math.round(personReferenceCount)));
-  const identityReferences = count === 1
-    ? "Image 1 is the identity reference for the wardrobe owner."
-    : `Images 1 through ${count} are complementary identity references of the same person. Preserve one consistent identity and do not blend, duplicate, or alter the person.`;
+  const subject = profile.name || "Wardrobe owner";
+  const identityReferences = modeledSubjectBinding(subject, 1, 0, count);
   const garmentReferences = garments.map((garment, index) => (
-    `Image ${count + index + 1} is the exact reference for "${garment.name}" (${garment.part || "garment"}).`
+    `Image ${count + index} is the exact reference for "${garment.name}" (${garment.part || "garment"}).`
   )).join(" ");
   const garmentRequirements = garments.map((garment) => [
     garment.name,
@@ -2066,7 +2084,10 @@ export function buildPlannedOutfitPrompt(personReferenceCount = 1, profile = {},
 
   return `Create one professional horizontal 3:2 editorial fashion photograph for the saved wardrobe plan.
 
-References: ${identityReferences} ${garmentReferences}
+Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
+Subjects: ${identityReferences}
+Garments: ${garmentReferences}
+${modeledReferenceRoleRules()}
 
 Outfit: "${outfit.name || "Planned outfit"}". Styling occasion and mood: ${outfit.note || "Wear all supplied garments together as one coherent outfit."}
 
@@ -2085,20 +2106,18 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
   const people = Array.isArray(personReferenceCount) && personReferenceCount.length
     ? personReferenceCount
     : [{ profile, referenceCount: Math.max(1, Math.min(3, Math.round(personReferenceCount)) ) }];
-  let referenceIndex = 1;
+  let referenceIndex = 0;
   const identityReferences = people.map((person, personIndex) => {
     const count = Math.max(1, Math.min(3, Math.round(person.referenceCount || 1)));
     const start = referenceIndex;
     const end = start + count - 1;
     referenceIndex = end + 1;
     const label = person.profile?.name || `Person ${personIndex + 1}`;
-    return count === 1
-      ? `Image ${start} is the identity reference for ${label}.`
-      : `Images ${start} through ${end} are complementary identity references for ${label}; combine only those images into that one identity.`;
+    return modeledSubjectBinding(label, personIndex + 1, start, count);
   }).join(" ");
-  const count = referenceIndex - 1;
+  const count = referenceIndex;
   const garmentReferences = garments.map((garment, index) => (
-    `Image ${count + index + 1} is the exact reference for "${garment.name}" (${garment.part || "garment"}), to be worn by ${garment.wearerName || profile.name || "the wardrobe owner"}.`
+    `Image ${count + index} is the exact reference for "${garment.name}" (${garment.part || "garment"}), to be worn by ${garment.wearerName || profile.name || "the wardrobe owner"}.`
   )).join(" ");
   const requirements = garments.map((garment) => [
     garment.name,
@@ -2110,14 +2129,14 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
   const context = normalizeOutfitContext(outfit.context);
   const presentation = normalizeOutfitPresentation(outfit.presentation);
   const profileDetails = people.map((person, index) => [
-    `${person.profile?.name || `Person ${index + 1}`} is person ${index + 1}.`,
+    `${person.profile?.name || `Person ${index + 1}`} is Character ${index + 1}.`,
     person.profile?.age ? `They are ${person.profile.age} years old.` : null,
     person.profile?.fashionStyle ? `Their preferred style is ${person.profile.fashionStyle}.` : null,
     person.profile?.preferences ? `Their personal constraints are ${person.profile.preferences}.` : null,
   ].filter(Boolean).join(" ")).join(" ");
   const identityLock = people.length === 1
     ? modeledIdentityLock(people[0].profile?.name || "the referenced person")
-    : `Identity lock — highest priority: Maintain the exact identity of every named person from only that person's own reference group. For each person, keep the same facial geometry and distinctive eye shape, color and spacing; eyebrows; nose; mouth and lips; cheekbones; jawline and face contour; ears; hairline, hair color and texture; skin tone and visible skin texture; apparent age; body shape; height impression; and proportions. Expressions, poses, clothing and lighting may change, but identity traits must not. Do not beautify, idealize, age, slim, enlarge, symmetrize, reshape, smooth away real skin texture, add unreferenced makeup, substitute generic fashion-model faces, or transfer any feature between people. Reconcile different views within each person's group as the same real person; never average, blend or invent identities.`;
+    : `Identity lock — highest priority: Maintain the exact identity of every named character from only that character's own subject mapping. For each person, keep the same facial geometry and distinctive eye shape, color and spacing; eyebrows; nose; mouth and lips; cheekbones; jawline and face contour; chin contour; ears; hairline, hair color and texture; skin tone and visible skin texture; apparent age; body shape; height impression; and proportions. Expressions, poses, hairstyles, clothing and lighting may change, but identity traits must not. Do not beautify, idealize, age, slim, enlarge, symmetrize, reshape, smooth away real skin texture, add unreferenced makeup, substitute generic fashion-model faces, or transfer any feature between people. Reconcile different views within each character's mapped images as the same real person; never average, blend or invent identities.`;
   const presentationDirection = [
     presentation.background !== "automatic" ? `Background: ${presentation.background}.` : "Choose a tasteful background appropriate to the outfit context.",
     presentation.style !== "automatic" ? `Photographic style: ${presentation.style}.` : "Use a natural editorial fashion-photography style.",
@@ -2127,7 +2146,10 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
 
   return `Create one professional horizontal 3:2 modeled fashion photograph for Outfit Studio.
 
-References: ${identityReferences} ${garmentReferences}
+Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
+Subjects: ${identityReferences}
+Garments: ${garmentReferences}
+${modeledReferenceRoleRules()}
 
 Mandatory outfit: Dress the referenced ${people.length === 1 ? "person" : "people"} in EVERY supplied garment assigned to them. Preserve the exact product identity, silhouette, color version shown in its reference, material, pattern, fit, construction, logo, and distinctive detail. Do not omit, replace, merge, redesign, recolor, swap between people, or invent any supplied garment. Garment details: ${requirements}.
 

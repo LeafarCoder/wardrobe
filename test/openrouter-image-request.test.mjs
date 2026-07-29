@@ -243,9 +243,9 @@ test("grounds a planned modeled outfit in every garment, place, date, and occasi
     ],
   );
 
-  assert.match(prompt, /Images 1 through 2/);
-  assert.match(prompt, /Image 3 is the exact reference for "Navy wool jacket"/);
-  assert.match(prompt, /Image 4 is the exact reference for "Black leather shoes"/);
+  assert.match(prompt, /Subjects: Rafael \(Character 1\) = Image 0, Image 1/);
+  assert.match(prompt, /Image 2 is the exact reference for "Navy wool jacket"/);
+  assert.match(prompt, /Image 3 is the exact reference for "Black leather shoes"/);
   assert.match(prompt, /EVERY supplied garment reference/);
   assert.match(prompt, /Paris, France/);
   assert.match(prompt, /2026-12-04 through 2026-12-07/);
@@ -276,6 +276,13 @@ test("locks facial and anatomical identity in every modeled-look workflow", () =
   );
 
   for (const prompt of [garmentPrompt, plannedPrompt, studioPrompt]) {
+    assert.match(prompt, /Image 0 is the first supplied image reference after this prompt; numbering is zero-based/i);
+    assert.match(prompt, /Reference roles — mandatory/);
+    assert.match(prompt, /identity evidence only/i);
+    assert.match(prompt, /Ignore and do not copy the identity references' clothes, jewelry, accessories, pose/i);
+    assert.match(prompt, /Hairstyle may change naturally for the requested scene/i);
+    assert.match(prompt, /Use visible full-body information only to preserve natural body shape, height impression, and proportions/i);
+    assert.match(prompt, /never use a garment image's person, mannequin, hanger, styling, or background as identity evidence/i);
     assert.match(prompt, /Identity lock — highest priority/);
     assert.match(prompt, /eye shape, color and spacing/i);
     assert.match(prompt, /nose/i);
@@ -286,7 +293,11 @@ test("locks facial and anatomical identity in every modeled-look workflow", () =
     assert.match(prompt, /Do not beautify, idealize/i);
     assert.match(prompt, /generic fashion-model face/i);
   }
-  assert.match(studioPrompt, /from only that person's own reference group/i);
+  assert.match(garmentPrompt, /Subjects: Rafael \(Character 1\) = Image 0, Image 1/);
+  assert.match(plannedPrompt, /Subjects: Rafael \(Character 1\) = Image 0, Image 1/);
+  assert.match(studioPrompt, /Rafael \(Character 1\) = Image 0, Image 1/);
+  assert.match(studioPrompt, /Sara \(Character 2\) = Image 2/);
+  assert.match(studioPrompt, /from only that character's own subject mapping/i);
   assert.match(studioPrompt, /never average, blend or invent identities/i);
 });
 
@@ -305,8 +316,9 @@ test("grounds an Outfit Studio image in every chosen garment and presentation co
     ],
   );
 
-  assert.match(prompt, /Image 2 is the exact reference for "Silk shirt"/);
-  assert.match(prompt, /Image 3 is the exact reference for "Black trousers"/);
+  assert.match(prompt, /Sara \(Character 1\) = Image 0/);
+  assert.match(prompt, /Image 1 is the exact reference for "Silk shirt"/);
+  assert.match(prompt, /Image 2 is the exact reference for "Black trousers"/);
   assert.match(prompt, /EVERY supplied garment/);
   assert.match(prompt, /Occasion dinner; weather mild, wind; season autumn/);
   assert.match(prompt, /Background: restaurant/);
@@ -332,10 +344,10 @@ test("keeps connected people and their assigned garments distinct in Outfit Stud
     ],
   );
 
-  assert.match(prompt, /Images 1 through 2 are complementary identity references for Rafael/);
-  assert.match(prompt, /Image 3 is the identity reference for Sara/);
-  assert.match(prompt, /Image 4 is the exact reference for "Navy jacket".*worn by Rafael/);
-  assert.match(prompt, /Image 5 is the exact reference for "Cream dress".*worn by Sara/);
+  assert.match(prompt, /Rafael \(Character 1\) = Image 0, Image 1.*all images of the same person/i);
+  assert.match(prompt, /Sara \(Character 2\) = Image 2/);
+  assert.match(prompt, /Image 3 is the exact reference for "Navy jacket".*worn by Rafael/);
+  assert.match(prompt, /Image 4 is the exact reference for "Cream dress".*worn by Sara/);
   assert.match(prompt, /Show exactly 2 people/);
   assert.match(prompt, /never blend faces, bodies, ages, or features/i);
 });
