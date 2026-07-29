@@ -43,6 +43,8 @@ import {
   GARMENT_VARIANT_THRESHOLD_MAX,
   GARMENT_VARIANT_THRESHOLD_MIN,
   garmentColorVariants,
+  garmentVersionFanSlot,
+  supportsGarmentVersionFan,
 } from "./garment-variants.js";
 import {
   preferredStoreOptions,
@@ -1594,6 +1596,8 @@ function ItemViewer({
   const activeSourceCrop = activeSourcePhoto?.boundingBox || item.boundingBox || null;
   const hasOriginalImage = sourcePhotos.length > 0;
   const hasHeroImage = garmentMedia.length > 0;
+  const hasVersionFan = supportsGarmentVersionFan(draft.part || item.part, colorVersions.length, hasHeroImage)
+    && !sampling;
   const garmentRegenerationCandidate = item.garmentRegenerationCandidate || null;
   const regenerationPrimaryValid = Boolean(normalizeHexColor(garmentRegenerationForm.color));
   const regenerationSecondaryValid = !garmentRegenerationForm.secondaryColor
@@ -2328,42 +2332,93 @@ function ItemViewer({
     }
   };
 
+  const activeGarmentPreview = (
+    <GarmentColorPreview
+      src={activeColorVersion.preview || activeColorVersion.image}
+      alt={tr("Selected {type}", { type: type.toLocaleLowerCase(getLocale()) })}
+      sourceColor={activeColorVersion.primaryColor || draft.color}
+      alternateColor={activeColorVersion.secondaryColor || draft.secondaryColor}
+      targetColor={null}
+      context={{
+        name: draft.name || type,
+        part: draft.part || item.part,
+        tags: draft.tags || item.tags,
+        materials: draft.materials || item.materials,
+        channel: "primary",
+      }}
+      onSourceReady={handleGarmentSourceReady}
+      onClick={(event) => {
+        if (sampling) handleImageClick(event);
+        else openMediaPreview("garment");
+      }}
+    />
+  );
+
   const garmentArtwork = (
     <div
-      className={`viewer-art${hasHeroImage ? " viewer-art-floating" : ""}${sampling ? " sampling" : ""}`}
+      className={`viewer-art${hasHeroImage ? " viewer-art-floating" : ""}${sampling ? " sampling" : ""}${hasVersionFan ? " has-version-fan" : ""}`}
       style={hasHeroImage ? { "--piece-rotation": pieceRotation } : undefined}
       ref={garmentArtworkButtonRef}
-      role={!sampling ? "button" : undefined}
-      tabIndex={!sampling ? 0 : -1}
-      aria-label={!sampling ? tr("Open enlarged garment image") : undefined}
+      role={!sampling ? (hasVersionFan ? "group" : "button") : undefined}
+      tabIndex={!sampling && !hasVersionFan ? 0 : -1}
+      aria-label={!sampling ? tr(hasVersionFan ? "Garment color versions" : "Open enlarged garment image") : undefined}
       onKeyDown={(event) => {
-        if (!sampling && (event.key === "Enter" || event.key === " ")) {
+        if (!sampling && !hasVersionFan && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
           openMediaPreview("garment");
         }
       }}
     >
-      <GarmentColorPreview
-        src={activeColorVersion.preview || activeColorVersion.image}
-        alt={tr("Selected {type}", { type: type.toLocaleLowerCase(getLocale()) })}
-        sourceColor={activeColorVersion.primaryColor || draft.color}
-        alternateColor={activeColorVersion.secondaryColor || draft.secondaryColor}
-        targetColor={null}
-        context={{
-          name: draft.name || type,
-          part: draft.part || item.part,
-          tags: draft.tags || item.tags,
-          materials: draft.materials || item.materials,
-          channel: "primary",
-        }}
-        onSourceReady={handleGarmentSourceReady}
-        onClick={(event) => {
-          if (sampling) handleImageClick(event);
-          else openMediaPreview("garment");
-        }}
-      />
+      {hasVersionFan ? (
+        <>
+          <div className="garment-version-fan">
+            {colorVersions.map((version, index) => {
+              const slot = garmentVersionFanSlot(index, activeColorVersionIndex, colorVersions.length);
+              const fanStep = Math.min(12, 36 / Math.max(1, Math.ceil((colorVersions.length - 1) / 2)));
+              return (
+                <button
+                  key={version.id || "original"}
+                  className="garment-version-fan__item"
+                  type="button"
+                  aria-label={`${tr("Garment color versions")}: ${tr("{current} of {total}", { current: index + 1, total: colorVersions.length })}`}
+                  aria-pressed={index === activeColorVersionIndex}
+                  style={{
+                    "--fan-angle": `${slot * fanStep}deg`,
+                    "--fan-x": `${slot * 8}px`,
+                    "--fan-rank": Math.abs(slot),
+                    "--fan-layer": 80 - Math.abs(slot),
+                  }}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setColorVersionIndex(index);
+                  }}
+                >
+                  <GarmentColorPreview
+                    src={version.preview || version.image}
+                    alt={tr("Selected {type}", { type: type.toLocaleLowerCase(getLocale()) })}
+                    sourceColor={version.primaryColor || draft.color}
+                    alternateColor={version.secondaryColor || draft.secondaryColor}
+                    targetColor={null}
+                    context={{
+                      name: draft.name || type,
+                      part: draft.part || item.part,
+                      tags: draft.tags || item.tags,
+                      materials: draft.materials || item.materials,
+                      channel: "primary",
+                    }}
+                  />
+                </button>
+              );
+            })}
+          </div>
+          <div className="garment-version-fan__fallback">
+            {activeGarmentPreview}
+          </div>
+        </>
+      ) : activeGarmentPreview}
       {colorVersions.length > 1 && (
-        <div className="garment-version-nav" aria-label={tr("Garment color versions")}>
+        <div className={`garment-version-nav${hasVersionFan ? " is-fan-fallback" : ""}`} aria-label={tr("Garment color versions")}>
           <button type="button" onClick={(event) => { event.stopPropagation(); rotateColorVersion(-1); }} aria-label={tr("Previous garment version")}><CaretLeft size={18} /></button>
           <span>{tr("{current} of {total}", { current: activeColorVersionIndex + 1, total: colorVersions.length })}</span>
           <button type="button" onClick={(event) => { event.stopPropagation(); rotateColorVersion(1); }} aria-label={tr("Next garment version")}><CaretRight size={18} /></button>

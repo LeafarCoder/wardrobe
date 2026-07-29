@@ -4154,6 +4154,75 @@ button { font: inherit; }
   outline-offset: 2px;
 }
 
+.garment-version-fan,
+.garment-version-fan__fallback {
+  position: absolute;
+  inset: 0;
+}
+
+.garment-version-fan {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.garment-version-fan__fallback {
+  display: none;
+}
+
+.garment-version-fan__item {
+  position: absolute;
+  inset: 0;
+  z-index: var(--fan-layer);
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transform: translateX(0) translateY(0) rotate(0) scale(1);
+  transform-origin: 50% 88%;
+  transition:
+    opacity 140ms ease 190ms,
+    transform 360ms cubic-bezier(.2, .82, .2, 1),
+    filter 180ms ease;
+}
+
+.garment-version-fan__item[aria-pressed="true"] {
+  z-index: 90;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.viewer-art.has-version-fan:hover .garment-version-fan__item,
+.viewer-art.has-version-fan:focus-within .garment-version-fan__item {
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 0ms;
+  transform:
+    translateX(var(--fan-x))
+    translateY(calc(var(--fan-rank) * -1px))
+    rotate(var(--fan-angle))
+    scale(1);
+}
+
+.viewer-art.has-version-fan:hover .garment-version-fan__item:hover,
+.viewer-art.has-version-fan:focus-within .garment-version-fan__item:focus-visible {
+  z-index: 100;
+  outline: none;
+  filter: drop-shadow(0 7px 7px rgba(39, 31, 23, .16));
+  transform:
+    translateX(var(--fan-x))
+    translateY(-8px)
+    rotate(var(--fan-angle))
+    scale(1.055);
+}
+
+.garment-version-fan__item canvas {
+  pointer-events: none;
+}
+
 .viewer-art-floating .sample-hint {
   right: 0;
   bottom: 8px;
@@ -4608,6 +4677,10 @@ button { font: inherit; }
   transition: opacity 160ms ease;
 }
 
+.garment-version-nav.is-fan-fallback {
+  display: none;
+}
+
 .viewer-art:hover .garment-version-nav,
 .viewer-art:focus-within .garment-version-nav {
   opacity: 1;
@@ -4615,6 +4688,18 @@ button { font: inherit; }
 }
 
 @media (hover: none), (pointer: coarse) {
+  .garment-version-fan {
+    display: none;
+  }
+
+  .garment-version-fan__fallback {
+    display: block;
+  }
+
+  .garment-version-nav.is-fan-fallback {
+    display: flex;
+  }
+
   .garment-version-nav {
     opacity: .9;
     pointer-events: auto;
@@ -7053,6 +7138,17 @@ button { font: inherit; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .garment-version-fan {
+    display: none;
+  }
+  .garment-version-fan__fallback {
+    display: block;
+  }
+  .garment-version-nav.is-fan-fallback {
+    display: flex;
+    opacity: .9;
+    pointer-events: auto;
+  }
   .gallery-item img,
   .gallery-item img.optimized-image-reveal,
   .modeled-hero-photo.optimized-image-reveal,

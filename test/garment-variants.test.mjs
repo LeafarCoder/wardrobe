@@ -5,7 +5,9 @@ import {
   GARMENT_VARIANT_THRESHOLD_MAX,
   GARMENT_VARIANT_THRESHOLD_MIN,
   garmentColorVariants,
+  garmentVersionFanSlot,
   normalizeVariantThreshold,
+  supportsGarmentVersionFan,
 } from "../src/garment-variants.js";
 
 test("normalizes saved garment color versions without duplicating the wardrobe item", () => {
@@ -38,4 +40,21 @@ test("keeps each recolor threshold within the supported range", () => {
   assert.equal(normalizeVariantThreshold(0), GARMENT_VARIANT_THRESHOLD_MIN);
   assert.equal(normalizeVariantThreshold(999), GARMENT_VARIANT_THRESHOLD_MAX);
   assert.equal(normalizeVariantThreshold(127.6), 128);
+});
+
+test("offers the color-version fan only for tops and one-pieces with media", () => {
+  assert.equal(supportsGarmentVersionFan("upperbody", 3, true), true);
+  assert.equal(supportsGarmentVersionFan("wholebody", 2, true), true);
+  assert.equal(supportsGarmentVersionFan("wholebody_up", 3, true), false);
+  assert.equal(supportsGarmentVersionFan("upperbody", 1, true), false);
+  assert.equal(supportsGarmentVersionFan("upperbody", 3, false), false);
+});
+
+test("fans versions alternately around the selected version", () => {
+  assert.deepEqual(
+    Array.from({ length: 5 }, (_, index) => garmentVersionFanSlot(index, 2, 5)),
+    [2, -2, 0, 1, -1],
+  );
+  assert.equal(garmentVersionFanSlot(0, 0, 3), 0);
+  assert.equal(garmentVersionFanSlot(-1, 0, 3), 0);
 });
