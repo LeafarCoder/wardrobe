@@ -160,6 +160,7 @@ const pt = {
   "Invite another Wardrobe account. Nothing is shared until that person accepts and chooses the permissions.": "Convide outra conta Wardrobe. Nada é partilhado até essa pessoa aceitar e escolher as permissões.",
   "Needs your response": "Aguarda a sua resposta",
   "Connection invitations": "Convites de ligação",
+  "Connection action failed": "Não foi possível concluir a ação de ligação",
   "Describes you as: {relationship}": "Descreve a relação como: {relationship}",
   "You recognize this person and choose exactly what this account may use. You can change or revoke access later.": "Confirma que reconhece esta pessoa e escolhe exatamente o que esta conta pode utilizar. Pode alterar ou revogar o acesso mais tarde.",
   "Appear together in generated Outfit Studio images": "Aparecer em conjunto nas imagens geradas no Estúdio de conjuntos",

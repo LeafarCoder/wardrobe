@@ -4,6 +4,13 @@ import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { BrandIcon } from "./BrandIcon.jsx";
 import { CareIcon } from "./CareIcon.jsx";
 import { ConnectionsDialog } from "./ConnectionsDialog.jsx";
+import {
+  connectionInvitationPath,
+  connectionInvitationResponsePath,
+  connectionInvitationsPath,
+  connectionPath,
+  connectionsPath,
+} from "./connection-paths.js";
 import { CITY_SUGGESTIONS } from "./city-suggestions.js";
 import { GarmentColorPreview } from "./GarmentColorPreview.jsx";
 import { DayDatePicker } from "./DayDatePicker.jsx";
@@ -4914,6 +4921,7 @@ export function App() {
   const [connectionsData, setConnectionsData] = useState(EMPTY_CONNECTION_DATA);
   const [connectionsBusy, setConnectionsBusy] = useState("");
   const [connectionsError, setConnectionsError] = useState("");
+  const [appToast, setAppToast] = useState(null);
   const [studioConnections, setStudioConnections] = useState([]);
   const [openRouterKeyDialogOpen, setOpenRouterKeyDialogOpen] = useState(false);
   const [openRouterKeyBusy, setOpenRouterKeyBusy] = useState(false);
@@ -4972,6 +4980,7 @@ export function App() {
       setConnectionsData(EMPTY_CONNECTION_DATA);
       setConnectionsBusy("");
       setConnectionsError("");
+      setAppToast(null);
       setStudioConnections([]);
       setViewerDirty(false);
       setBlockedSwitchSignal(0);
@@ -5000,6 +5009,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!appToast) return undefined;
+    const timeout = setTimeout(() => setAppToast(null), 9000);
+    return () => clearTimeout(timeout);
+  }, [appToast]);
+
+  useEffect(() => {
     if (!auth?.authenticated) return;
     profileApi("/api/users")
       .then((result) => {
@@ -5017,7 +5032,7 @@ export function App() {
     if (!auth?.authenticated || !currentUserId) return;
     setConnectionsData(EMPTY_CONNECTION_DATA);
     setConnectionsError("");
-    profileApi(withWardrobeUser("/api/users/connections", currentUserId))
+    profileApi(connectionsPath(currentUserId))
       .then((result) => {
         setConnectionsData(result);
         if (result.incomingInvites?.length) setConnectionsOpen(true);
@@ -5700,10 +5715,7 @@ export function App() {
 
   const refreshConnections = async (includeOutfit = false) => {
     if (!currentUserId) return EMPTY_CONNECTION_DATA;
-    const result = await profileApi(withWardrobeUser(
-      `/api/users/connections${includeOutfit ? "?include=outfit" : ""}`,
-      currentUserId,
-    ));
+    const result = await profileApi(connectionsPath(currentUserId, includeOutfit));
     setConnectionsData(result);
     if (includeOutfit) setStudioConnections(result.companions || []);
     return result;
@@ -5713,11 +5725,13 @@ export function App() {
     setConnectionsBusy("invite");
     setConnectionsError("");
     try {
-      await profileApi("/api/users/connections/invitations", { method: "POST", body: JSON.stringify(input) });
+      await profileApi(connectionInvitationsPath(currentUserId), { method: "POST", body: JSON.stringify(input) });
       await refreshConnections();
       return true;
     } catch (requestError) {
-      setConnectionsError(requestError.message);
+      const message = readableError(requestError);
+      setConnectionsError(message);
+      setAppToast({ title: tr("Connection action failed"), message });
       return false;
     } finally {
       setConnectionsBusy("");
@@ -5728,13 +5742,15 @@ export function App() {
     setConnectionsBusy(inviteId);
     setConnectionsError("");
     try {
-      await profileApi(`/api/users/connections/invitations/${encodeURIComponent(inviteId)}/respond`, {
+      await profileApi(connectionInvitationResponsePath(inviteId, currentUserId), {
         method: "POST",
         body: JSON.stringify({ decision, permissions }),
       });
       await refreshConnections();
     } catch (requestError) {
-      setConnectionsError(requestError.message);
+      const message = readableError(requestError);
+      setConnectionsError(message);
+      setAppToast({ title: tr("Connection action failed"), message });
     } finally {
       setConnectionsBusy("");
     }
@@ -5744,10 +5760,12 @@ export function App() {
     setConnectionsBusy(inviteId);
     setConnectionsError("");
     try {
-      await profileApi(`/api/users/connections/invitations/${encodeURIComponent(inviteId)}`, { method: "DELETE" });
+      await profileApi(connectionInvitationPath(inviteId, currentUserId), { method: "DELETE" });
       await refreshConnections();
     } catch (requestError) {
-      setConnectionsError(requestError.message);
+      const message = readableError(requestError);
+      setConnectionsError(message);
+      setAppToast({ title: tr("Connection action failed"), message });
     } finally {
       setConnectionsBusy("");
     }
@@ -5757,13 +5775,15 @@ export function App() {
     setConnectionsBusy(connectionId);
     setConnectionsError("");
     try {
-      await profileApi(`/api/users/connections/${encodeURIComponent(connectionId)}`, {
+      await profileApi(connectionPath(connectionId, currentUserId), {
         method: "PATCH",
         body: JSON.stringify({ permissions }),
       });
       await refreshConnections();
     } catch (requestError) {
-      setConnectionsError(requestError.message);
+      const message = readableError(requestError);
+      setConnectionsError(message);
+      setAppToast({ title: tr("Connection action failed"), message });
     } finally {
       setConnectionsBusy("");
     }
@@ -5773,11 +5793,13 @@ export function App() {
     setConnectionsBusy(connectionId);
     setConnectionsError("");
     try {
-      const result = await profileApi(`/api/users/connections/${encodeURIComponent(connectionId)}`, { method: "DELETE" });
+      const result = await profileApi(connectionPath(connectionId, currentUserId), { method: "DELETE" });
       if (result.user) setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
       await refreshConnections();
     } catch (requestError) {
-      setConnectionsError(requestError.message);
+      const message = readableError(requestError);
+      setConnectionsError(message);
+      setAppToast({ title: tr("Connection action failed"), message });
     } finally {
       setConnectionsBusy("");
     }
@@ -6000,6 +6022,7 @@ export function App() {
       setConnectionsData(EMPTY_CONNECTION_DATA);
       setConnectionsBusy("");
       setConnectionsError("");
+      setAppToast(null);
       setStudioConnections([]);
       setCurrentUserId(null);
       setItems([]);
@@ -6020,6 +6043,7 @@ export function App() {
 
   return (
     <div className={`app-shell${selectedItem ? " has-selection" : ""}${mergeSourceItem ? " is-merging" : ""}`}>
+      <ViewerToast toast={appToast} onDismiss={() => setAppToast(null)} />
       <main className="gallery-pane">
         <header className="gallery-header">
           <div className="gallery-meta-row">
