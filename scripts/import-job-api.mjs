@@ -51,6 +51,10 @@ import {
   summarizeAiUsage,
 } from "../src/ai-preferences.js";
 import { normalizeTutorialState, updateTutorialState } from "../src/tutorial.js";
+import {
+  isCompleteGarmentMediaOrder,
+  normalizeGarmentMediaOrder,
+} from "../src/garment-media.js";
 
 const API_ROOT = "/api/import/jobs";
 const ASSET_ROOT = "/api/import/assets";
@@ -928,7 +932,7 @@ export function modeledLooksForRecord(record = {}) {
 export function recordWithModeledLooks(record, looks) {
   const modeledLooks = modeledLooksForRecord({ modeledLooks: looks });
   const latest = modeledLooks.at(-1) || null;
-  return {
+  const next = {
     ...record,
     modeledLooks,
     modeledImage: latest?.image || null,
@@ -936,6 +940,7 @@ export function recordWithModeledLooks(record, looks) {
     modeledFallbackUsed: latest?.fallbackUsed || false,
     modeledGeneratedAt: latest?.generatedAt || null,
   };
+  return { ...next, mediaOrder: normalizeGarmentMediaOrder(next) };
 }
 
 export function recordWithoutModeledLook(record, lookId) {
@@ -1015,7 +1020,7 @@ export function garmentRegenerationCandidateForRecord(record = {}) {
 export function recordWithSourcePhotos(record, photos) {
   const sourcePhotos = sourcePhotosForRecord({ sourcePhotos: photos });
   const primary = sourcePhotos[0] || null;
-  return {
+  const next = {
     ...record,
     sourcePhotos,
     originalImage: primary?.image || null,
@@ -1023,6 +1028,7 @@ export function recordWithSourcePhotos(record, photos) {
     boundingBox: record.boundingBox || primary?.boundingBox || null,
     originalFocusBox: record.originalFocusBox || primary?.focusBox || null,
   };
+  return { ...next, mediaOrder: normalizeGarmentMediaOrder(next) };
 }
 
 export function mergeImportedRecords(keeper = {}, discarded = {}, updatedAt = new Date().toISOString()) {
@@ -7024,6 +7030,35 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (garmentRegenerationMatch && !garmentRegenerationMatch[2] && req.method === "DELETE") {
         const record = await resolveImportedGarmentCandidate(garmentRegenerationMatch[1], user, "discard");
         return json(res, 200, publicImportedRecord(record, user.id));
+      }
+      const garmentMediaOrderMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/media-order$/i);
+      if (garmentMediaOrderMatch && req.method === "PATCH") {
+        const input = await body(req, 32 * 1024);
+        const updated = await withLibrary(async () => {
+          const records = await loadImported();
+          const index = records.findIndex((record) => record.id === garmentMediaOrderMatch[1] && record.userId === user.id);
+          if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+          const mediaRecord = {
+            ...records[index],
+            sourcePhotos: sourcePhotosForRecord(records[index]),
+            modeledLooks: modeledLooksForRecord(records[index]),
+          };
+          if (!isCompleteGarmentMediaOrder(mediaRecord, input.ids)) {
+            throw apiError(
+              "The photo order is no longer current. Refresh and try again.",
+              409,
+              "garment_media_order_stale",
+            );
+          }
+          records[index] = {
+            ...records[index],
+            mediaOrder: [...input.ids],
+            updatedAt: new Date().toISOString(),
+          };
+          await saveImported(records);
+          return records[index];
+        });
+        return json(res, 200, publicImportedRecord(updated, user.id));
       }
       const wardrobeItemMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})(?:\/(modeled))?$/i);
       if (wardrobeItemMatch?.[2] === "modeled" && req.method === "POST") {

@@ -19,6 +19,7 @@ import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
 import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { OriginalPhotoGallery } from "./OriginalPhotoGallery.jsx";
+import { cropCenteredCoverPosition, originalPhotoPosition } from "./original-photo-position.js";
 import { OutfitStudio } from "./OutfitStudio.jsx";
 import { TutorialWalkthrough } from "./TutorialWalkthrough.jsx";
 import {
@@ -81,6 +82,12 @@ import {
 } from "./wardrobe-discovery.js";
 import { withWardrobeUser } from "./user-scope.js";
 import { collectOriginalPhotoLibrary } from "./original-photo-library.js";
+import {
+  GARMENT_MEDIA_GENERATED,
+  garmentMediaId,
+  moveGarmentMedia,
+  orderedGarmentMedia,
+} from "./garment-media.js";
 
 const STORAGE_KEY = "open-wardrobe-edits-v1";
 const DELETED_STORAGE_KEY = "open-wardrobe-deleted-v1";
@@ -128,14 +135,6 @@ const COLOR_GROUPS = [
   { id: "dark-neutrals", label: "Dark neutrals", tones: ["#686763", "#393a3a", "#171818"] },
   { id: "other", label: "Other colors", tones: ["#aaa19a", "#77716c", "#4b4845"] },
 ];
-const LEGACY_ORIGINAL_FOCUS = {
-  upperbody: [50, 44],
-  wholebody_up: [50, 52],
-  lowerbody: [50, 68],
-  wholebody: [50, 58],
-  accessories_up: [50, 54],
-  shoes: [50, 78],
-};
 const IMAGE_PREFETCHES = new Map();
 
 function timestampValue(item) {
@@ -249,28 +248,6 @@ function preloadItemPanel(item) {
     preferredHeroImage(item),
     item.imagePreview || item.image,
   ].filter(Boolean))].forEach(preloadImage);
-}
-
-function originalPhotoPosition(item) {
-  const center = (box) => box && ["x", "y", "width", "height"].every((key) => Number.isFinite(Number(box[key])))
-    ? {
-        x: (Number(box.x) + (Number(box.width) / 2)) / 10,
-        y: (Number(box.y) + (Number(box.height) / 2)) / 10,
-      }
-    : null;
-  const outfitCenter = center(item.originalFocusBox);
-  const itemCenter = center(item.boundingBox);
-  if (outfitCenter || itemCenter) {
-    const horizontal = Math.max(5, Math.min(95, outfitCenter && itemCenter
-      ? (outfitCenter.x * 0.4) + (itemCenter.x * 0.6)
-      : (outfitCenter || itemCenter).x));
-    const vertical = Math.max(8, Math.min(92, outfitCenter && itemCenter
-      ? (outfitCenter.y * 0.35) + (itemCenter.y * 0.65)
-      : (outfitCenter || itemCenter).y));
-    return `${horizontal.toFixed(1)}% ${vertical.toFixed(1)}%`;
-  }
-  const [horizontal, vertical] = LEGACY_ORIGINAL_FOCUS[item.part] || [50, 52];
-  return `${horizontal}% ${vertical}%`;
 }
 
 function userStorageKey(base, userId) {
@@ -1528,6 +1505,7 @@ function ItemViewer({
   onDiscardGarmentRegeneration,
   onCreateVariant,
   onDeleteModeled,
+  onReorderMedia,
   onDirtyChange,
   blockedSwitchSignal,
   canMerge,
@@ -1545,6 +1523,7 @@ function ItemViewer({
   const sourcePhotoImageRef = useRef(null);
   const garmentArtworkButtonRef = useRef(null);
   const modeledPhotoButtonRef = useRef(null);
+  const originalHeroPhotoRef = useRef(null);
   const mediaPreviewCloseButtonRef = useRef(null);
   const colorEditorCloseButtonRef = useRef(null);
   const nameInputRef = useRef(null);
@@ -1578,6 +1557,9 @@ function ItemViewer({
   const [deletingGarment, setDeletingGarment] = useState(false);
   const [nameEditing, setNameEditing] = useState(false);
   const [viewerToast, setViewerToast] = useState(null);
+  const [draggedMediaId, setDraggedMediaId] = useState(null);
+  const [mediaOrderBusy, setMediaOrderBusy] = useState(false);
+  const [originalHeroPosition, setOriginalHeroPosition] = useState(() => originalPhotoPosition(item));
   const type = tr(TYPE_MAP[item.part]?.singular || "Wardrobe item");
   const colorVersions = useMemo(() => itemColorVersions(item), [item]);
   const [colorVersionIndex, setColorVersionIndex] = useState(0);
@@ -1585,15 +1567,23 @@ function ItemViewer({
   const activeColorVersion = colorVersions[activeColorVersionIndex] || colorVersions[0];
   const modeledLooks = useMemo(() => itemModeledLooks(item), [item]);
   const sourcePhotos = useMemo(() => itemSourcePhotos(item), [item]);
-  const [modeledIndex, setModeledIndex] = useState(Math.max(0, modeledLooks.length - 1));
-  const activeModeledIndex = modeledLooks.length ? Math.min(modeledIndex, modeledLooks.length - 1) : 0;
-  const activeModeledLook = modeledLooks[activeModeledIndex] || null;
+  const garmentMedia = useMemo(() => orderedGarmentMedia({
+    sourcePhotos,
+    modeledLooks,
+    mediaOrder: item.mediaOrder,
+  }), [item.mediaOrder, modeledLooks, sourcePhotos]);
+  const [activeMediaId, setActiveMediaId] = useState(() => garmentMedia[0]?.id || null);
+  const activeMediaIndex = Math.max(0, garmentMedia.findIndex((media) => media.id === activeMediaId));
+  const activeMedia = garmentMedia[activeMediaIndex] || garmentMedia[0] || null;
+  const activeModeledLook = activeMedia?.kind === GARMENT_MEDIA_GENERATED ? activeMedia.data : null;
+  const isActiveMediaGenerated = activeMedia?.kind === GARMENT_MEDIA_GENERATED;
   const generatingModeled = generatingModeledFor === item.id;
   const hasModeledImage = Boolean(activeModeledLook);
   const activeSourcePhoto = sourcePhotos[Math.min(sourcePhotoIndex, Math.max(0, sourcePhotos.length - 1))] || null;
+  const activeHeroSource = activeMedia?.kind === GARMENT_MEDIA_GENERATED ? null : activeMedia?.data || null;
   const activeSourceCrop = activeSourcePhoto?.boundingBox || item.boundingBox || null;
-  const hasOriginalImage = Boolean(activeSourcePhoto);
-  const hasHeroImage = hasModeledImage || hasOriginalImage;
+  const hasOriginalImage = sourcePhotos.length > 0;
+  const hasHeroImage = garmentMedia.length > 0;
   const garmentRegenerationCandidate = item.garmentRegenerationCandidate || null;
   const regenerationPrimaryValid = Boolean(normalizeHexColor(garmentRegenerationForm.color));
   const regenerationSecondaryValid = !garmentRegenerationForm.secondaryColor
@@ -1608,6 +1598,26 @@ function ItemViewer({
     const hash = [...item.id].reduce((total, character) => total + character.charCodeAt(0), 0);
     return `${(hash % 9) - 4}deg`;
   }, [item.id]);
+
+  const measureOriginalHero = useCallback(() => {
+    const image = originalHeroPhotoRef.current;
+    const positionedItem = activeHeroSource ? {
+      ...item,
+      boundingBox: activeHeroSource.boundingBox || item.boundingBox,
+      originalFocusBox: activeHeroSource.focusBox || item.originalFocusBox,
+    } : item;
+    if (item.part !== "shoes" || !image?.naturalWidth || !image?.naturalHeight || !positionedItem.boundingBox) {
+      setOriginalHeroPosition(originalPhotoPosition(positionedItem));
+      return;
+    }
+    setOriginalHeroPosition(cropCenteredCoverPosition({
+      box: positionedItem.boundingBox,
+      imageWidth: image.naturalWidth,
+      imageHeight: image.naturalHeight,
+      frameWidth: image.clientWidth,
+      frameHeight: image.clientHeight,
+    }) || originalPhotoPosition(positionedItem));
+  }, [activeHeroSource, item]);
 
   const measureSourcePhoto = useCallback(() => {
     const viewport = sourcePhotoViewportRef.current;
@@ -1731,7 +1741,7 @@ function ItemViewer({
         } else if (mediaPreviewOpen) {
           setMediaPreviewOpen(null);
           requestAnimationFrame(() => (
-            mediaPreviewOpen === "modeled"
+            mediaPreviewOpen === "media"
               ? modeledPhotoButtonRef.current
               : garmentArtworkButtonRef.current
           )?.focus({ preventScroll: true }));
@@ -1815,7 +1825,13 @@ function ItemViewer({
     setColorEditorOpen(false);
     setCareGuideOpen(false);
     setSourcePhotoIndex(0);
-    setModeledIndex(Math.max(0, itemModeledLooks(item).length - 1));
+    setActiveMediaId(orderedGarmentMedia({
+      sourcePhotos: itemSourcePhotos(item),
+      modeledLooks: itemModeledLooks(item),
+      mediaOrder: item.mediaOrder,
+    })[0]?.id || null);
+    setDraggedMediaId(null);
+    setMediaOrderBusy(false);
     setDeleteCandidate(null);
     setGarmentDeleteOpen(false);
     setDeletingGarment(false);
@@ -1830,9 +1846,37 @@ function ItemViewer({
     setGarmentRegenerationForm(garmentRegenerationDraft(item));
   }, [item.id]);
 
+  useEffect(() => {
+    if (activeMediaId && garmentMedia.some((media) => media.id === activeMediaId)) return;
+    setActiveMediaId(garmentMedia[0]?.id || null);
+  }, [activeMediaId, garmentMedia]);
+
   useLayoutEffect(() => {
     setColorVersionIndex(0);
   }, [item.id]);
+
+  useLayoutEffect(() => {
+    if (hasModeledImage) {
+      setOriginalHeroPosition(originalPhotoPosition(item));
+      return undefined;
+    }
+    if (item.part !== "shoes") {
+      measureOriginalHero();
+      return undefined;
+    }
+    const image = originalHeroPhotoRef.current;
+    const frame = requestAnimationFrame(measureOriginalHero);
+    const observer = typeof ResizeObserver === "function" && image
+      ? new ResizeObserver(measureOriginalHero)
+      : null;
+    observer?.observe(image);
+    window.addEventListener("resize", measureOriginalHero);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", measureOriginalHero);
+    };
+  }, [hasModeledImage, item, measureOriginalHero]);
 
   useLayoutEffect(() => {
     if (!sourcePhotoOpen) return undefined;
@@ -1851,13 +1895,12 @@ function ItemViewer({
   }, [activeSourcePhoto?.id, measureSourcePhoto, sourcePhotoOpen]);
 
   useEffect(() => {
-    sourcePhotos.slice(0, 4).forEach((photo) => preloadImage(photo.preview || photo.image));
-    if (modeledLooks.length < 2) return;
-    const previous = (activeModeledIndex - 1 + modeledLooks.length) % modeledLooks.length;
-    const next = (activeModeledIndex + 1) % modeledLooks.length;
-    preloadImage(modeledLookSource(modeledLooks[previous]));
-    preloadImage(modeledLookSource(modeledLooks[next]));
-  }, [activeModeledIndex, modeledLooks, sourcePhotos]);
+    if (garmentMedia.length < 2) return;
+    const previous = (activeMediaIndex - 1 + garmentMedia.length) % garmentMedia.length;
+    const next = (activeMediaIndex + 1) % garmentMedia.length;
+    preloadImage(garmentMedia[previous].preview || garmentMedia[previous].image);
+    preloadImage(garmentMedia[next].preview || garmentMedia[next].image);
+  }, [activeMediaIndex, garmentMedia]);
 
   const cancelEditing = () => {
     setDraft(editableItem(item));
@@ -1923,7 +1966,8 @@ function ItemViewer({
     setViewerToast(null);
     try {
       const updated = await onGenerateModeled(targetItemId, variantId);
-      setModeledIndex(Math.max(0, itemModeledLooks(updated).length - 1));
+      const generatedLook = itemModeledLooks(updated).at(-1);
+      if (generatedLook) setActiveMediaId(garmentMediaId(GARMENT_MEDIA_GENERATED, generatedLook.id));
       setModeledVariantPickerOpen(false);
     } catch (requestError) {
       if (activeItemIdRef.current === targetItemId) {
@@ -1952,12 +1996,29 @@ function ItemViewer({
     ));
   };
 
-  const rotateModeledLook = (direction) => {
-    if (modeledLooks.length < 2) return;
-    setModeledIndex((current) => {
-      const safeCurrent = Math.min(current, modeledLooks.length - 1);
-      return (safeCurrent + direction + modeledLooks.length) % modeledLooks.length;
-    });
+  const rotateGarmentMedia = (direction) => {
+    if (garmentMedia.length < 2) return;
+    const nextIndex = (activeMediaIndex + direction + garmentMedia.length) % garmentMedia.length;
+    setActiveMediaId(garmentMedia[nextIndex].id);
+  };
+
+  const reorderGarmentMedia = async (targetId) => {
+    if (!draggedMediaId || mediaOrderBusy || draggedMediaId === targetId) return;
+    const ids = garmentMedia.map((media) => media.id);
+    const nextIds = moveGarmentMedia(ids, draggedMediaId, targetId);
+    setDraggedMediaId(null);
+    setMediaOrderBusy(true);
+    setViewerToast(null);
+    try {
+      await onReorderMedia(item.id, nextIds);
+    } catch (requestError) {
+      setViewerToast({
+        title: tr("Could not reorder photos"),
+        message: readableError(requestError),
+      });
+    } finally {
+      setMediaOrderBusy(false);
+    }
   };
 
   const requestDeleteModeledLook = () => {
@@ -1972,8 +2033,8 @@ function ItemViewer({
     }
     setDeleteCandidate({
       look: activeModeledLook,
-      index: activeModeledIndex,
-      total: modeledLooks.length,
+      index: activeMediaIndex,
+      total: garmentMedia.length,
     });
   };
 
@@ -2003,8 +2064,13 @@ function ItemViewer({
     setDeletingModeled(true);
     setViewerToast(null);
     try {
-      await onDeleteModeled(item.id, deleteCandidate.look.id);
-      setModeledIndex(Math.max(0, deleteCandidate.index - (deleteCandidate.index === deleteCandidate.total - 1 ? 1 : 0)));
+      const updated = await onDeleteModeled(item.id, deleteCandidate.look.id);
+      const nextMedia = orderedGarmentMedia({
+        sourcePhotos: itemSourcePhotos(updated),
+        modeledLooks: itemModeledLooks(updated),
+        mediaOrder: updated.mediaOrder,
+      });
+      setActiveMediaId(nextMedia[Math.min(deleteCandidate.index, Math.max(0, nextMedia.length - 1))]?.id || null);
       setDeleteCandidate(null);
     } catch (requestError) {
       setViewerToast({
@@ -2078,7 +2144,7 @@ function ItemViewer({
   };
 
   const openMediaPreview = (kind) => {
-    if (kind === "modeled" && !activeModeledLook) return;
+    if (kind === "media" && !activeMedia) return;
     setMediaPreviewOpen(kind);
     if (kind === "garment") {
       setGarmentRegenerationOpen(Boolean(item.garmentRegenerationCandidate));
@@ -2088,7 +2154,7 @@ function ItemViewer({
   };
 
   const closeMediaPreview = () => {
-    const trigger = mediaPreviewOpen === "modeled"
+    const trigger = mediaPreviewOpen === "media"
       ? modeledPhotoButtonRef.current
       : garmentArtworkButtonRef.current;
     setMediaPreviewOpen(null);
@@ -2193,14 +2259,14 @@ function ItemViewer({
   };
 
   const keepMediaPreviewFocus = (event) => {
-    if (mediaPreviewOpen === "modeled" && modeledLooks.length > 1 && event.key === "ArrowLeft") {
+    if (mediaPreviewOpen === "media" && garmentMedia.length > 1 && event.key === "ArrowLeft") {
       event.preventDefault();
-      rotateModeledLook(-1);
+      rotateGarmentMedia(-1);
       return;
     }
-    if (mediaPreviewOpen === "modeled" && modeledLooks.length > 1 && event.key === "ArrowRight") {
+    if (mediaPreviewOpen === "media" && garmentMedia.length > 1 && event.key === "ArrowRight") {
       event.preventDefault();
-      rotateModeledLook(1);
+      rotateGarmentMedia(1);
       return;
     }
     keepDeleteDialogFocus(event);
@@ -2340,21 +2406,6 @@ function ItemViewer({
             value={draft.brand}
             onChange={(brand) => setDraft((current) => ({ ...current, brand }))}
           />
-          {hasOriginalImage && (
-            <span className="source-photo-control">
-              <button
-                ref={sourcePhotoButtonRef}
-                className="source-photo-trigger"
-                type="button"
-                onClick={() => setSourcePhotoOpen(true)}
-                aria-label={tr("View original photos and garment crops")}
-              >
-                <ImageSquare size={18} weight="regular" aria-hidden="true" />
-                {sourcePhotos.length > 1 && <span aria-hidden="true">{sourcePhotos.length}</span>}
-              </button>
-              <span role="tooltip">{tr("View the original photos and where this garment was found.")}</span>
-            </span>
-          )}
         </div>
       </div>
     </div>
@@ -2387,37 +2438,47 @@ function ItemViewer({
           {garmentIdentityHeader}
           <div className="modeled-hero">
             <OptimizedImage
-              key={hasModeledImage ? activeModeledLook.id : "original"}
-              ref={hasModeledImage ? modeledPhotoButtonRef : undefined}
-              className={`modeled-hero-photo${hasModeledImage ? " is-enlargeable" : ""}`}
-              src={hasModeledImage ? modeledLookSource(activeModeledLook) : item.originalPreview || item.originalImage}
-              alt={hasModeledImage ? tr("{name} modeled look {current} of {total}", { name: draft.name || type, current: activeModeledIndex + 1, total: modeledLooks.length }) : tr("Original photo containing {name}", { name: draft.name || type })}
-              style={!hasModeledImage ? { objectPosition: originalPhotoPosition(item) } : undefined}
-              role={hasModeledImage ? "button" : undefined}
-              tabIndex={hasModeledImage ? 0 : undefined}
-              aria-label={hasModeledImage ? tr("Open enlarged modeled look") : undefined}
-              onClick={hasModeledImage ? () => openMediaPreview("modeled") : undefined}
-              onKeyDown={hasModeledImage ? (event) => {
+              key={activeMedia.id}
+              ref={(node) => {
+                modeledPhotoButtonRef.current = node;
+                originalHeroPhotoRef.current = isActiveMediaGenerated ? null : node;
+              }}
+              className="modeled-hero-photo is-enlargeable"
+              src={activeMedia.preview || activeMedia.image}
+              alt={tr("{name} photo {current} of {total}", { name: draft.name || type, current: activeMediaIndex + 1, total: garmentMedia.length })}
+              style={!isActiveMediaGenerated ? { objectPosition: originalHeroPosition } : undefined}
+              onLoad={!isActiveMediaGenerated ? measureOriginalHero : undefined}
+              role="button"
+              tabIndex={0}
+              aria-label={tr("Open enlarged garment photos")}
+              onClick={() => openMediaPreview("media")}
+              onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  openMediaPreview("modeled");
+                  openMediaPreview("media");
                 }
-              } : undefined}
+              }}
               sizes="(max-width: 860px) 100vw, 520px"
               breakpoints={[320, 480, 640, 800, 1040, 1280]}
               quality={82}
               priority
               reveal
             />
+            {isActiveMediaGenerated && (
+              <span className="garment-media-ai-badge">
+                <Sparkle size={9} weight="fill" aria-hidden="true" />
+                {tr("AI generated")}
+              </span>
+            )}
             {garmentArtwork}
             {modeledGenerationAction}
-            {modeledLooks.length > 1 && (
-              <div className="modeled-look-pagination" aria-label={tr("Modeled look controls")}>
-                <button type="button" onClick={() => rotateModeledLook(-1)} aria-label={tr("Previous modeled look")}>
+            {garmentMedia.length > 1 && (
+              <div className="modeled-look-pagination" aria-label={tr("Garment photo controls")}>
+                <button type="button" onClick={() => rotateGarmentMedia(-1)} aria-label={tr("Previous garment photo")}>
                   <CaretLeft size={20} aria-hidden="true" />
                 </button>
-                <span aria-live="polite">{tr("{current} of {total}", { current: activeModeledIndex + 1, total: modeledLooks.length })}</span>
-                <button type="button" onClick={() => rotateModeledLook(1)} aria-label={tr("Next modeled look")}>
+                <span aria-live="polite">{tr("{current} of {total}", { current: activeMediaIndex + 1, total: garmentMedia.length })}</span>
+                <button type="button" onClick={() => rotateGarmentMedia(1)} aria-label={tr("Next garment photo")}>
                   <CaretRight size={20} aria-hidden="true" />
                 </button>
               </div>
@@ -2588,7 +2649,7 @@ function ItemViewer({
         >
           <header className="source-photo-dialog__header">
             <div>
-              <p>{tr(mediaPreviewOpen === "modeled" ? "Modeled looks" : "Garment image")}</p>
+              <p>{tr(mediaPreviewOpen === "media" ? "Garment photos" : "Garment image")}</p>
               <h2 id="media-preview-title">{draft.name || type}</h2>
             </div>
             <button
@@ -2771,14 +2832,14 @@ function ItemViewer({
               </div>
             </div>
           ) : (
-          <div className={`media-preview-dialog__body${mediaPreviewOpen === "modeled" && modeledLooks.length > 1 ? " has-carousel" : ""}${mediaPreviewOpen === "garment" && item.id.startsWith("import-") && sourcePhotos.length > 0 ? " has-actions" : ""}`}>
+          <div className={`media-preview-dialog__body${mediaPreviewOpen === "media" && garmentMedia.length > 1 ? " has-carousel" : ""}${mediaPreviewOpen === "garment" && item.id.startsWith("import-") && sourcePhotos.length > 0 ? " has-actions" : ""}`}>
             <ProductStage className="media-preview-dialog__viewport" interactive animated>
-              {mediaPreviewOpen === "modeled" ? (
+              {mediaPreviewOpen === "media" ? (
                 <OptimizedImage
-                  key={activeModeledLook.id}
+                  key={activeMedia.id}
                   className="media-preview-dialog__image"
-                  src={modeledLookSource(activeModeledLook)}
-                  alt={tr("{name} modeled look {current} of {total}", { name: draft.name || type, current: activeModeledIndex + 1, total: modeledLooks.length })}
+                  src={activeMedia.image || activeMedia.preview}
+                  alt={tr("{name} photo {current} of {total}", { name: draft.name || type, current: activeMediaIndex + 1, total: garmentMedia.length })}
                   sizes="(max-width: 700px) 100vw, 960px"
                   breakpoints={[480, 640, 800, 1040, 1280, 1600]}
                   quality={90}
@@ -2802,52 +2863,74 @@ function ItemViewer({
                   }}
                 />
               )}
-              {mediaPreviewOpen === "modeled" && modeledLooks.length > 1 && (
+              {mediaPreviewOpen === "media" && isActiveMediaGenerated && (
+                <span className="garment-media-ai-badge is-dialog">
+                  <Sparkle size={9} weight="fill" aria-hidden="true" />
+                  {tr("AI generated")}
+                </span>
+              )}
+              {mediaPreviewOpen === "media" && garmentMedia.length > 1 && (
                 <>
                   <button
                     className="source-photo-dialog__nav is-previous"
                     type="button"
-                    onClick={() => rotateModeledLook(-1)}
-                    aria-label={tr("Previous modeled look")}
+                    onClick={() => rotateGarmentMedia(-1)}
+                    aria-label={tr("Previous garment photo")}
                   >
                     <CaretLeft size={24} aria-hidden="true" />
                   </button>
                   <button
                     className="source-photo-dialog__nav is-next"
                     type="button"
-                    onClick={() => rotateModeledLook(1)}
-                    aria-label={tr("Next modeled look")}
+                    onClick={() => rotateGarmentMedia(1)}
+                    aria-label={tr("Next garment photo")}
                   >
                     <CaretRight size={24} aria-hidden="true" />
                   </button>
                   <span className="source-photo-dialog__counter" aria-live="polite">
-                    {tr("{current} of {total}", { current: activeModeledIndex + 1, total: modeledLooks.length })}
+                    {tr("{current} of {total}", { current: activeMediaIndex + 1, total: garmentMedia.length })}
                   </span>
                 </>
               )}
             </ProductStage>
-            {mediaPreviewOpen === "modeled" && modeledLooks.length > 1 && (
-              <aside className="media-preview-dialog__gallery" aria-label={tr("Modeled look gallery")}>
-                {modeledLooks.map((look, index) => (
+            {mediaPreviewOpen === "media" && garmentMedia.length > 1 && (
+              <aside className="media-preview-dialog__gallery" aria-label={tr("Garment photo gallery")}>
+                <p>{tr(mediaOrderBusy ? "Saving photo order…" : "Drag thumbnails to reorder. The first photo becomes the panel cover.")}</p>
+                <div className="media-preview-dialog__thumbnail-row">
+                {garmentMedia.map((media, index) => (
                   <button
                     type="button"
-                    className={index === activeModeledIndex ? "active" : ""}
-                    onClick={() => setModeledIndex(index)}
-                    aria-label={tr("View modeled look {number}", { number: index + 1 })}
-                    aria-pressed={index === activeModeledIndex}
-                    key={look.id}
+                    className={`${index === activeMediaIndex ? "active" : ""}${draggedMediaId === media.id ? " is-dragging" : ""}`}
+                    onClick={() => setActiveMediaId(media.id)}
+                    aria-label={tr("View garment photo {number}", { number: index + 1 })}
+                    aria-pressed={index === activeMediaIndex}
+                    draggable={item.id.startsWith("import-") && !mediaOrderBusy}
+                    onDragStart={() => setDraggedMediaId(media.id)}
+                    onDragOver={(event) => {
+                      if (item.id.startsWith("import-") && !mediaOrderBusy) event.preventDefault();
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      void reorderGarmentMedia(media.id);
+                    }}
+                    onDragEnd={() => setDraggedMediaId(null)}
+                    key={media.id}
                   >
                     <OptimizedImage
-                      src={modeledLookSource(look)}
+                      src={media.preview || media.image}
                       alt=""
                       sizes="80px"
                       breakpoints={[80, 120, 180]}
                       quality={72}
                       reveal
                     />
-                    <span>{index + 1}</span>
+                    <span className="media-preview-dialog__number">{index + 1}</span>
+                    {media.kind === GARMENT_MEDIA_GENERATED && (
+                      <span className="garment-media-thumb-ai" aria-hidden="true"><Sparkle size={9} weight="fill" /></span>
+                    )}
                   </button>
                 ))}
+                </div>
               </aside>
             )}
             {mediaPreviewOpen === "garment" && item.id.startsWith("import-") && sourcePhotos.length > 0 && (
@@ -6241,6 +6324,15 @@ export function App() {
     return updated;
   };
 
+  const reorderGarmentMedia = async (id, ids) => {
+    const updated = await profileApi(`/api/import/wardrobe/${id}/media-order?user=${encodeURIComponent(currentUserId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ ids }),
+    });
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    return updated;
+  };
+
   const generateWardrobePlan = async (input) => {
     setPlannerBusy(true);
     setPlannerError("");
@@ -6636,6 +6728,7 @@ export function App() {
           onDiscardGarmentRegeneration={discardGarmentRegeneration}
           onCreateVariant={createColorVariant}
           onDeleteModeled={deleteModeledLook}
+          onReorderMedia={reorderGarmentMedia}
           onDirtyChange={setViewerDirty}
           blockedSwitchSignal={blockedSwitchSignal}
           canMerge={items.length > 1}
