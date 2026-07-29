@@ -2465,9 +2465,8 @@ function ItemViewer({
               reveal
             />
             {isActiveMediaGenerated && (
-              <span className="garment-media-ai-badge">
+              <span className="garment-media-ai-badge" role="img" aria-label={tr("AI generated")}>
                 <Sparkle size={9} weight="fill" aria-hidden="true" />
-                {tr("AI generated")}
               </span>
             )}
             {garmentArtwork}
@@ -2864,9 +2863,8 @@ function ItemViewer({
                 />
               )}
               {mediaPreviewOpen === "media" && isActiveMediaGenerated && (
-                <span className="garment-media-ai-badge is-dialog">
+                <span className="garment-media-ai-badge is-dialog" role="img" aria-label={tr("AI generated")}>
                   <Sparkle size={9} weight="fill" aria-hidden="true" />
-                  {tr("AI generated")}
                 </span>
               )}
               {mediaPreviewOpen === "media" && garmentMedia.length > 1 && (
