@@ -124,7 +124,7 @@ export function providerWithProfilePreferences(provider = {}, profile = {}, paye
   };
 }
 
-const ANALYSIS_PROMPT = "Identify every distinct wearable clothing item visible in this image. A photo may show one isolated garment or a person wearing several items. Return one record per actual item that should enter a wardrobe. Ignore the person's body and non-wearable background objects. For each item, include a precise, tight bounding box around the visible pixels of that garment using integer coordinates normalized to a 1000 by 1000 image: x and y are the top-left corner, followed by width and height. Do not box the whole person or the whole outfit. Do not include another garment merely because it is directly above, below, or behind the intended item. For a jacket or blazer, start at the shoulders and stop at the jacket hem; exclude the trousers below it. For trousers, start at the waistband and stop at the trouser hems; exclude the shirt or jacket above them. For a small accessory, include the complete identifiable product rather than only one component: for example, a watch box must contain the complete visible face, case, crown, and strap—not merely the wrist or strap. Leave only about 2-4% visual breathing room around the intended garment. Boxes may overlap where garments physically overlap, but an upper-body box must not substantially contain the trousers or shoes box, and a trousers box must not contain the shoes box. Before responding, compare every pair of boxes and tighten any box that contains most of an item belonging to another category. Use only these category ids: upperbody for tops; wholebody_up for outerwear such as jackets, coats, and blazers; lowerbody for trousers, shorts, and skirts; wholebody for dresses, jumpsuits, rompers, and overalls; shoes for footwear; accessories_up for accessories. Suggest a concise specific name, primary hex color, optional genuinely distinct secondary hex color, 1-4 useful lowercase detail tags, likely materials only when visually supported, visible fit descriptors, and suitable seasons. Prioritize objectively visible construction in the detail tags: whether it is sleeveless or the visible sleeve length, collar or exact common neckline, front closure, straps, waist construction, and mini, midi, or maxi hem length where applicable. When clearly visible, name the neckline consistently as V-neck, crew or jewel neck, scoop neck, square neck, boat or Sabrina neck, sweetheart, halter, high neck, off-shoulder, one-shoulder, strapless straight-across, spaghetti-strap, or keyhole. Never describe a sleeveless garment as sleeved, or a sleeved garment as sleeveless. A secondary color must be a deliberately different visible exterior color with meaningful coverage, such as a contrasting panel, pattern, sole, or strap. Return secondaryColor as null when the apparent difference is only a shadow, highlight, fold, texture variation, darker interior, jacket lining, lapel facing, or another shade of the same material. Do not infer a secondary color from stitching, tiny hardware, skin, another garment, or the background. Leave size labels empty because they cannot be reliably inferred from a photograph.";
+const ANALYSIS_PROMPT = "Identify every distinct wearable clothing item visible in this image. A photo may show one isolated garment or a person wearing several items. Return one record per actual item that should enter a wardrobe. Ignore the person's body and non-wearable background objects. For each item, include a precise, tight bounding box around the visible pixels of that garment using integer coordinates normalized to a 1000 by 1000 image: x and y are the top-left corner, followed by width and height. Do not box the whole person or the whole outfit. Do not include another garment merely because it is directly above, below, or behind the intended item. For a jacket or blazer, start at the shoulders and stop at the jacket hem; exclude the trousers below it. For trousers, start at the waistband and stop at the trouser hems; exclude the shirt or jacket above them. For a small accessory, include the complete identifiable product rather than only one component: for example, a watch box must contain the complete visible face, case, crown, and strap—not merely the wrist or strap. Leave only about 2-4% visual breathing room around the intended garment. Boxes may overlap where garments physically overlap, but an upper-body box must not substantially contain the trousers or shoes box, and a trousers box must not contain the shoes box. Before responding, compare every pair of boxes and tighten any box that contains most of an item belonging to another category. Use only these category ids: upperbody for tops; wholebody_up for outerwear such as jackets, coats, and blazers; lowerbody for trousers, shorts, and skirts; wholebody for dresses, jumpsuits, rompers, and overalls; shoes for footwear; accessories_up for accessories. Suggest a concise specific name, primary hex color, optional genuinely distinct secondary hex color, 1-4 useful lowercase detail tags, likely materials only when visually supported, visible fit descriptors, and suitable seasons. Prioritize objectively visible construction in the detail tags: whether it is sleeveless or the visible sleeve length, collar or exact common neckline, front closure, straps, waist construction, and mini, midi, or maxi hem length where applicable. When clearly visible, name the neckline consistently as V-neck, crew or jewel neck, scoop neck, square neck, boat or Sabrina neck, sweetheart, halter, high neck, off-shoulder, one-shoulder, strapless straight-across, spaghetti-strap, or keyhole. If a one-shoulder garment has a separate diagonal strap enclosing an open area over the upper chest, tag both one-shoulder and asymmetric chest cutout; the visible skin or background inside that opening is empty space in the garment, not a fabric panel. Never describe a sleeveless garment as sleeved, or a sleeved garment as sleeveless. A secondary color must be a deliberately different visible exterior color with meaningful coverage, such as a contrasting panel, pattern, sole, or strap. Return secondaryColor as null when the apparent difference is only a shadow, highlight, fold, texture variation, darker interior, jacket lining, lapel facing, or another shade of the same material. Do not infer a secondary color from stitching, tiny hardware, skin, another garment, or the background. Leave size labels empty because they cannot be reliably inferred from a photograph.";
 export function analysisPrompt(language) {
   const languageInstruction = language === "pt-PT"
     ? "Write the garment name, tags, fit descriptors, and material names in European Portuguese. Keep category ids and season ids exactly as required by the schema."
@@ -1659,7 +1659,7 @@ const GARMENT_NECKLINES = [
     id: "one-shoulder",
     group: "support",
     label: "one-shoulder/asymmetric neckline",
-    pattern: /\b(one[- ]shoulder|single[- ]shoulder|asymmetric neckline|asymmetrical neckline|decote assimetrico|um ombro)\b/,
+    pattern: /\b(one[- ]shoulder|single[- ]shoulder|asymmetric neckline|asymmetrical neckline|diagonal[- ](?:shoulder[- ]?)?strap|decote assimetrico|um ombro)\b/,
     prompt: "Neckline: preserve the asymmetric one-shoulder construction, with support on one shoulder and the other shoulder exposed; do not make both sides symmetrical.",
   },
   {
@@ -1682,6 +1682,14 @@ const GARMENT_NECKLINES = [
     label: "spaghetti-strap neckline",
     pattern: /\b(spaghetti straps?|spaghetti[- ]strap neckline|thin shoulder straps?|alcas? finas?)\b/,
     prompt: "Neckline: preserve the two very thin spaghetti shoulder straps and the exact front edge between them; do not widen, remove, or convert the straps into sleeves or a halter.",
+  },
+  {
+    id: "asymmetric-chest-cutout",
+    group: "detail",
+    label: "asymmetric chest cutout",
+    topologyCritical: true,
+    pattern: /\b(asymmetric(?:al)? (?:upper[- ]?)?chest cutout|diagonal[- ]strap cutout|upper[- ]chest cutout|open chest cutout|chest opening|cutout over (?:the )?(?:chest|bust)|negative space (?:above|over) (?:the )?(?:chest|bust)|area (?:above|over) (?:the )?(?:chest|bust) (?:is )?(?:open|uncovered|exposed)|recorte (?:assimetrico )?(?:no|sobre o) peito|abertura (?:assimetrica )?(?:no|sobre o) peito|decote com recorte)\b/,
+    prompt: "Cutout topology: preserve the separate diagonal strap and the large open negative-space cutout between that strap and the main upper-chest or bust panel. This opening is a real hole in the garment: after removing the wearer, every pixel inside it must be transparent alpha 0 so the background can be seen through it. Preserve the opening's exact boundary and strap route. Do not fill, bridge, shrink, close, or cover it with fabric, and do not reinterpret it as a seam, printed shape, appliqué, lining, color panel, second strap, or conventional solid neckline.",
   },
   {
     id: "keyhole",
@@ -1810,6 +1818,19 @@ function garmentHasStructuralRequirements(metadata = {}, userDirection = "") {
   return Boolean(traits.sleeves || traits.length || traits.necklines.length || traits.collared || traits.belted || traits.buttonFront);
 }
 
+export function garmentNeedsContextReference(metadata = {}, userDirection = "", diagnostics = {}) {
+  const topologySensitiveNecklines = new Set([
+    "one-shoulder",
+    "halter",
+    "keyhole",
+    "asymmetric-chest-cutout",
+  ]);
+  const traits = garmentStructuralTraits(metadata, userDirection);
+  return metadata.part === "accessories_up"
+    || Boolean(diagnostics.lowDetail)
+    || traits.necklines.some((neckline) => topologySensitiveNecklines.has(neckline));
+}
+
 function detectedSleeveTrait(text = "") {
   if (/\b(sleeveless|no sleeves?|without sleeves?|sem mangas?)\b/.test(text)) return "sleeveless";
   if (/\b(long[- ]?sleeved?|long sleeves?|mangas? compridas?|mangas? longas?)\b/.test(text)) return "long";
@@ -1844,7 +1865,11 @@ export function garmentSemanticMismatch(metadata = {}, detectedItems = [], userD
   const detectedNecklines = garmentNecklines(detected);
   for (const requestedId of structuralTraits.necklines) {
     const requestedNeckline = GARMENT_NECKLINES.find((candidate) => candidate.id === requestedId);
-    if (!requestedNeckline || requestedNeckline.group === "detail") continue;
+    if (!requestedNeckline) continue;
+    if (requestedNeckline.topologyCritical && !detectedNecklines.some((candidate) => candidate.id === requestedId)) {
+      return `filled or removed the explicitly requested ${requestedNeckline.label}`;
+    }
+    if (requestedNeckline.group === "detail") continue;
     const detectedGroup = detectedNecklines.filter((candidate) => candidate.group === requestedNeckline.group);
     if (detectedGroup.length && !detectedGroup.some((candidate) => candidate.id === requestedId)) {
       return `generated a ${detectedGroup[0].label} instead of the explicitly requested ${requestedNeckline.label}`;
@@ -1974,7 +1999,7 @@ ${userCorrection}
 
 ${separateItemDirection}
 
-Primary request: Reconstruct ONLY the complete standalone ${name} as a clean, front-facing ecommerce catalog product photograph. If it is worn or held, remove the wearer completely. Remove every other garment, object, and background element. Show the complete product naturally arranged and symmetrical, with no person, body, mannequin, hand, wrist, hanger, or prop visible.
+Primary request: Reconstruct ONLY the complete standalone ${name} as a clean, front-facing ecommerce catalog product photograph. If it is worn or held, remove the wearer completely. Remove every other garment, object, and background element. Show the complete product in its original natural arrangement, preserving every intentional asymmetry, diagonal edge, strap route, opening, and cutout shown by the references, with no person, body, mannequin, hand, wrist, hanger, or prop visible.
 
 Product fidelity: Preserve the exact primary color ${primary}${secondary}, material and texture, ${direction.preserve}, pattern, and distinctive details (${details}). Preserve any clearly legible existing graphic or logo exactly, but do not invent or reinterpret uncertain logos, text, pockets, seams, hardware, colors, or decoration.
 
@@ -5338,12 +5363,13 @@ export function wardrobeImportApi(options = {}) {
         if (stageName === "garment") {
           const originalSource = await readFile(path.join(dir, current.internal.originalFile));
           const diagnostics = current.cropDiagnostics || await cropDetailDiagnostics(originalSource, original.data);
+          const userDirection = current.stages.garment.prompt || "";
           const garmentReference = {
             data: await prepareGarmentReference(original.data),
             mime: "image/png",
             name: "magnified-target.png",
           };
-          const needsContextReference = current.metadata.part === "accessories_up" || diagnostics.lowDetail;
+          const needsContextReference = garmentNeedsContextReference(current.metadata, userDirection, diagnostics);
           const generationImages = [garmentReference];
           if (needsContextReference) {
             const contextCrop = await cropDetectedItem(originalSource, current.metadata.boundingBox, {
@@ -5357,7 +5383,6 @@ export function wardrobeImportApi(options = {}) {
             });
           }
           chromaKeyUsed = chooseChromaKey(current.metadata.color);
-          const userDirection = current.stages.garment.prompt || "";
           const otherDetectedItems = current.internal?.otherDetectedItems || [];
           const basePrompt = options.garmentPrompt || buildGarmentPrompt(current.metadata, chromaKeyUsed, {
             hasContextReference: generationImages.length > 1,
