@@ -18,6 +18,7 @@ import { formatDate, getLocale, LANGUAGE_OPTIONS, setLocale, tr, useLocale } fro
 import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
 import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
+import { OriginalPhotoGallery } from "./OriginalPhotoGallery.jsx";
 import { OutfitStudio } from "./OutfitStudio.jsx";
 import { TutorialWalkthrough } from "./TutorialWalkthrough.jsx";
 import {
@@ -79,6 +80,7 @@ import {
   wardrobeItemMatches,
 } from "./wardrobe-discovery.js";
 import { withWardrobeUser } from "./user-scope.js";
+import { collectOriginalPhotoLibrary } from "./original-photo-library.js";
 
 const STORAGE_KEY = "open-wardrobe-edits-v1";
 const DELETED_STORAGE_KEY = "open-wardrobe-deleted-v1";
@@ -4939,6 +4941,8 @@ export function App() {
   const [plannerBusy, setPlannerBusy] = useState(false);
   const [plannerError, setPlannerError] = useState("");
   const [outfitStudioOpen, setOutfitStudioOpen] = useState(false);
+  const [originalPhotosOpen, setOriginalPhotosOpen] = useState(false);
+  const [selectedOriginalPhotoId, setSelectedOriginalPhotoId] = useState(null);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [tutorialStep, setTutorialStep] = useState("profile");
   const [sortMode, setSortMode] = useState("custom");
@@ -4976,6 +4980,8 @@ export function App() {
       setSelectedId(null);
       setPlannerOpen(false);
       setOutfitStudioOpen(false);
+      setOriginalPhotosOpen(false);
+      setSelectedOriginalPhotoId(null);
       setConnectionsOpen(false);
       setConnectionsData(EMPTY_CONNECTION_DATA);
       setConnectionsBusy("");
@@ -5146,6 +5152,7 @@ export function App() {
   const mergeCandidateItem = items.find((item) => item.id === mergeCandidateId) || null;
   const wardrobeDisplay = normalizeWardrobeDisplayPreferences(currentUser?.wardrobeDisplay);
   const gridDensity = wardrobeDisplay.density;
+  const originalPhotoLibrary = useMemo(() => collectOriginalPhotoLibrary(items), [items]);
 
   useEffect(() => {
     const legacyColorGrouping = currentUser?.wardrobeSortMode === "color";
@@ -5171,6 +5178,8 @@ export function App() {
     setSavedViewDeleteBusy(false);
     setPlannerOpen(false);
     setOutfitStudioOpen(false);
+    setOriginalPhotosOpen(false);
+    setSelectedOriginalPhotoId(null);
     setPlannerError("");
     setMergeSourceId(null);
     setMergeCandidateId(null);
@@ -5184,13 +5193,13 @@ export function App() {
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!plannerOpen && !outfitStudioOpen && !connectionsOpen && !savedViewDialogOpen && !savedViewDeleteCandidate && !mergeCandidateItem && !openRouterKeyDialogOpen) return undefined;
+    if (!plannerOpen && !outfitStudioOpen && !originalPhotosOpen && !connectionsOpen && !savedViewDialogOpen && !savedViewDeleteCandidate && !mergeCandidateItem && !openRouterKeyDialogOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [connectionsOpen, mergeCandidateItem, openRouterKeyDialogOpen, outfitStudioOpen, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
+  }, [connectionsOpen, mergeCandidateItem, openRouterKeyDialogOpen, originalPhotosOpen, outfitStudioOpen, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
 
   const customOrderedItems = useMemo(() => {
     const sourcePositions = new Map(items.map((item, index) => [item.id, index]));
@@ -5539,6 +5548,11 @@ export function App() {
     setMergeCandidateId(null);
     setMergeKeepId(null);
     setMergeError("");
+  }, []);
+
+  const closeOriginalPhotos = useCallback(() => {
+    setOriginalPhotosOpen(false);
+    setSelectedOriginalPhotoId(null);
   }, []);
 
   const saveItem = async (updatedItem) => {
@@ -6028,6 +6042,8 @@ export function App() {
       setItems([]);
       setPlannerOpen(false);
       setOutfitStudioOpen(false);
+      setOriginalPhotosOpen(false);
+      setSelectedOriginalPhotoId(null);
       setOpenRouterKeyDialogOpen(false);
       setOpenRouterKeyBusy(false);
       setOpenRouterKeyError("");
@@ -6072,6 +6088,18 @@ export function App() {
             <button type="button" onClick={openOutfitStudio}>
               <Sparkle size={16} weight="regular" aria-hidden="true" />
               {tr("Outfit Studio")}
+            </button>
+            <button
+              type="button"
+              disabled={Boolean(mergeSourceItem)}
+              onClick={() => {
+                setSelectedOriginalPhotoId(null);
+                setOriginalPhotosOpen(true);
+              }}
+            >
+              <ImageSquare size={16} weight="regular" aria-hidden="true" />
+              {tr("Original photos")}
+              <span className="toolbar-count">{originalPhotoLibrary.length}</span>
             </button>
             <div className="wardrobe-arrangement-control sort-control">
               <span><ArrowsDownUp size={14} weight="regular" aria-hidden="true" />{tr("Sort")}</span>
@@ -6233,6 +6261,18 @@ export function App() {
         )}
       </main>
 
+      {originalPhotosOpen && (
+        <OriginalPhotoGallery
+          photos={originalPhotoLibrary}
+          selectedId={selectedOriginalPhotoId}
+          onSelect={setSelectedOriginalPhotoId}
+          onClose={closeOriginalPhotos}
+          onOpenGarment={(id) => {
+            closeOriginalPhotos();
+            openItem(id);
+          }}
+        />
+      )}
       {selectedItem && (
         <ItemViewer
           item={selectedItem}
