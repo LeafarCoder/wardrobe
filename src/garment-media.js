@@ -5,6 +5,23 @@ export function garmentMediaId(kind, id) {
   return `${kind === GARMENT_MEDIA_GENERATED ? "modeled" : "source"}:${id}`;
 }
 
+export function garmentMediaPreviewSource(media) {
+  return media?.preview || media?.image || null;
+}
+
+export function garmentMediaPreloadSources(media = [], activeIndex = 0, radius = 1) {
+  if (!Array.isArray(media) || !media.length) return [];
+  const center = Number.isInteger(activeIndex) && activeIndex >= 0 && activeIndex < media.length
+    ? activeIndex
+    : 0;
+  const distance = Math.max(0, Math.min(media.length - 1, Math.round(Number(radius) || 0)));
+  const offsets = [0];
+  for (let step = 1; step <= distance; step += 1) offsets.push(step, -step);
+  return [...new Set(offsets.map((offset) => (
+    garmentMediaPreviewSource(media[(center + offset + media.length) % media.length])
+  )).filter(Boolean))];
+}
+
 function uniqueMedia(entries) {
   const seen = new Set();
   return entries.filter((entry) => {

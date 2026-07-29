@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  garmentMediaPreloadSources,
+  garmentMediaPreviewSource,
   isCompleteGarmentMediaOrder,
   moveGarmentMedia,
   normalizeGarmentMediaOrder,
@@ -67,4 +69,21 @@ test("moves a dragged thumbnail before its drop target", () => {
     moveGarmentMedia(["one", "two", "three", "four"], "four", "two"),
     ["one", "four", "two", "three"],
   );
+});
+
+test("uses optimized previews for enlarged media and preloads a circular browsing window", () => {
+  const media = orderedGarmentMedia(record);
+  assert.equal(garmentMediaPreviewSource({ image: "/full.png", preview: "/preview.webp" }), "/preview.webp");
+  assert.equal(garmentMediaPreviewSource({ image: "/legacy-full.png" }), "/legacy-full.png");
+  assert.deepEqual(garmentMediaPreloadSources(media, 0, 2), [
+    "/look-2.jpg",
+    "/look-1.jpg",
+    "/original-2.jpg",
+    "/original-1.jpg",
+  ]);
+  assert.deepEqual(garmentMediaPreloadSources(media, 3, 1), [
+    "/original-2.jpg",
+    "/look-2.jpg",
+    "/original-1.jpg",
+  ]);
 });

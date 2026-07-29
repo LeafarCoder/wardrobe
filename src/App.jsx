@@ -86,6 +86,8 @@ import { collectOriginalPhotoLibrary } from "./original-photo-library.js";
 import {
   GARMENT_MEDIA_GENERATED,
   garmentMediaId,
+  garmentMediaPreloadSources,
+  garmentMediaPreviewSource,
   moveGarmentMedia,
   orderedGarmentMedia,
 } from "./garment-media.js";
@@ -1896,12 +1898,10 @@ function ItemViewer({
   }, [activeSourcePhoto?.id, measureSourcePhoto, sourcePhotoOpen]);
 
   useEffect(() => {
-    if (garmentMedia.length < 2) return;
-    const previous = (activeMediaIndex - 1 + garmentMedia.length) % garmentMedia.length;
-    const next = (activeMediaIndex + 1) % garmentMedia.length;
-    preloadImage(garmentMedia[previous].preview || garmentMedia[previous].image);
-    preloadImage(garmentMedia[next].preview || garmentMedia[next].image);
-  }, [activeMediaIndex, garmentMedia]);
+    if (!garmentMedia.length) return;
+    const radius = mediaPreviewOpen === "media" ? 2 : 1;
+    garmentMediaPreloadSources(garmentMedia, activeMediaIndex, radius).forEach(preloadImage);
+  }, [activeMediaIndex, garmentMedia, mediaPreviewOpen]);
 
   const cancelEditing = () => {
     setDraft(editableItem(item));
@@ -2828,7 +2828,7 @@ function ItemViewer({
                 <OptimizedImage
                   key={activeMedia.id}
                   className="media-preview-dialog__image"
-                  src={activeMedia.image || activeMedia.preview}
+                  src={garmentMediaPreviewSource(activeMedia)}
                   alt={tr("{name} photo {current} of {total}", { name: draft.name || type, current: activeMediaIndex + 1, total: garmentMedia.length })}
                   sizes="(max-width: 700px) 100vw, 960px"
                   breakpoints={[480, 640, 800, 1040, 1280, 1600]}
