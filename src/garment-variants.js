@@ -4,6 +4,7 @@ export const GARMENT_VARIANT_THRESHOLD_MIN = 40;
 export const GARMENT_VARIANT_THRESHOLD_MAX = 160;
 export const GARMENT_VARIANT_THRESHOLD_DEFAULT = 100;
 export const GARMENT_VERSION_FAN_PARTS = new Set(["upperbody", "wholebody"]);
+export const GARMENT_VERSION_FAN_MAX = 4;
 
 export function normalizeVariantThreshold(value) {
   if (value == null || value === "") return GARMENT_VARIANT_THRESHOLD_DEFAULT;
@@ -47,23 +48,18 @@ export function supportsGarmentVersionFan(part, versionCount, hasHeroImage = tru
   return hasHeroImage
     && GARMENT_VERSION_FAN_PARTS.has(part)
     && Number.isInteger(versionCount)
-    && versionCount > 1;
+    && versionCount > 1
+    && versionCount <= GARMENT_VERSION_FAN_MAX;
 }
 
-export function garmentVersionFanSlot(index, selectedIndex, versionCount) {
+export function garmentVersionFanSlot(index, versionCount) {
   if (
     !Number.isInteger(index)
-    || !Number.isInteger(selectedIndex)
     || !Number.isInteger(versionCount)
     || versionCount < 1
     || index < 0
-    || selectedIndex < 0
     || index >= versionCount
-    || selectedIndex >= versionCount
-    || index === selectedIndex
   ) return 0;
 
-  const forwardDistance = (index - selectedIndex + versionCount) % versionCount;
-  const rank = Math.ceil(forwardDistance / 2);
-  return forwardDistance % 2 === 1 ? rank : -rank;
+  return index - ((versionCount - 1) / 2);
 }

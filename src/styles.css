@@ -4155,6 +4155,7 @@ button { font: inherit; }
 }
 
 .garment-version-fan,
+.garment-version-fan__targets,
 .garment-version-fan__fallback {
   position: absolute;
   inset: 0;
@@ -4169,7 +4170,7 @@ button { font: inherit; }
   display: none;
 }
 
-.garment-version-fan__item {
+.garment-version-fan__visual {
   position: absolute;
   inset: 0;
   z-index: var(--fan-layer);
@@ -4180,7 +4181,6 @@ button { font: inherit; }
   background: transparent;
   opacity: 0;
   pointer-events: none;
-  cursor: pointer;
   transform: translateX(0) translateY(0) rotate(0) scale(1);
   transform-origin: 50% 88%;
   transition:
@@ -4189,16 +4189,14 @@ button { font: inherit; }
     filter 180ms ease;
 }
 
-.garment-version-fan__item[aria-pressed="true"] {
+.garment-version-fan__visual.is-selected {
   z-index: 90;
   opacity: 1;
-  pointer-events: auto;
 }
 
-.viewer-art.has-version-fan:hover .garment-version-fan__item,
-.viewer-art.has-version-fan:focus-within .garment-version-fan__item {
+.viewer-art.has-version-fan:hover .garment-version-fan__visual,
+.viewer-art.has-version-fan:focus-within .garment-version-fan__visual {
   opacity: 1;
-  pointer-events: auto;
   transition-delay: 0ms;
   transform:
     translateX(var(--fan-x))
@@ -4207,10 +4205,9 @@ button { font: inherit; }
     scale(1);
 }
 
-.viewer-art.has-version-fan:hover .garment-version-fan__item:hover,
-.viewer-art.has-version-fan:focus-within .garment-version-fan__item:focus-visible {
+.viewer-art.has-version-fan:hover .garment-version-fan__visual.is-hovered,
+.viewer-art.has-version-fan:focus-within .garment-version-fan__visual.is-hovered {
   z-index: 100;
-  outline: none;
   filter: drop-shadow(0 7px 7px rgba(39, 31, 23, .16));
   transform:
     translateX(var(--fan-x))
@@ -4219,8 +4216,53 @@ button { font: inherit; }
     scale(1.055);
 }
 
-.garment-version-fan__item canvas {
+.garment-version-fan__visual canvas {
   pointer-events: none;
+}
+
+.garment-version-fan__targets {
+  z-index: 110;
+  display: grid;
+  grid-template-columns: repeat(var(--fan-count), minmax(0, 1fr));
+  pointer-events: none;
+}
+
+.garment-version-fan__targets button {
+  position: relative;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: none;
+}
+
+.viewer-art.has-version-fan:hover .garment-version-fan__targets,
+.viewer-art.has-version-fan:focus-within .garment-version-fan__targets {
+  pointer-events: auto;
+}
+
+.viewer-art.has-version-fan:hover .garment-version-fan__targets button,
+.viewer-art.has-version-fan:focus-within .garment-version-fan__targets button {
+  pointer-events: auto;
+}
+
+.garment-version-fan__targets button:focus-visible {
+  outline: none;
+}
+
+.garment-version-fan__targets button:focus-visible::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 9px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid rgba(255, 253, 248, .94);
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 0 0 1px rgba(25, 24, 22, .55);
+  transform: translateX(-50%);
 }
 
 .viewer-art-floating .sample-hint {
@@ -4689,6 +4731,10 @@ button { font: inherit; }
 
 @media (hover: none), (pointer: coarse) {
   .garment-version-fan {
+    display: none;
+  }
+
+  .garment-version-fan__targets {
     display: none;
   }
 
@@ -7139,6 +7185,9 @@ button { font: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   .garment-version-fan {
+    display: none;
+  }
+  .garment-version-fan__targets {
     display: none;
   }
   .garment-version-fan__fallback {

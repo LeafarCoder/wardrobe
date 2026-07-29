@@ -47,14 +47,14 @@ test("offers the color-version fan only for tops and one-pieces with media", () 
   assert.equal(supportsGarmentVersionFan("wholebody", 2, true), true);
   assert.equal(supportsGarmentVersionFan("wholebody_up", 3, true), false);
   assert.equal(supportsGarmentVersionFan("upperbody", 1, true), false);
+  assert.equal(supportsGarmentVersionFan("upperbody", 4, true), true);
+  assert.equal(supportsGarmentVersionFan("upperbody", 5, true), false);
   assert.equal(supportsGarmentVersionFan("upperbody", 3, false), false);
 });
 
-test("fans versions alternately around the selected version", () => {
-  assert.deepEqual(
-    Array.from({ length: 5 }, (_, index) => garmentVersionFanSlot(index, 2, 5)),
-    [2, -2, 0, 1, -1],
-  );
-  assert.equal(garmentVersionFanSlot(0, 0, 3), 0);
-  assert.equal(garmentVersionFanSlot(-1, 0, 3), 0);
+test("fans two to four versions symmetrically around the vertical center", () => {
+  assert.deepEqual(Array.from({ length: 2 }, (_, index) => garmentVersionFanSlot(index, 2)), [-0.5, 0.5]);
+  assert.deepEqual(Array.from({ length: 3 }, (_, index) => garmentVersionFanSlot(index, 3)), [-1, 0, 1]);
+  assert.deepEqual(Array.from({ length: 4 }, (_, index) => garmentVersionFanSlot(index, 4)), [-1.5, -0.5, 0.5, 1.5]);
+  assert.equal(garmentVersionFanSlot(-1, 3), 0);
 });

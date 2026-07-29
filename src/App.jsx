@@ -1556,6 +1556,7 @@ function ItemViewer({
   const [careGuideOpen, setCareGuideOpen] = useState(false);
   const [variantStudioOpen, setVariantStudioOpen] = useState(false);
   const [modeledVariantPickerOpen, setModeledVariantPickerOpen] = useState(false);
+  const [hoveredColorVersionIndex, setHoveredColorVersionIndex] = useState(null);
   const [sourcePhotoIndex, setSourcePhotoIndex] = useState(0);
   const [generatingModeledFor, setGeneratingModeledFor] = useState(null);
   const [deletingModeled, setDeletingModeled] = useState(false);
@@ -1854,6 +1855,7 @@ function ItemViewer({
     setDeletingGarment(false);
     setVariantStudioOpen(false);
     setModeledVariantPickerOpen(false);
+    setHoveredColorVersionIndex(null);
     setCloseBlocked(false);
     setNameEditing(false);
     setViewerToast(null);
@@ -2371,27 +2373,20 @@ function ItemViewer({
     >
       {hasVersionFan ? (
         <>
-          <div className="garment-version-fan">
+          <div className="garment-version-fan" aria-hidden="true">
             {colorVersions.map((version, index) => {
-              const slot = garmentVersionFanSlot(index, activeColorVersionIndex, colorVersions.length);
-              const fanStep = Math.min(12, 36 / Math.max(1, Math.ceil((colorVersions.length - 1) / 2)));
+              const slot = garmentVersionFanSlot(index, colorVersions.length);
+              const fanStep = colorVersions.length === 2 ? 24 : colorVersions.length === 3 ? 13 : 10;
+              const horizontalStep = colorVersions.length === 2 ? 20 : 10;
               return (
-                <button
+                <div
                   key={version.id || "original"}
-                  className="garment-version-fan__item"
-                  type="button"
-                  aria-label={`${tr("Garment color versions")}: ${tr("{current} of {total}", { current: index + 1, total: colorVersions.length })}`}
-                  aria-pressed={index === activeColorVersionIndex}
+                  className={`garment-version-fan__visual${index === activeColorVersionIndex ? " is-selected" : ""}${index === hoveredColorVersionIndex ? " is-hovered" : ""}`}
                   style={{
                     "--fan-angle": `${slot * fanStep}deg`,
-                    "--fan-x": `${slot * 8}px`,
+                    "--fan-x": `${slot * horizontalStep}px`,
                     "--fan-rank": Math.abs(slot),
                     "--fan-layer": 80 - Math.abs(slot),
-                  }}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setColorVersionIndex(index);
                   }}
                 >
                   <GarmentColorPreview
@@ -2408,9 +2403,31 @@ function ItemViewer({
                       channel: "primary",
                     }}
                   />
-                </button>
+                </div>
               );
             })}
+          </div>
+          <div
+            className="garment-version-fan__targets"
+            style={{ "--fan-count": colorVersions.length }}
+            onMouseLeave={() => setHoveredColorVersionIndex(null)}
+          >
+            {colorVersions.map((version, index) => (
+              <button
+                key={version.id || "original"}
+                type="button"
+                aria-label={`${tr("Garment color versions")}: ${tr("{current} of {total}", { current: index + 1, total: colorVersions.length })}`}
+                aria-pressed={index === activeColorVersionIndex}
+                onMouseEnter={() => setHoveredColorVersionIndex(index)}
+                onFocus={() => setHoveredColorVersionIndex(index)}
+                onBlur={() => setHoveredColorVersionIndex(null)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setColorVersionIndex(index);
+                }}
+              />
+            ))}
           </div>
           <div className="garment-version-fan__fallback">
             {activeGarmentPreview}
