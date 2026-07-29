@@ -237,6 +237,31 @@ test("lets an explicit neckline correction replace saved neckline metadata", () 
   ), null);
 });
 
+test("uses category clarification choices as prompt and semantic-validation facts", () => {
+  const metadata = {
+    name: "black evening top",
+    part: "upperbody",
+    color: "#111111",
+    garmentClarifications: {
+      neckline: "square",
+      sleeves: "sleeveless",
+      closure: "zipper",
+    },
+  };
+  const prompt = buildGarmentPrompt(metadata, "#00ffff");
+
+  assert.match(prompt, /HUMAN-SELECTED PRODUCT DETAILS — AUTHORITATIVE/);
+  assert.match(prompt, /Neckline: a square neckline with a straight lower edge/);
+  assert.match(prompt, /Sleeves: no sleeves at all/);
+  assert.match(prompt, /Closure: a visible front zipper/);
+  assert.match(prompt, /square opening with a straight horizontal lower edge/i);
+  assert.match(prompt, /SLEEVELESS means no sleeves at all/);
+  assert.equal(garmentSemanticMismatch(
+    metadata,
+    [{ name: "Long-sleeve V-neck top", part: "upperbody", tags: ["long sleeves", "V-neck"] }],
+  ), "generated long sleeves instead of the explicitly requested sleeveless construction");
+});
+
 test("asks analysis to prioritize visible garment construction", () => {
   const prompt = analysisPrompt("en-US");
 

@@ -10,6 +10,7 @@ import {
 } from "../src/i18n.js";
 import { AI_TASKS, AI_OPERATION_LABELS } from "../src/ai-preferences.js";
 import { CARE_TRANSLATION_KEYS } from "../src/garment-care.js";
+import { GARMENT_CLARIFICATION_TRANSLATION_KEYS } from "../src/garment-clarifications.js";
 import { OUTFIT_TRANSLATION_KEYS } from "../src/outfit-studio.js";
 import {
   FIT_OPTIONS,
@@ -68,6 +69,7 @@ test("every translated metadata option has a Portuguese label", () => {
     ...GARMENT_FIT_SUGGESTIONS,
     ...Object.values(AI_OPERATION_LABELS),
     ...CARE_TRANSLATION_KEYS,
+    ...GARMENT_CLARIFICATION_TRANSLATION_KEYS,
     ...OUTFIT_TRANSLATION_KEYS,
     ...AI_TASKS.flatMap((task) => [
       task.label,

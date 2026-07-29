@@ -57,6 +57,17 @@ import {
   isCompleteGarmentMediaOrder,
   normalizeGarmentMediaOrder,
 } from "../src/garment-media.js";
+import {
+  garmentClarificationPrompt,
+  garmentClarificationTags,
+  normalizeGarmentClarifications,
+} from "../src/garment-clarifications.js";
+import {
+  appendImportGenerationCandidate,
+  importGenerationCandidates,
+  selectImportGenerationCandidate,
+  selectedImportGenerationCandidate,
+} from "../src/import-candidates.js";
 
 const API_ROOT = "/api/import/jobs";
 const ASSET_ROOT = "/api/import/assets";
@@ -1337,7 +1348,13 @@ function publicJob(job) {
   const copy = structuredClone(job);
   delete copy.internal;
   copy.originalAssetUrl = withUser(copy.originalAssetUrl, copy.userId);
-  for (const stage of Object.values(copy.stages || {})) {
+  for (const [stageName, stage] of Object.entries(copy.stages || {})) {
+    if (stageName === "garment") {
+      stage.candidates = importGenerationCandidates(stage).map((candidate) => ({
+        ...candidate,
+        assetUrl: withUser(candidate.assetUrl, copy.userId),
+      }));
+    }
     stage.assetUrl = withUser(stage.assetUrl, copy.userId);
     stage.failedAssetUrl = withUser(stage.failedAssetUrl, copy.userId);
     stage.cleanupPreviewUrl = withUser(stage.cleanupPreviewUrl, copy.userId);
@@ -1404,12 +1421,13 @@ function decodeImage(input) {
 
 function normalizeMetadata(value = {}) {
   const metadata = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const part = PARTS.has(metadata.part) ? metadata.part : "upperbody";
   const color = typeof metadata.color === "string" && HEX_COLOR.test(metadata.color) ? metadata.color.toLowerCase() : "#d8d0c2";
   const secondaryColor = typeof metadata.secondaryColor === "string" && HEX_COLOR.test(metadata.secondaryColor) ? metadata.secondaryColor.toLowerCase() : null;
   const seasons = normalizeGarmentSeasons(metadata.seasons);
   return {
     name: typeof metadata.name === "string" ? metadata.name.trim().slice(0, 120) || "New piece" : "New piece",
-    part: PARTS.has(metadata.part) ? metadata.part : "upperbody",
+    part,
     color,
     secondaryColor,
     brand: normalizeBrand(metadata.brand),
@@ -1423,6 +1441,7 @@ function normalizeMetadata(value = {}) {
     materials: normalizeGarmentFacetList(metadata.materials, 8),
     seasons,
     careInstructions: normalizeCareInstructions(metadata.careInstructions),
+    garmentClarifications: normalizeGarmentClarifications(part, metadata.garmentClarifications),
     boundingBox: normalizeBoundingBox(metadata.boundingBox),
   };
 }
@@ -1690,6 +1709,7 @@ function garmentSemanticText(metadata = {}, userDirection = "") {
     metadata.name,
     ...(Array.isArray(metadata.tags) ? metadata.tags : []),
     ...(Array.isArray(metadata.materials) ? metadata.materials : []),
+    ...garmentClarificationTags(metadata.part, metadata.garmentClarifications),
     userDirection,
   ].filter(Boolean).join(" ").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase();
 }
@@ -1991,6 +2011,7 @@ export function buildGarmentPrompt(metadata = {}, chromaKey = "#00ff00", {
   const details = Array.isArray(metadata.tags) && metadata.tags.length
     ? metadata.tags.join(", ")
     : "all visible construction and design details";
+  const clarificationDirection = garmentClarificationPrompt(category, metadata.garmentClarifications);
   const categoryDirections = {
     upperbody: {
       label: "upper-body garment or top",
@@ -2071,6 +2092,8 @@ Target identity — highest priority: The requested item is "${name}", classifie
 ${subtypeDirection}
 
 ${structuralDirection}
+
+${clarificationDirection}
 
 ${userCorrection}
 
@@ -2639,7 +2662,23 @@ async function atomicFile(file, value) {
 }
 
 function stageState() {
-  return { status: "pending", decision: null, attempts: 0, assetUrl: null, failedAssetUrl: null, cleanupPreviewUrl: null, cleanupTolerance: 46, cleanupDiagnostics: null, error: null, prompt: null, model: null, fallbackUsed: false, updatedAt: null };
+  return {
+    status: "pending",
+    decision: null,
+    attempts: 0,
+    assetUrl: null,
+    candidates: [],
+    selectedCandidateId: null,
+    failedAssetUrl: null,
+    cleanupPreviewUrl: null,
+    cleanupTolerance: 46,
+    cleanupDiagnostics: null,
+    error: null,
+    prompt: null,
+    model: null,
+    fallbackUsed: false,
+    updatedAt: null,
+  };
 }
 
 function parseWardrobeItems(outputText, provider) {
@@ -4794,6 +4833,7 @@ export function wardrobeImportApi(options = {}) {
       materials: Array.isArray(metadata.materials) ? metadata.materials : [],
       seasons: Array.isArray(metadata.seasons) ? metadata.seasons : [],
       careInstructions: normalizeCareInstructions(metadata.careInstructions),
+      garmentClarifications: normalizeGarmentClarifications(metadata.part, metadata.garmentClarifications),
       boundingBox: metadata.boundingBox || existing?.boundingBox || null,
       originalFocusBox: job.originalFocusBox || existing?.originalFocusBox || metadata.boundingBox || null,
       originalFocusSource: job.originalFocusBox ? "ai-import" : existing?.originalFocusSource || null,
@@ -5039,6 +5079,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           secondaryColor: candidate.metadata.secondaryColor,
           palette: [candidate.metadata.color, candidate.metadata.secondaryColor].filter(Boolean),
           tags: candidate.metadata.tags,
+          garmentClarifications: candidate.metadata.garmentClarifications,
           image: candidate.image,
           imagePreview: candidate.preview || candidate.image,
           thumbnail: candidate.thumbnail || candidate.preview || candidate.image,
@@ -5872,22 +5913,50 @@ Interpret this correction semantically in whatever language it is written. It ov
           console.warn(`[wardrobe] Import ${current.id} was removed while its ${stageName} image was generating; discarding the result.`);
           return;
         }
+        const generatedAt = new Date().toISOString();
+        const generatedAssetUrl = `${ASSET_ROOT}/${fresh.id}/${path.basename(output)}`;
+        if (stageName === "garment") {
+          fresh.stages[stageName] = appendImportGenerationCandidate(fresh.stages[stageName], {
+            id: `garment-${stage.attempts}`,
+            assetUrl: generatedAssetUrl,
+            model: usedModel,
+            fallbackUsed,
+            attempt: stage.attempts,
+            generatedAt,
+          });
+        } else {
+          fresh.stages[stageName].assetUrl = generatedAssetUrl;
+          fresh.stages[stageName].model = usedModel;
+          fresh.stages[stageName].fallbackUsed = fallbackUsed;
+        }
         fresh.stages[stageName].status = "review";
-        fresh.stages[stageName].assetUrl = `${ASSET_ROOT}/${fresh.id}/${path.basename(output)}`;
+        fresh.stages[stageName].decision = null;
+        fresh.stages[stageName].error = null;
         fresh.stages[stageName].failedAssetUrl = null;
         fresh.stages[stageName].cleanupPreviewUrl = null;
         fresh.stages[stageName].cleanupDiagnostics = null;
-        fresh.stages[stageName].model = usedModel;
-        fresh.stages[stageName].fallbackUsed = fallbackUsed;
         if (stageName === "garment" && current.cropDiagnostics) fresh.cropDiagnostics = current.cropDiagnostics;
         if (chromaKeyUsed) fresh.stages[stageName].chromaKey = chromaKeyUsed;
-        fresh.stages[stageName].updatedAt = new Date().toISOString();
+        fresh.stages[stageName].updatedAt = generatedAt;
         await saveJob(fresh);
       } catch (error) {
         console.error(`[wardrobe] ${stageName} generation failed for job ${current.id}: ${error.message}`);
         const fresh = await loadJob(current.id);
         if (!fresh) return;
-        fresh.stages[stageName].status = "failed"; fresh.stages[stageName].error = error.message; fresh.stages[stageName].updatedAt = new Date().toISOString();
+        const previousCandidate = stageName === "garment"
+          ? selectedImportGenerationCandidate(fresh.stages[stageName])
+          : null;
+        fresh.stages[stageName].status = previousCandidate ? "review" : "failed";
+        fresh.stages[stageName].error = error.message;
+        fresh.stages[stageName].updatedAt = new Date().toISOString();
+        if (previousCandidate) {
+          fresh.stages[stageName] = selectImportGenerationCandidate(
+            fresh.stages[stageName],
+            previousCandidate.id,
+          );
+          fresh.stages[stageName].status = "review";
+          fresh.stages[stageName].error = error.message;
+        }
         if (typeof failedAssetUrl === "string") fresh.stages[stageName].failedAssetUrl = failedAssetUrl;
         if (chromaKeyUsed) fresh.stages[stageName].chromaKey = chromaKeyUsed;
         await saveJob(fresh);
@@ -7189,6 +7258,7 @@ Interpret this correction semantically in whatever language it is written. It ov
             materials: metadata.materials,
             seasons: metadata.seasons,
             careInstructions: metadata.careInstructions,
+            garmentClarifications: metadata.garmentClarifications,
             updatedAt: new Date().toISOString(),
           };
           await saveImported(records);
@@ -7466,6 +7536,25 @@ Interpret this correction semantically in whatever language it is written. It ov
         if (cropAlreadyApproved) void generate(job, "garment");
         return json(res, 202, publicJob(job));
       }
+      const garmentCandidateAction = action.match(/^stages\/garment\/candidates\/([a-z0-9-]{1,80})\/select$/i);
+      if (garmentCandidateAction && req.method === "POST") {
+        if (job.stages.garment?.status !== "review") {
+          throw apiError("Garment versions can be selected only while the generated garment is under review.", 409, "garment_candidate_not_reviewable");
+        }
+        const selectedStage = selectImportGenerationCandidate(job.stages.garment, garmentCandidateAction[1]);
+        if (!selectedStage) {
+          throw apiError("That generated garment version is no longer available.", 404, "garment_candidate_not_found");
+        }
+        job.stages.garment = {
+          ...selectedStage,
+          status: "review",
+          decision: null,
+          error: null,
+          updatedAt: new Date().toISOString(),
+        };
+        await saveJob(job);
+        return json(res, 200, publicJob(job));
+      }
       const cleanupAction = action.match(/^stages\/garment\/(cleanup-preview|cleanup-accept)$/);
       if (cleanupAction && req.method === "POST") {
         const stage = job.stages.garment;
@@ -7504,10 +7593,17 @@ Interpret this correction semantically in whatever language it is written. It ov
               "garment_background_not_transparent",
             );
           }
-          stage.status = "review";
-          stage.decision = null;
-          stage.error = null;
-          stage.assetUrl = previewUrl;
+          job.stages.garment = appendImportGenerationCandidate(stage, {
+            id: `garment-${stage.attempts}-cleanup-${tolerance}`,
+            assetUrl: previewUrl,
+            model: stage.model,
+            fallbackUsed: stage.fallbackUsed,
+            attempt: stage.attempts,
+            generatedAt: new Date().toISOString(),
+          });
+          job.stages.garment.status = "review";
+          job.stages.garment.decision = null;
+          job.stages.garment.error = null;
         }
         await saveJob(job);
         return json(res, 200, publicJob(job));

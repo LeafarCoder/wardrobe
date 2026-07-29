@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowCounterClockwise, ArrowsLeftRight, Camera, Check, Clipboard, CoatHanger, Crop, Dress, FolderOpen, Handbag, ImageSquare, Pants, Plus, Sneaker, SpinnerGap, Trash, TShirt, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
 import { formatNumber, getLocale, tr } from "./i18n.js";
+import {
+  garmentClarificationDetails,
+  garmentClarificationGroups,
+  normalizeGarmentClarifications,
+} from "./garment-clarifications.js";
+import {
+  importGenerationCandidates,
+  selectedImportGenerationCandidate,
+} from "./import-candidates.js";
 import { LightSelect } from "./LightSelect.jsx";
 import { garmentReviewImages } from "./import-review.js";
 import { notifyOpenRouterKeyRequired } from "./openrouter-key.js";
@@ -391,7 +400,7 @@ function CameraCapture({ onBack, onCapture, onError }) {
 function deriveStatus(job) {
   const crop = job.stages?.crop;
   const garment = job.stages?.garment;
-  if (job.error || crop?.status === "failed" || garment?.status === "failed") return { tone: "error", text: tr("Import needs attention"), detail: readableError(crop?.error || garment?.error || job.error) };
+  if (job.error || crop?.error || garment?.error || crop?.status === "failed" || garment?.status === "failed") return { tone: "error", text: tr("Import needs attention"), detail: readableError(crop?.error || garment?.error || job.error) };
   if (job.duplicateReview?.status === "review") return { tone: "duplicate", text: tr("Possible duplicate"), detail: tr("Compare before creating a new garment.") };
   if (garment?.status === "review") return { tone: "ready", text: tr("Ready for review") };
   if (garment?.status === "approved") return { tone: "complete", text: tr("Added to wardrobe") };
@@ -417,12 +426,14 @@ function hasDuplicateReview(job) {
 
 function defaultDraft(job) {
   const metadata = job.metadata || {};
+  const part = metadata.part || "upperbody";
   return {
     name: metadata.name || tr("New garment"),
-    part: metadata.part || "upperbody",
+    part,
     color: metadata.color || "#d8d0c2",
     secondaryColor: metadata.secondaryColor || "",
     tags: Array.isArray(metadata.tags) ? metadata.tags.join(", ") : (metadata.tags || ""),
+    garmentClarifications: normalizeGarmentClarifications(part, metadata.garmentClarifications),
   };
 }
 
@@ -725,11 +736,80 @@ function ManualCropEditor({ job, busy, onSave }) {
   );
 }
 
-function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt, busy, onAction, onCropSave }) {
+function GarmentClarificationEditor({ part, value, onChange }) {
+  const normalized = normalizeGarmentClarifications(part, value);
+  const groups = garmentClarificationGroups(part, normalized);
+  const selected = garmentClarificationDetails(part, normalized);
+  const update = (currentGroup, optionId) => {
+    const currentValue = normalized[currentGroup.id];
+    const nextValue = currentGroup.multiple
+      ? Array.isArray(currentValue) && currentValue.includes(optionId)
+        ? currentValue.filter((candidate) => candidate !== optionId)
+        : [...(Array.isArray(currentValue) ? currentValue : []), optionId].slice(0, currentGroup.maxSelections)
+      : currentValue === optionId ? undefined : optionId;
+    onChange(normalizeGarmentClarifications(part, {
+      ...normalized,
+      [currentGroup.id]: nextValue,
+    }));
+  };
+
+  return (
+    <details className="import-clarifications">
+      <summary>
+        <span>
+          <strong>{tr("Clarify details for AI")}</strong>
+          <small>{tr("Add only details the photo hides or the AI keeps getting wrong.")}</small>
+        </span>
+        {selected.length > 0 && <em>{tr(selected.length === 1 ? "{count} selected" : "{count} selected", { count: selected.length })}</em>}
+      </summary>
+      <div className="import-clarifications__body">
+        <p>{tr("These choices become high-priority construction facts on the next regeneration. Leave anything uncertain blank.")}</p>
+        {groups.map((currentGroup) => (
+          <fieldset key={currentGroup.id}>
+            <legend>{tr(currentGroup.label)}</legend>
+            <div>
+              {currentGroup.options.map((choice) => {
+                const currentValue = normalized[currentGroup.id];
+                const isSelected = currentGroup.multiple
+                  ? Array.isArray(currentValue) && currentValue.includes(choice.id)
+                  : currentValue === choice.id;
+                const selectionLimitReached = currentGroup.multiple
+                  && Array.isArray(currentValue)
+                  && currentValue.length >= currentGroup.maxSelections;
+                return (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    className={isSelected ? "is-selected" : ""}
+                    aria-pressed={isSelected}
+                    disabled={!isSelected && selectionLimitReached}
+                    onClick={() => update(currentGroup, choice.id)}
+                  >
+                    {isSelected && <Check size={11} weight="bold" aria-hidden="true" />}
+                    {tr(choice.label)}
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+        ))}
+        {selected.length > 0 && (
+          <button className="import-clarifications__clear" type="button" onClick={() => onChange({})}>
+            {tr("Clear clarification choices")}
+          </button>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt, busy, onAction, onCropSave, onSelectCandidate }) {
   const asset = job.stages[stage]?.assetUrl;
   const isCrop = stage === "crop";
   const isGarment = stage === "garment";
   const comparison = isGarment ? garmentReviewImages(job) : null;
+  const garmentCandidates = isGarment ? importGenerationCandidates(job.stages.garment) : [];
+  const selectedGarmentCandidate = isGarment ? selectedImportGenerationCandidate(job.stages.garment) : null;
   const primaryValid = HEX_COLOR.test(draft.color);
   const secondaryValid = !draft.secondaryColor || HEX_COLOR.test(draft.secondaryColor);
   return (
@@ -755,6 +835,39 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
             </ProductStage>
             <figcaption><strong>{tr("Generated garment")}</strong><span>{tr("AI reconstruction")}</span></figcaption>
           </figure>
+          {garmentCandidates.length > 1 && (
+            <div className="import-candidate-history">
+              <header>
+                <div>
+                  <strong>{tr("Generated versions")}</strong>
+                  <span>{tr("Choose any earlier result before adding the garment.")}</span>
+                </div>
+                <small>{tr("{current} of {total}", {
+                  current: Math.max(1, garmentCandidates.findIndex((candidate) => candidate.id === selectedGarmentCandidate?.id) + 1),
+                  total: garmentCandidates.length,
+                })}</small>
+              </header>
+              <div role="list" aria-label={tr("Generated garment versions")}>
+                {garmentCandidates.map((candidate, index) => {
+                  const isSelected = candidate.id === selectedGarmentCandidate?.id;
+                  return (
+                    <button
+                      key={candidate.id}
+                      type="button"
+                      className={isSelected ? "is-selected" : ""}
+                      aria-pressed={isSelected}
+                      disabled={busy}
+                      onClick={() => onSelectCandidate(candidate.id)}
+                    >
+                      <img src={candidate.assetUrl} alt={tr("Generated garment version {number}", { number: index + 1 })} />
+                      <span>{tr("Version {number}", { number: index + 1 })}</span>
+                      {isSelected && <Check size={12} weight="bold" aria-hidden="true" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       ) : (
           <ProductStage className="import-editor__preview-stage" interactive animated>
@@ -771,7 +884,11 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
               <label>{tr("Category")}</label>
               <LightSelect
                 value={draft.part}
-                onChange={(part) => setDraft({ ...draft, part })}
+                onChange={(part) => setDraft({
+                  ...draft,
+                  part,
+                  garmentClarifications: normalizeGarmentClarifications(part, draft.garmentClarifications),
+                })}
                 options={PARTS.map(([id, label, CategoryIcon]) => ({
                   value: id,
                   label: tr(label),
@@ -783,6 +900,17 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
             <div className="import-field"><label htmlFor={`primary-${job.id}`}>{tr("Primary color")}</label><div className="import-color-row"><input id={`primary-${job.id}`} type="color" value={primaryValid ? draft.color : "#000000"} onChange={(event) => setDraft({ ...draft, color: event.target.value })} /><input aria-label={tr("Primary color hex")} aria-invalid={!primaryValid} value={draft.color} onChange={(event) => setDraft({ ...draft, color: event.target.value })} /></div>{!primaryValid && <small className="import-field-error">{tr("Use a six-digit hex color, such as #d8d0c2.")}</small>}</div>
             <div className="import-field"><label htmlFor={`secondary-${job.id}`}>{tr("Secondary color")} <span>{tr("optional")}</span></label><input id={`secondary-${job.id}`} type="text" aria-invalid={!secondaryValid} placeholder={tr("#hex or leave blank")} value={draft.secondaryColor} onChange={(event) => setDraft({ ...draft, secondaryColor: event.target.value })} />{!secondaryValid && <small className="import-field-error">{tr("Use a six-digit hex color or leave this empty.")}</small>}</div>
             <div className="import-field"><label htmlFor={`tags-${job.id}`}>{tr("Details")}</label><input id={`tags-${job.id}`} value={draft.tags} placeholder={tr("casual, cotton, striped")} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} /></div>
+            <GarmentClarificationEditor
+              part={draft.part}
+              value={draft.garmentClarifications}
+              onChange={(garmentClarifications) => setDraft({ ...draft, garmentClarifications })}
+            />
+            {job.stages.garment?.error && garmentCandidates.length > 0 && (
+              <p className="import-card__detail import-editor__generation-warning">
+                <WarningCircle size={15} weight="fill" aria-hidden="true" />
+                <span>{tr("The latest regeneration failed, but your earlier generated versions are still available.")}</span>
+              </p>
+            )}
             <p className="import-card__detail">{tr("Adding this garment finishes the import. A modeled look is generated only if you request one later from the item panel.")}</p>
           </>
         ) : <p className="import-card__detail">{tr("Approve this editorial image to attach it to the new wardrobe garment, or regenerate it with a more specific direction.")}</p>}
@@ -893,7 +1021,9 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
   const refresh = useCallback(async (id) => {
     try {
       const next = await api(`${API}/${id}`, undefined, userId);
-      const failedStage = ["crop", "garment"].find((stage) => next.stages?.[stage]?.status === "failed");
+      const failedStage = ["crop", "garment"].find((stage) => (
+        next.stages?.[stage]?.status === "failed" || Boolean(next.stages?.[stage]?.error)
+      ));
       const failureDetail = next.error || (failedStage ? next.stages[failedStage]?.error : null);
       if (failureDetail) {
         const signature = `${next.id}:${failedStage || "job"}:${next.stages?.[failedStage]?.updatedAt || next.updatedAt}:${failureDetail}`;
@@ -1142,6 +1272,22 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
     finally { setBusyId(null); }
   };
 
+  const selectGarmentCandidate = async (job, candidateId) => {
+    setBusyId(job.id);
+    try {
+      const updated = await api(
+        `${API}/${job.id}/stages/garment/candidates/${encodeURIComponent(candidateId)}/select`,
+        { method: "POST" },
+        userId,
+      );
+      setJobs((current) => current.map((item) => item.id === job.id ? updated : item));
+    } catch (requestError) {
+      showError(requestError, "Could not select garment version");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const performDuplicate = async (job, action) => {
     setBusyId(job.id);
     try {
@@ -1335,7 +1481,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
           ) : sourcePickerOpen || !jobs.length ? <ImportSourcePicker disabled={!setup?.ready} notice={notice} onChooseFiles={() => inputRef.current?.click()} onDropFiles={submitFiles} onReadClipboard={readClipboard} onTakePhoto={() => setCameraOpen(true)} /> : (
             <>
               <div className={`import-progress${activeStatus?.tone !== "processing" ? " is-reviewing" : progress < 100 ? " is-indeterminate" : ""}`}><div className="import-progress__meta"><span>{activeStatus?.text}</span><span>{tr(jobs.length === 1 ? "{count} item" : "{count} items", { count: jobs.length })}</span></div>{activeStatus?.tone === "processing" && <div className="import-progress__track"><div className="import-progress__bar" style={{ "--import-progress": `${progress}%` }} /></div>}</div>
-              {reviewJob && reviewStage ? <ReviewEditor job={reviewJob} stage={reviewStage} draft={drafts[reviewJob.id] || defaultDraft(reviewJob)} setDraft={(draft) => setDrafts((current) => ({ ...current, [reviewJob.id]: draft }))} regenPrompt={regenerationPrompts[`${reviewJob.id}:${reviewStage}`] || ""} setRegenPrompt={(prompt) => setRegenerationPrompts((current) => ({ ...current, [`${reviewJob.id}:${reviewStage}`]: prompt }))} busy={busyId === reviewJob.id} onAction={(action, prompt) => perform(reviewJob, reviewStage, action, prompt)} onCropSave={(boundingBox) => saveCrop(reviewJob, boundingBox)} /> : reviewJob && hasCleanupFailure(reviewJob) ? <CleanupEditor job={reviewJob} tolerance={cleanupTolerances[reviewJob.id] ?? reviewJob.stages.garment.cleanupTolerance ?? 46} setTolerance={(tolerance) => setCleanupTolerances((current) => ({ ...current, [reviewJob.id]: tolerance }))} busy={busyId === reviewJob.id} onPreview={(tolerance) => performCleanup(reviewJob, "preview", tolerance)} onAccept={() => performCleanup(reviewJob, "accept")} /> : null}
+              {reviewJob && reviewStage ? <ReviewEditor job={reviewJob} stage={reviewStage} draft={drafts[reviewJob.id] || defaultDraft(reviewJob)} setDraft={(draft) => setDrafts((current) => ({ ...current, [reviewJob.id]: draft }))} regenPrompt={regenerationPrompts[`${reviewJob.id}:${reviewStage}`] || ""} setRegenPrompt={(prompt) => setRegenerationPrompts((current) => ({ ...current, [`${reviewJob.id}:${reviewStage}`]: prompt }))} busy={busyId === reviewJob.id} onAction={(action, prompt) => perform(reviewJob, reviewStage, action, prompt)} onCropSave={(boundingBox) => saveCrop(reviewJob, boundingBox)} onSelectCandidate={(candidateId) => selectGarmentCandidate(reviewJob, candidateId)} /> : reviewJob && hasCleanupFailure(reviewJob) ? <CleanupEditor job={reviewJob} tolerance={cleanupTolerances[reviewJob.id] ?? reviewJob.stages.garment.cleanupTolerance ?? 46} setTolerance={(tolerance) => setCleanupTolerances((current) => ({ ...current, [reviewJob.id]: tolerance }))} busy={busyId === reviewJob.id} onPreview={(tolerance) => performCleanup(reviewJob, "preview", tolerance)} onAccept={() => performCleanup(reviewJob, "accept")} /> : null}
               <ImportQueueBoard
                 jobs={jobs}
                 drafts={drafts}
