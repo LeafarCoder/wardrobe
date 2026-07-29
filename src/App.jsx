@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, Eye, EyeSlash, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, Link, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, Eye, EyeSlash, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, Link, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { BrandIcon } from "./BrandIcon.jsx";
 import { CareIcon } from "./CareIcon.jsx";
@@ -186,6 +186,25 @@ function itemSourcePhotos(item) {
     boundingBox: item.boundingBox || null,
     focusBox: item.originalFocusBox || null,
   }] : [];
+}
+
+function garmentRegenerationDraft(item) {
+  const candidate = item.garmentRegenerationCandidate;
+  const metadata = candidate?.metadata || item;
+  const sourcePhotos = itemSourcePhotos(item);
+  const availableIds = new Set(sourcePhotos.map((photo) => photo.id));
+  const candidateIds = Array.isArray(candidate?.sourcePhotoIds)
+    ? candidate.sourcePhotoIds.filter((id) => availableIds.has(id)).slice(0, 3)
+    : [];
+  return {
+    name: metadata.name || item.name || "",
+    part: metadata.part || item.part || "upperbody",
+    color: metadata.color || item.color || "#9a9286",
+    secondaryColor: metadata.secondaryColor || "",
+    characteristics: Array.isArray(metadata.tags) ? metadata.tags.join(", ") : "",
+    direction: "",
+    sourcePhotoIds: candidateIds.length ? candidateIds : sourcePhotos.slice(0, 3).map((photo) => photo.id),
+  };
 }
 
 function itemColorVersions(item) {
@@ -1504,6 +1523,9 @@ function ItemViewer({
   onSave,
   onDelete,
   onGenerateModeled,
+  onRegenerateGarment,
+  onAcceptGarmentRegeneration,
+  onDiscardGarmentRegeneration,
   onCreateVariant,
   onDeleteModeled,
   onDirtyChange,
@@ -1538,6 +1560,10 @@ function ItemViewer({
   const [closeBlocked, setCloseBlocked] = useState(false);
   const [sourcePhotoOpen, setSourcePhotoOpen] = useState(false);
   const [mediaPreviewOpen, setMediaPreviewOpen] = useState(null);
+  const [garmentRegenerationOpen, setGarmentRegenerationOpen] = useState(false);
+  const [garmentRegenerationBusy, setGarmentRegenerationBusy] = useState(false);
+  const [garmentRegenerationError, setGarmentRegenerationError] = useState("");
+  const [garmentRegenerationForm, setGarmentRegenerationForm] = useState(() => garmentRegenerationDraft(item));
   const [sourceCropVisible, setSourceCropVisible] = useState(false);
   const [sourceImageFrame, setSourceImageFrame] = useState(null);
   const [colorEditorOpen, setColorEditorOpen] = useState(false);
@@ -1568,6 +1594,16 @@ function ItemViewer({
   const activeSourceCrop = activeSourcePhoto?.boundingBox || item.boundingBox || null;
   const hasOriginalImage = Boolean(activeSourcePhoto);
   const hasHeroImage = hasModeledImage || hasOriginalImage;
+  const garmentRegenerationCandidate = item.garmentRegenerationCandidate || null;
+  const regenerationPrimaryValid = Boolean(normalizeHexColor(garmentRegenerationForm.color));
+  const regenerationSecondaryValid = !garmentRegenerationForm.secondaryColor
+    || Boolean(normalizeHexColor(garmentRegenerationForm.secondaryColor));
+  const canRegenerateGarment = Boolean(
+    garmentRegenerationForm.name.trim()
+    && regenerationPrimaryValid
+    && regenerationSecondaryValid
+    && garmentRegenerationForm.sourcePhotoIds.length,
+  );
   const pieceRotation = useMemo(() => {
     const hash = [...item.id].reduce((total, character) => total + character.charCodeAt(0), 0);
     return `${(hash % 9) - 4}deg`;
@@ -1690,6 +1726,8 @@ function ItemViewer({
             setDeleteCandidate(null);
             requestAnimationFrame(() => deleteLookButtonRef.current?.focus({ preventScroll: true }));
           }
+        } else if (garmentRegenerationOpen) {
+          setGarmentRegenerationOpen(false);
         } else if (mediaPreviewOpen) {
           setMediaPreviewOpen(null);
           requestAnimationFrame(() => (
@@ -1710,7 +1748,7 @@ function ItemViewer({
       document.removeEventListener("keydown", onKeyDown);
       clearTimeout(shakeTimerRef.current);
     };
-  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, mediaPreviewOpen, modeledVariantPickerOpen, requestClose, sampling, sourcePhotoOpen, variantStudioOpen]);
+  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, garmentRegenerationOpen, mediaPreviewOpen, modeledVariantPickerOpen, requestClose, sampling, sourcePhotoOpen, variantStudioOpen]);
 
   useEffect(() => {
     if (deleteCandidate) deleteCancelButtonRef.current?.focus({ preventScroll: true });
@@ -1786,7 +1824,11 @@ function ItemViewer({
     setCloseBlocked(false);
     setNameEditing(false);
     setViewerToast(null);
-  }, [item]);
+    setGarmentRegenerationOpen(false);
+    setGarmentRegenerationBusy(false);
+    setGarmentRegenerationError("");
+    setGarmentRegenerationForm(garmentRegenerationDraft(item));
+  }, [item.id]);
 
   useLayoutEffect(() => {
     setColorVersionIndex(0);
@@ -1880,7 +1922,8 @@ function ItemViewer({
     setGeneratingModeledFor(targetItemId);
     setViewerToast(null);
     try {
-      await onGenerateModeled(targetItemId, variantId);
+      const updated = await onGenerateModeled(targetItemId, variantId);
+      setModeledIndex(Math.max(0, itemModeledLooks(updated).length - 1));
       setModeledVariantPickerOpen(false);
     } catch (requestError) {
       if (activeItemIdRef.current === targetItemId) {
@@ -2037,6 +2080,11 @@ function ItemViewer({
   const openMediaPreview = (kind) => {
     if (kind === "modeled" && !activeModeledLook) return;
     setMediaPreviewOpen(kind);
+    if (kind === "garment") {
+      setGarmentRegenerationOpen(Boolean(item.garmentRegenerationCandidate));
+      setGarmentRegenerationError("");
+      if (item.garmentRegenerationCandidate) setGarmentRegenerationForm(garmentRegenerationDraft(item));
+    }
   };
 
   const closeMediaPreview = () => {
@@ -2044,7 +2092,104 @@ function ItemViewer({
       ? modeledPhotoButtonRef.current
       : garmentArtworkButtonRef.current;
     setMediaPreviewOpen(null);
+    setGarmentRegenerationOpen(false);
+    setGarmentRegenerationError("");
     requestAnimationFrame(() => trigger?.focus({ preventScroll: true }));
+  };
+
+  const openGarmentRegeneration = () => {
+    if (isDirty) {
+      setViewerToast({
+        title: tr("Save this garment first"),
+        message: tr("Save your changes before regenerating the garment image."),
+      });
+      nudgeUnsaved(false);
+      return;
+    }
+    setGarmentRegenerationForm(garmentRegenerationDraft(item));
+    setGarmentRegenerationError("");
+    setGarmentRegenerationOpen(true);
+  };
+
+  const toggleRegenerationSource = (sourceId) => {
+    if (garmentRegenerationBusy) return;
+    setGarmentRegenerationForm((current) => {
+      const selected = current.sourcePhotoIds.includes(sourceId);
+      if (selected) {
+        if (current.sourcePhotoIds.length === 1) return current;
+        return { ...current, sourcePhotoIds: current.sourcePhotoIds.filter((id) => id !== sourceId) };
+      }
+      if (current.sourcePhotoIds.length >= 3) return current;
+      return { ...current, sourcePhotoIds: [...current.sourcePhotoIds, sourceId] };
+    });
+  };
+
+  const regenerateGarment = async () => {
+    const primaryColor = normalizeHexColor(garmentRegenerationForm.color);
+    const secondaryColor = garmentRegenerationForm.secondaryColor
+      ? normalizeHexColor(garmentRegenerationForm.secondaryColor)
+      : null;
+    if (
+      garmentRegenerationBusy
+      || !garmentRegenerationForm.name.trim()
+      || !primaryColor
+      || (garmentRegenerationForm.secondaryColor && !secondaryColor)
+      || !garmentRegenerationForm.sourcePhotoIds.length
+    ) return;
+    setGarmentRegenerationBusy(true);
+    setGarmentRegenerationError("");
+    try {
+      await onRegenerateGarment(item.id, {
+        metadata: {
+          name: garmentRegenerationForm.name.trim(),
+          part: garmentRegenerationForm.part,
+          color: primaryColor,
+          secondaryColor,
+          tags: garmentRegenerationForm.characteristics
+            .split(/[,\n]/)
+            .map((value) => value.trim())
+            .filter(Boolean),
+        },
+        sourcePhotoIds: garmentRegenerationForm.sourcePhotoIds,
+        direction: garmentRegenerationForm.direction.trim(),
+      });
+    } catch (requestError) {
+      setGarmentRegenerationError(readableError(requestError));
+    } finally {
+      setGarmentRegenerationBusy(false);
+    }
+  };
+
+  const acceptGarmentRegeneration = async () => {
+    if (garmentRegenerationBusy || !item.garmentRegenerationCandidate) return;
+    setGarmentRegenerationBusy(true);
+    setGarmentRegenerationError("");
+    try {
+      const updated = await onAcceptGarmentRegeneration(item.id);
+      setDraft(editableItem(updated));
+      setPalette(updated.palette || []);
+      setColorVersionIndex(0);
+      setGarmentRegenerationOpen(false);
+    } catch (requestError) {
+      setGarmentRegenerationError(readableError(requestError));
+    } finally {
+      setGarmentRegenerationBusy(false);
+    }
+  };
+
+  const discardGarmentRegeneration = async () => {
+    if (garmentRegenerationBusy || !item.garmentRegenerationCandidate) return;
+    setGarmentRegenerationBusy(true);
+    setGarmentRegenerationError("");
+    try {
+      await onDiscardGarmentRegeneration(item.id);
+      setGarmentRegenerationForm(garmentRegenerationDraft({ ...item, garmentRegenerationCandidate: null }));
+      setGarmentRegenerationOpen(false);
+    } catch (requestError) {
+      setGarmentRegenerationError(readableError(requestError));
+    } finally {
+      setGarmentRegenerationBusy(false);
+    }
   };
 
   const keepMediaPreviewFocus = (event) => {
@@ -2456,7 +2601,177 @@ function ItemViewer({
               <X size={23} weight="light" aria-hidden="true" />
             </button>
           </header>
-          <div className={`media-preview-dialog__body${mediaPreviewOpen === "modeled" && modeledLooks.length > 1 ? " has-carousel" : ""}`}>
+          {mediaPreviewOpen === "garment" && garmentRegenerationOpen ? (
+            <div className="media-preview-dialog__body garment-regeneration">
+              <div className="garment-regeneration__scroll">
+                <div className={`garment-regeneration__comparison${garmentRegenerationCandidate ? " has-candidate" : ""}`} aria-label={tr("Current and regenerated garment comparison")}>
+                  <figure>
+                    <ProductStage className="garment-regeneration__stage" staticStage>
+                      <OptimizedImage
+                        src={item.imagePreview || item.image}
+                        alt={tr("Current garment image for {name}", { name: item.name || type })}
+                        sizes="(max-width: 700px) 90vw, 420px"
+                        priority
+                        reveal
+                      />
+                    </ProductStage>
+                    <figcaption><strong>{tr("Current garment")}</strong><span>{tr("Stays unchanged until you approve a replacement")}</span></figcaption>
+                  </figure>
+                  <figure>
+                    <ProductStage className="garment-regeneration__stage" staticStage>
+                      {garmentRegenerationCandidate ? (
+                        <OptimizedImage
+                          key={garmentRegenerationCandidate.id}
+                          src={garmentRegenerationCandidate.preview || garmentRegenerationCandidate.image}
+                          alt={tr("Regenerated candidate for {name}", { name: garmentRegenerationForm.name || type })}
+                          sizes="(max-width: 700px) 90vw, 420px"
+                          priority
+                          reveal
+                        />
+                      ) : garmentRegenerationBusy ? (
+                        <div className="garment-regeneration__pending" role="status">
+                          <SpinnerGap className="modeled-request__spinner" size={28} aria-hidden="true" />
+                          <span>{tr("Creating replacement…")}</span>
+                        </div>
+                      ) : (
+                        <div className="garment-regeneration__pending">
+                          <Sparkle size={28} weight="light" aria-hidden="true" />
+                          <span>{tr("Your regenerated candidate will appear here")}</span>
+                        </div>
+                      )}
+                    </ProductStage>
+                    <figcaption><strong>{tr("New candidate")}</strong><span>{tr(garmentRegenerationCandidate ? "Review before choosing which garment to keep" : "Generated only after you confirm the settings below")}</span></figcaption>
+                  </figure>
+                </div>
+
+                <section className="garment-regeneration__editor" aria-labelledby="garment-regeneration-settings">
+                  <div className="garment-regeneration__intro">
+                    <div><p>{tr("Regeneration settings")}</p><h3 id="garment-regeneration-settings">{tr("Describe the garment as it should be reconstructed")}</h3></div>
+                    <small>{tr("These edits guide the model and become the garment details only if you use the new candidate.")}</small>
+                  </div>
+                  <div className="garment-regeneration__fields">
+                    <label className="garment-regeneration__field">
+                      <span>{tr("Description")}</span>
+                      <input
+                        value={garmentRegenerationForm.name}
+                        maxLength="120"
+                        disabled={garmentRegenerationBusy}
+                        onChange={(event) => setGarmentRegenerationForm((current) => ({ ...current, name: event.target.value }))}
+                      />
+                    </label>
+                    <label className="garment-regeneration__field">
+                      <span>{tr("Category")}</span>
+                      <LightSelect
+                        value={garmentRegenerationForm.part}
+                        onChange={(part) => setGarmentRegenerationForm((current) => ({ ...current, part }))}
+                        options={TYPES.slice(1).map((category) => {
+                          const CategoryIcon = category.icon;
+                          return { value: category.id, label: tr(category.label), icon: <CategoryIcon size={17} /> };
+                        })}
+                        ariaLabel={tr("Garment category for regeneration")}
+                        disabled={garmentRegenerationBusy}
+                      />
+                    </label>
+                    <label className="garment-regeneration__field">
+                      <span>{tr("Primary color")}</span>
+                      <div className="garment-regeneration__color">
+                        <input
+                          type="color"
+                          value={regenerationPrimaryValid ? normalizeHexColor(garmentRegenerationForm.color) : "#000000"}
+                          disabled={garmentRegenerationBusy}
+                          onChange={(event) => setGarmentRegenerationForm((current) => ({ ...current, color: event.target.value }))}
+                        />
+                        <input
+                          value={garmentRegenerationForm.color}
+                          aria-invalid={!regenerationPrimaryValid}
+                          disabled={garmentRegenerationBusy}
+                          onChange={(event) => setGarmentRegenerationForm((current) => ({ ...current, color: event.target.value }))}
+                        />
+                      </div>
+                    </label>
+                    <label className="garment-regeneration__field">
+                      <span>{tr("Secondary color")} <small>{tr("optional")}</small></span>
+                      <input
+                        value={garmentRegenerationForm.secondaryColor}
+                        placeholder={tr("#hex or leave blank")}
+                        aria-invalid={!regenerationSecondaryValid}
+                        disabled={garmentRegenerationBusy}
+                        onChange={(event) => setGarmentRegenerationForm((current) => ({ ...current, secondaryColor: event.target.value }))}
+                      />
+                    </label>
+                    <label className="garment-regeneration__field is-wide">
+                      <span>{tr("Characteristics")}</span>
+                      <textarea
+                        rows="2"
+                        value={garmentRegenerationForm.characteristics}
+                        placeholder={tr("Example: linen, peak lapels, double-breasted, horn buttons")}
+                        disabled={garmentRegenerationBusy}
+                        onChange={(event) => setGarmentRegenerationForm((current) => ({ ...current, characteristics: event.target.value }))}
+                      />
+                    </label>
+                    <label className="garment-regeneration__field is-wide">
+                      <span>{tr("Regeneration direction")} <small>{tr("optional")}</small></span>
+                      <textarea
+                        rows="3"
+                        value={garmentRegenerationForm.direction}
+                        placeholder={tr("Example: preserve the original zipper and remove the retail tag")}
+                        disabled={garmentRegenerationBusy}
+                        onChange={(event) => setGarmentRegenerationForm((current) => ({ ...current, direction: event.target.value }))}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="garment-regeneration__sources">
+                    <div><strong>{tr("Original photo references")}</strong><span>{tr("Choose one to three photos. The model receives only the garment crop from each selected original.")}</span></div>
+                    <div className="garment-regeneration__source-grid">
+                      {sourcePhotos.map((photo, index) => {
+                        const selected = garmentRegenerationForm.sourcePhotoIds.includes(photo.id);
+                        const atLimit = !selected && garmentRegenerationForm.sourcePhotoIds.length >= 3;
+                        return (
+                          <button
+                            type="button"
+                            className={selected ? "is-selected" : ""}
+                            aria-pressed={selected}
+                            aria-label={tr(selected ? "Remove original photo {number}" : "Use original photo {number}", { number: index + 1 })}
+                            disabled={garmentRegenerationBusy || atLimit}
+                            onClick={() => toggleRegenerationSource(photo.id)}
+                            key={photo.id}
+                          >
+                            <OptimizedImage src={photo.preview || photo.image} alt="" sizes="110px" />
+                            <span>{selected ? <Check size={14} weight="bold" /> : index + 1}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {!regenerationPrimaryValid && <p className="garment-regeneration__error" role="alert">{tr("Use a six-digit hex color, such as #d8d0c2.")}</p>}
+                  {!regenerationSecondaryValid && <p className="garment-regeneration__error" role="alert">{tr("Use a six-digit hex color or leave this empty.")}</p>}
+                  {garmentRegenerationError && <p className="garment-regeneration__error" role="alert">{garmentRegenerationError}</p>}
+                  <div className="garment-regeneration__actions">
+                    {garmentRegenerationCandidate ? (
+                      <>
+                        <button type="button" className="secondary-button" disabled={garmentRegenerationBusy} onClick={discardGarmentRegeneration}>{tr("Keep current garment")}</button>
+                        <button type="button" className="secondary-button" disabled={garmentRegenerationBusy || !canRegenerateGarment} onClick={regenerateGarment}>
+                          {garmentRegenerationBusy ? <SpinnerGap className="modeled-request__spinner" size={15} /> : <ArrowCounterClockwise size={15} />}
+                          {tr("Regenerate again")}
+                        </button>
+                        <button type="button" className="primary-button" disabled={garmentRegenerationBusy} onClick={acceptGarmentRegeneration}><Check size={15} weight="bold" /> {tr("Use new garment")}</button>
+                      </>
+                    ) : (
+                      <>
+                        <button type="button" className="secondary-button" disabled={garmentRegenerationBusy} onClick={() => setGarmentRegenerationOpen(false)}>{tr("Cancel")}</button>
+                        <button type="button" className="primary-button" disabled={garmentRegenerationBusy || !canRegenerateGarment} onClick={regenerateGarment}>
+                          {garmentRegenerationBusy ? <SpinnerGap className="modeled-request__spinner" size={15} /> : <Sparkle size={15} weight="fill" />}
+                          {tr(garmentRegenerationBusy ? "Creating replacement…" : "Generate candidate")}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </div>
+          ) : (
+          <div className={`media-preview-dialog__body${mediaPreviewOpen === "modeled" && modeledLooks.length > 1 ? " has-carousel" : ""}${mediaPreviewOpen === "garment" && item.id.startsWith("import-") && sourcePhotos.length > 0 ? " has-actions" : ""}`}>
             <ProductStage className="media-preview-dialog__viewport" interactive animated>
               {mediaPreviewOpen === "modeled" ? (
                 <OptimizedImage
@@ -2535,7 +2850,16 @@ function ItemViewer({
                 ))}
               </aside>
             )}
+            {mediaPreviewOpen === "garment" && item.id.startsWith("import-") && sourcePhotos.length > 0 && (
+              <footer className="media-preview-dialog__actions">
+                <button type="button" className="primary-button" onClick={openGarmentRegeneration}>
+                  <ArrowCounterClockwise size={16} aria-hidden="true" />
+                  {tr(garmentRegenerationCandidate ? "Review regenerated candidate" : "Regenerate from original photos")}
+                </button>
+              </footer>
+            )}
           </div>
+          )}
         </section>
       </div>
     )}
@@ -5883,6 +6207,32 @@ export function App() {
     return generated;
   };
 
+  const regenerateGarment = async (id, input) => {
+    const updated = await profileApi(`/api/import/wardrobe/${id}/regeneration?user=${encodeURIComponent(currentUserId)}`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    return updated;
+  };
+
+  const acceptGarmentRegeneration = async (id) => {
+    const updated = await profileApi(`/api/import/wardrobe/${id}/regeneration/accept?user=${encodeURIComponent(currentUserId)}`, {
+      method: "POST",
+    });
+    removePersistedEdit(id, currentUserId);
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    return updated;
+  };
+
+  const discardGarmentRegeneration = async (id) => {
+    const updated = await profileApi(`/api/import/wardrobe/${id}/regeneration?user=${encodeURIComponent(currentUserId)}`, {
+      method: "DELETE",
+    });
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    return updated;
+  };
+
   const deleteModeledLook = async (id, lookId) => {
     const updated = await profileApi(`/api/import/wardrobe/${id}/modeled/${encodeURIComponent(lookId)}?user=${encodeURIComponent(currentUserId)}`, {
       method: "DELETE",
@@ -6281,6 +6631,9 @@ export function App() {
           onSave={saveItem}
           onDelete={deleteItem}
           onGenerateModeled={generateModeledLook}
+          onRegenerateGarment={regenerateGarment}
+          onAcceptGarmentRegeneration={acceptGarmentRegeneration}
+          onDiscardGarmentRegeneration={discardGarmentRegeneration}
           onCreateVariant={createColorVariant}
           onDeleteModeled={deleteModeledLook}
           onDirtyChange={setViewerDirty}

@@ -35,6 +35,7 @@ test("groups Outfit Studio text and image calls under the saved outfit", () => {
   assert.equal(operationGroup("outfit-name"), "outfit");
   assert.equal(operationGroup("modeled-outfit"), "outfit");
   assert.equal(operationGroup("modeled-plan"), "modeled");
+  assert.equal(operationGroup("garment-regeneration"), "garment");
 });
 
 test("offers only compatible live models for each AI task and includes pricing", () => {

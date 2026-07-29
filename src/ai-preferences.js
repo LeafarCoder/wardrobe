@@ -93,6 +93,7 @@ export function normalizeAiPreferences(value = {}) {
 export function operationGroup(operation) {
   const normalized = String(operation || "other");
   if (normalized === "modeled-outfit" || normalized.startsWith("outfit-")) return "outfit";
+  if (normalized.startsWith("garment")) return "garment";
   return normalized.startsWith("modeled") ? "modeled" : normalized;
 }
 

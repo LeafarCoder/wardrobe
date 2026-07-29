@@ -982,6 +982,36 @@ export function sourcePhotosForRecord(record = {}) {
   });
 }
 
+export function selectGarmentRegenerationSources(record = {}, sourcePhotoIds = []) {
+  const sources = sourcePhotosForRecord(record);
+  const requested = Array.isArray(sourcePhotoIds)
+    ? [...new Set(sourcePhotoIds.filter((id) => typeof id === "string" && id))].slice(0, 3)
+    : [];
+  if (!requested.length) return sources.slice(0, 3);
+  const byId = new Map(sources.map((source) => [source.id, source]));
+  return requested.flatMap((id) => byId.has(id) ? [byId.get(id)] : []).slice(0, 3);
+}
+
+export function garmentRegenerationCandidateForRecord(record = {}) {
+  const candidate = record.garmentRegenerationCandidate;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  if (typeof candidate.id !== "string" || !candidate.id || typeof candidate.image !== "string" || !candidate.image) return null;
+  return {
+    id: candidate.id,
+    image: candidate.image,
+    preview: typeof candidate.preview === "string" && candidate.preview ? candidate.preview : null,
+    thumbnail: typeof candidate.thumbnail === "string" && candidate.thumbnail ? candidate.thumbnail : null,
+    metadata: normalizeMetadata(candidate.metadata),
+    sourcePhotoIds: Array.isArray(candidate.sourcePhotoIds)
+      ? candidate.sourcePhotoIds.filter((id) => typeof id === "string" && id).slice(0, 3)
+      : [],
+    model: typeof candidate.model === "string" && candidate.model ? candidate.model : null,
+    fallbackUsed: Boolean(candidate.fallbackUsed),
+    attempt: Math.max(1, Math.round(Number(candidate.attempt) || 1)),
+    generatedAt: typeof candidate.generatedAt === "string" ? candidate.generatedAt : null,
+  };
+}
+
 export function recordWithSourcePhotos(record, photos) {
   const sourcePhotos = sourcePhotosForRecord({ sourcePhotos: photos });
   const primary = sourcePhotos[0] || null;
@@ -1181,6 +1211,7 @@ export function duplicateCandidateScore(record = {}, metadata = {}) {
 }
 
 function publicImportedRecord(record, userId) {
+  const regenerationCandidate = garmentRegenerationCandidateForRecord(record);
   return {
     ...record,
     seasons: normalizeGarmentSeasons(record.seasons),
@@ -1207,10 +1238,17 @@ function publicImportedRecord(record, userId) {
       image: withUser(photo.image, userId),
       preview: withUser(photo.preview, userId),
     })),
+    garmentRegenerationCandidate: regenerationCandidate ? {
+      ...regenerationCandidate,
+      image: withUser(regenerationCandidate.image, userId),
+      preview: withUser(regenerationCandidate.preview, userId),
+      thumbnail: withUser(regenerationCandidate.thumbnail, userId),
+    } : null,
   };
 }
 
 export function importedRecordAssets(record = {}) {
+  const regenerationCandidate = garmentRegenerationCandidateForRecord(record);
   return [...new Set([
     record.image,
     record.imagePreview,
@@ -1221,6 +1259,9 @@ export function importedRecordAssets(record = {}) {
     ...sourcePhotosForRecord(record).flatMap((photo) => [photo.image, photo.preview]),
     record.modeledImage,
     ...modeledLooksForRecord(record).flatMap((look) => [look.image, look.preview]),
+    regenerationCandidate?.image,
+    regenerationCandidate?.preview,
+    regenerationCandidate?.thumbnail,
   ].filter(Boolean))];
 }
 
@@ -1907,6 +1948,7 @@ export function garmentSemanticMismatch(metadata = {}, detectedItems = [], userD
 
 export function buildGarmentPrompt(metadata = {}, chromaKey = "#00ff00", {
   hasContextReference = false,
+  referenceCount = 1,
   userDirection = "",
   otherDetectedItems = [],
 } = {}) {
@@ -1950,9 +1992,12 @@ export function buildGarmentPrompt(metadata = {}, chromaKey = "#00ff00", {
     },
   };
   const direction = categoryDirections[category] || categoryDirections.upperbody;
+  const normalizedReferenceCount = Math.max(1, Math.min(3, Math.round(Number(referenceCount) || 1)));
   const references = hasContextReference
     ? "Image 1 is a magnified color crop of the exact target item. Image 2 is a grayscale wider contextual crop showing where that same item appears. Use Image 2 only to understand the item's identity and how its parts connect; never take product colors from Image 2, and ignore the wearer, body, surrounding clothes, and background."
-    : "Image 1 is a magnified crop of the exact target item.";
+    : normalizedReferenceCount > 1
+      ? `Images 1–${normalizedReferenceCount} are magnified crops of the same exact target item from different original photos. Reconcile them as complementary evidence for one product. Preserve construction details visible in any reference, use the clearest view for each area, and never combine surrounding garments, people, or backgrounds into the product.`
+      : "Image 1 is a magnified crop of the exact target item.";
   const secondaryDirection = metadata.secondaryColor
     ? `The saved secondary color is ${metadata.secondaryColor}. Use it only for a genuinely distinct secondary panel, material, pattern, dial, case, trim, or hardware region; keep the primary color visually dominant.`
     : "There is no saved secondary color. Do not introduce an unrelated chromatic color from the wearer, surrounding clothes, or background. Neutral metal hardware may retain a natural silver, steel, brass, or gold tone when visibly supported.";
@@ -4732,6 +4777,250 @@ export function wardrobeImportApi(options = {}) {
     return record;
   }
 
+  async function generateImportedGarmentCandidate(itemId, user, input = {}, payerProfile = null) {
+    const lock = `library:${itemId}:garment-regeneration`;
+    if (running.has(lock)) return running.get(lock);
+    const task = (async () => {
+      const records = await loadImported();
+      const record = records.find((candidate) => candidate.id === itemId && candidate.userId === user.id);
+      if (!record) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+      const sources = selectGarmentRegenerationSources(record, input.sourcePhotoIds);
+      if (!sources.length) {
+        throw apiError("This garment has no original photo available for regeneration.", 409, "garment_source_photo_missing");
+      }
+      const metadataInput = input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata)
+        ? input.metadata
+        : {};
+      const metadata = normalizeMetadata({ ...record, ...metadataInput });
+      const userDirection = typeof input.direction === "string" ? input.direction.trim().slice(0, 2400) : "";
+      const store = await loadUsersStore();
+      const profile = store?.users.find((candidate) => candidate.id === user.id);
+      if (!profile) throw apiError("The wardrobe profile for this item no longer exists.", 404, "user_not_found");
+      const provider = providerWithProfilePreferences(aiProvider(payerProfile?.id || user.id), profile, payerProfile);
+      if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
+      if (!provider.key) {
+        throw apiError(
+          "No OpenRouter key is available. Add your own key under AI & costs in your profile.",
+          503,
+          `${provider.id}_key_missing`,
+        );
+      }
+
+      const referenceInputs = await Promise.all(sources.map(async (source, index) => {
+        const sourceName = path.basename(new URL(source.image, "http://localhost").pathname);
+        const originalBytes = await readFile(path.join(libraryAssetDir, sourceName));
+        const cropBytes = await cropDetectedItem(
+          originalBytes,
+          source.boundingBox || record.boundingBox || { x: 0, y: 0, width: 1000, height: 1000 },
+          { paddingRatio: 0.04, minimumPadding: 8 },
+        );
+        return {
+          originalBytes,
+          cropBytes,
+          image: {
+            data: await prepareGarmentReference(cropBytes),
+            mime: "image/png",
+            name: `original-${index + 1}.png`,
+          },
+        };
+      }));
+      const chromaKey = chooseChromaKey(metadata.color);
+      const prompt = options.garmentPrompt || buildGarmentPrompt(metadata, chromaKey, {
+        referenceCount: referenceInputs.length,
+        userDirection,
+      });
+      const generationPrompt = options.garmentPrompt && userDirection
+        ? `${prompt}
+
+USER CORRECTION — AUTHORITATIVE AND HIGHEST PRIORITY:
+${userDirection}
+Interpret this correction semantically in whatever language it is written. It overrides conflicting visual resemblance and generic instructions. Obey every negative constraint literally.`
+        : prompt;
+      const previousCandidate = garmentRegenerationCandidateForRecord(record);
+      const attempt = (previousCandidate?.attempt || 0) + 1;
+      const editImage = provider.id === "openrouter" ? openRouterEdit : openAIEdit;
+      let cleanedCandidate = null;
+      const validateImage = async (candidateBytes, candidate) => {
+        cleanedCandidate = null;
+        const generated = await sharp(candidateBytes).metadata();
+        if ((generated.width || 0) < 512 || (generated.height || 0) < 512) {
+          throw apiError(
+            `The image model returned only ${generated.width || 0}×${generated.height || 0} pixels for "${metadata.name}". Wardrobe rejected the low-resolution result and will try a fallback model.`,
+            502,
+            "garment_output_too_small",
+          );
+        }
+        const backgroundCheck = await processChromaBackground(candidateBytes, chromaKey, {
+          protectedColors: [metadata.color, metadata.secondaryColor],
+        });
+        const transparencyFailure = garmentCutoutTransparencyFailure(backgroundCheck.transparency);
+        if (transparencyFailure) {
+          throw apiError(
+            transparencyFailure === "opaque-border"
+              ? `The image model left "${metadata.name}" standing on its original background instead of cutting it out. Wardrobe rejected it and will try a fallback model that can produce a transparent garment cutout.`
+              : `The image model returned "${metadata.name}" on an opaque background. Wardrobe rejected it and will try a fallback model that can produce a transparent garment cutout.`,
+            422,
+            "garment_background_not_transparent",
+          );
+        }
+        cleanedCandidate = backgroundCheck;
+        try {
+          const analyzeImage = provider.id === "openrouter" ? openRouterAnalyze : openAIAnalyze;
+          const validationInput = await prepareProviderImage(candidateBytes, 768);
+          const detected = (await analyzeImage({
+            provider,
+            model: provider.visionModel,
+            image: validationInput.data,
+            mime: validationInput.mime,
+            trace: {
+              uploadId: sources[0]?.importUploadId || record.importUploadId || null,
+              jobId: sources[0]?.importJobId || record.importJobId || null,
+              garmentId: itemId,
+              sourceFileName: sources[0]?.sourceFileName || record.sourceFileName || null,
+              itemName: metadata.name,
+              validationForModel: candidate.model,
+            },
+          })).map(normalizeMetadata);
+          const semanticMismatch = garmentSemanticMismatch(metadata, detected, userDirection);
+          if (!detected.some((item) => item.part === metadata.part) || semanticMismatch) {
+            const actual = detected.map((item) => `${item.name} (${item.part})`).join(", ") || "no recognizable item";
+            throw apiError(
+              `The image model reconstructed the wrong product for "${metadata.name}"${semanticMismatch ? `: it ${semanticMismatch}` : ` (${actual})`}. Wardrobe rejected it and will try another model instead of replacing the garment.`,
+              422,
+              "garment_type_mismatch",
+            );
+          }
+        } catch (error) {
+          if (error.code === "garment_type_mismatch") throw error;
+          console.warn(`[wardrobe:ai] garment regeneration validation skipped | item=${JSON.stringify(cleanLogValue(metadata.name))} | reason=${cleanLogValue(error.message)}`);
+        }
+      };
+      console.info(`[wardrobe] Regenerating saved garment with ${provider.label} / ${provider.garmentModel} from ${referenceInputs.length} original photo${referenceInputs.length === 1 ? "" : "s"}...`);
+      const generation = await withGenerationSlot(() => editWithSafetyFallback({
+        editImage,
+        provider,
+        model: provider.garmentModel,
+        fallbackModels: provider.imageFallbackModels,
+        validateImage,
+        quality: provider.imageQuality,
+        size: "1024x1024",
+        background: "transparent",
+        images: referenceInputs.map((reference) => reference.image),
+        prompt: generationPrompt,
+        operation: "garment-regeneration",
+        trace: {
+          uploadId: sources[0]?.importUploadId || record.importUploadId || null,
+          jobId: sources[0]?.importJobId || record.importJobId || null,
+          garmentId: itemId,
+          sourceFileName: sources[0]?.sourceFileName || record.sourceFileName || null,
+          itemName: metadata.name,
+          attempt,
+          sourcePhotoCount: referenceInputs.length,
+        },
+      }));
+      const candidateBytes = cleanedCandidate && cleanedCandidate.verification.contaminatedPixels <= 1
+        ? cleanedCandidate.bytes
+        : await removeChromaBackground(generation.bytes, chromaKey, {
+            protectedColors: [metadata.color, metadata.secondaryColor],
+          });
+      const candidateId = randomUUID();
+      const candidateName = `${itemId}-regeneration-${candidateId}.png`;
+      await atomicFile(path.join(libraryAssetDir, candidateName), candidateBytes);
+      const candidateImage = libraryAssetUrl(candidateName);
+      const [preview, thumbnail] = await Promise.all([
+        safeLibraryVariant(candidateImage, "preview", `${metadata.name} regeneration candidate`),
+        safeLibraryVariant(candidateImage, "thumbnail", `${metadata.name} regeneration candidate thumbnail`),
+      ]);
+      const candidate = {
+        id: candidateId,
+        image: candidateImage,
+        preview,
+        thumbnail,
+        metadata,
+        sourcePhotoIds: sources.map((source) => source.id),
+        model: generation.model,
+        fallbackUsed: generation.fallbackUsed,
+        attempt,
+        generatedAt: new Date().toISOString(),
+      };
+      const saved = await withLibrary(async () => {
+        const latest = await loadImported();
+        const index = latest.findIndex((entry) => entry.id === itemId && entry.userId === user.id);
+        if (index < 0) {
+          throw apiError("The wardrobe item was deleted while its replacement was being generated.", 409, "wardrobe_item_deleted");
+        }
+        const replacedCandidate = garmentRegenerationCandidateForRecord(latest[index]);
+        latest[index] = { ...latest[index], garmentRegenerationCandidate: candidate };
+        await saveImported(latest);
+        return { record: latest[index], replacedCandidate };
+      }).catch(async (error) => {
+        await Promise.all([candidateImage, preview, thumbnail].filter(Boolean).map((asset) => rm(
+          path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+          { force: true },
+        )));
+        throw error;
+      });
+      if (saved.replacedCandidate) {
+        await Promise.all([
+          saved.replacedCandidate.image,
+          saved.replacedCandidate.preview,
+          saved.replacedCandidate.thumbnail,
+        ].filter(Boolean).map((asset) => rm(
+          path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+          { force: true },
+        ))).catch(() => console.warn(`[wardrobe] Could not remove every superseded regeneration candidate for "${metadata.name}".`));
+      }
+      return saved.record;
+    })().finally(() => running.delete(lock));
+    running.set(lock, task);
+    return task;
+  }
+
+  async function resolveImportedGarmentCandidate(itemId, user, decision) {
+    const result = await withLibrary(async () => {
+      const records = await loadImported();
+      const index = records.findIndex((record) => record.id === itemId && record.userId === user.id);
+      if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+      const candidate = garmentRegenerationCandidateForRecord(records[index]);
+      if (!candidate) {
+        if (decision === "discard") return { record: records[index], removedAssets: [] };
+        throw apiError("This garment has no regenerated candidate to use.", 409, "garment_regeneration_candidate_missing");
+      }
+      const removedAssets = decision === "accept"
+        ? [records[index].image, records[index].imagePreview, records[index].thumbnail]
+        : [candidate.image, candidate.preview, candidate.thumbnail];
+      if (decision === "accept") {
+        records[index] = {
+          ...records[index],
+          name: candidate.metadata.name,
+          part: candidate.metadata.part,
+          color: candidate.metadata.color,
+          secondaryColor: candidate.metadata.secondaryColor,
+          palette: [candidate.metadata.color, candidate.metadata.secondaryColor].filter(Boolean),
+          tags: candidate.metadata.tags,
+          image: candidate.image,
+          imagePreview: candidate.preview || candidate.image,
+          thumbnail: candidate.thumbnail || candidate.preview || candidate.image,
+          garmentRegenerationCandidate: null,
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        records[index] = { ...records[index], garmentRegenerationCandidate: null };
+      }
+      await saveImported(records);
+      const retained = new Set(importedRecordAssets(records[index]).map((asset) => asset.split("?")[0]));
+      return {
+        record: records[index],
+        removedAssets: removedAssets.filter((asset) => asset && !retained.has(asset.split("?")[0])),
+      };
+    });
+    await Promise.all(result.removedAssets.map((asset) => rm(
+      path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+      { force: true },
+    )));
+    return result.record;
+  }
+
   async function generateImportedModeledLook(itemId, user, variantId = null, payerProfile = null) {
     const lock = `library:${itemId}:modeled`;
     if (running.has(lock)) return running.get(lock);
@@ -6716,6 +7005,25 @@ Interpret this correction semantically in whatever language it is written. It ov
           ids: orderedIds,
           user: publicProfile(profile),
         });
+      }
+      const garmentRegenerationMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/regeneration(?:\/(accept))?$/i);
+      if (garmentRegenerationMatch && !garmentRegenerationMatch[2] && req.method === "POST") {
+        const input = await body(req, 64 * 1024);
+        const record = await generateImportedGarmentCandidate(
+          garmentRegenerationMatch[1],
+          user,
+          input,
+          payerProfile,
+        );
+        return json(res, 201, publicImportedRecord(record, user.id));
+      }
+      if (garmentRegenerationMatch?.[2] === "accept" && req.method === "POST") {
+        const record = await resolveImportedGarmentCandidate(garmentRegenerationMatch[1], user, "accept");
+        return json(res, 200, publicImportedRecord(record, user.id));
+      }
+      if (garmentRegenerationMatch && !garmentRegenerationMatch[2] && req.method === "DELETE") {
+        const record = await resolveImportedGarmentCandidate(garmentRegenerationMatch[1], user, "discard");
+        return json(res, 200, publicImportedRecord(record, user.id));
       }
       const wardrobeItemMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})(?:\/(modeled))?$/i);
       if (wardrobeItemMatch?.[2] === "modeled" && req.method === "POST") {

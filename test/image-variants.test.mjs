@@ -135,6 +135,19 @@ test("uses both saved colors as mandatory controls during garment regeneration",
   assert.match(prompt, /secondary color controls a distinct dial, case, trim, or hardware region/i);
 });
 
+test("grounds saved-garment regeneration in up to three complementary original crops", () => {
+  const prompt = buildGarmentPrompt({
+    name: "Navy blazer",
+    part: "wholebody_up",
+    color: "#17233f",
+    tags: ["double-breasted", "peak lapels"],
+  }, "#00ff00", { referenceCount: 3 });
+
+  assert.match(prompt, /Images 1–3 are magnified crops of the same exact target item/i);
+  assert.match(prompt, /complementary evidence for one product/i);
+  assert.match(prompt, /construction details visible in any reference/i);
+});
+
 test("removes a neutral studio background when the image model ignores the chroma key", async () => {
   const watch = await sharp({
     create: {

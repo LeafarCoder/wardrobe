@@ -7,9 +7,29 @@ import {
   mergeImportedRecords,
   refineDetectedBoundingBoxes,
   recordWithSourcePhotos,
+  selectGarmentRegenerationSources,
   sourcePhotosForRecord,
   wardrobePlansAfterGarmentMerge,
 } from "../scripts/import-job-api.mjs";
+
+test("selects at most three requested original photos for saved-garment regeneration", () => {
+  const record = recordWithSourcePhotos({}, [
+    { id: "one", image: "/api/import/library/one.png" },
+    { id: "two", image: "/api/import/library/two.png" },
+    { id: "three", image: "/api/import/library/three.png" },
+    { id: "four", image: "/api/import/library/four.png" },
+  ]);
+
+  assert.deepEqual(
+    selectGarmentRegenerationSources(record, ["four", "two", "one", "three"]).map((photo) => photo.id),
+    ["four", "two", "one"],
+  );
+  assert.deepEqual(
+    selectGarmentRegenerationSources(record, []).map((photo) => photo.id),
+    ["one", "two", "three"],
+  );
+  assert.deepEqual(selectGarmentRegenerationSources(record, ["missing"]), []);
+});
 
 test("finds a strong same-category duplicate without auto-matching unrelated garments", () => {
   const existing = {
@@ -122,6 +142,13 @@ test("keeps every unique source-photo occurrence and exposes its assets", () => 
   const record = recordWithSourcePhotos({
     id: "import-example",
     image: "/api/import/library/garment.png",
+    garmentRegenerationCandidate: {
+      id: "candidate",
+      image: "/api/import/library/candidate.png",
+      preview: "/api/import/library/candidate-preview.webp",
+      thumbnail: "/api/import/library/candidate-thumbnail.webp",
+      metadata: { name: "Rebuilt garment", part: "upperbody", color: "#112233" },
+    },
   }, [
     {
       id: "first",
@@ -143,6 +170,8 @@ test("keeps every unique source-photo occurrence and exposes its assets", () => 
   assert.deepEqual(sourcePhotosForRecord(record).map((photo) => photo.id), ["first", "second"]);
   assert.equal(record.originalImage, "/api/import/library/source-one.png");
   assert.ok(importedRecordAssets(record).includes("/api/import/library/source-two.png"));
+  assert.ok(importedRecordAssets(record).includes("/api/import/library/candidate.png"));
+  assert.ok(importedRecordAssets(record).includes("/api/import/library/candidate-preview.webp"));
 });
 
 test("merges existing garments without losing either original-photo occurrence", () => {
