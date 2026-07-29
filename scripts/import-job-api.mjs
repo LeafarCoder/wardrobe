@@ -927,6 +927,9 @@ export function modeledLooksForRecord(record = {}) {
       model: typeof look.model === "string" && look.model ? look.model : null,
       fallbackUsed: Boolean(look.fallbackUsed),
       ...(typeof look.variantId === "string" && look.variantId ? { variantId: look.variantId } : {}),
+      ...(look.context && typeof look.context === "object" && !Array.isArray(look.context)
+        ? { context: normalizeModeledLookContext(look.context) }
+        : {}),
       generatedAt: typeof look.generatedAt === "string" && look.generatedAt ? look.generatedAt : null,
     }];
   });
@@ -5154,6 +5157,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           model: generation.model,
           fallbackUsed: generation.fallbackUsed,
           variantId: selectedVariant?.id || null,
+          context: modeledContext,
           generatedAt,
         };
         latest[index] = recordWithModeledLooks({

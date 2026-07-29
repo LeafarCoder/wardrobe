@@ -98,6 +98,10 @@ function optionPrompt(group, value) {
   return MODELED_LOOK_CONTEXT_OPTIONS[group].find((option) => option.id === value)?.prompt || "";
 }
 
+function optionLabel(group, value) {
+  return MODELED_LOOK_CONTEXT_OPTIONS[group].find((option) => option.id === value)?.label || "";
+}
+
 export function normalizeModeledLookContext(input = {}) {
   const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
   const environmentType = validOption("environmentType", source.environmentType);
@@ -135,4 +139,32 @@ export function modeledLookContextPrompt(input = {}) {
   ].filter(Boolean);
   if (!details.length) return "";
   return `\n\nCreative direction for this image — apply every selected detail consistently:\n- ${details.join("\n- ")}\nResolve combinations with realistic anatomy and physical plausibility. Keep identity preservation and the featured garment's complete visibility as higher priorities.`;
+}
+
+export function modeledLookContextDetails(input = {}) {
+  const context = normalizeModeledLookContext(input);
+  const translated = (id, label, values) => values.filter(Boolean).length
+    ? { id, label, values: values.filter(Boolean), translateValues: true }
+    : null;
+  return [
+    translated("pose", "Pose", [optionLabel("pose", context.pose)]),
+    translated("bodyOrientation", "Body orientation", [optionLabel("bodyOrientation", context.bodyOrientation)]),
+    translated("headOrientation", "Head orientation", [optionLabel("headOrientation", context.headOrientation)]),
+    translated("environment", "Environment", [
+      optionLabel("environmentType", context.environmentType),
+      context.environmentType
+        ? optionLabel(context.environmentType === "inside" ? "insideSetting" : "outsideSetting", context.setting)
+        : "",
+    ]),
+    translated("weather", "Weather", [optionLabel("weather", context.weather)]),
+    translated("expression", "Expression", [optionLabel("expression", context.expression)]),
+    context.additionalDirection
+      ? {
+          id: "additionalDirection",
+          label: "More direction",
+          values: [context.additionalDirection],
+          translateValues: false,
+        }
+      : null,
+  ].filter(Boolean);
 }

@@ -40,6 +40,35 @@ test("keeps the latest modeled look in legacy compatibility fields", () => {
   assert.equal(record.modeledGeneratedAt, "2026-07-24T11:00:00.000Z");
 });
 
+test("preserves normalized generation settings on modeled looks", () => {
+  const [look] = modeledLooksForRecord({
+    modeledLooks: [{
+      id: "directed",
+      image: "/directed.png",
+      context: {
+        pose: "walking",
+        headOrientation: "camera",
+        environmentType: "outside",
+        setting: "city",
+        expression: "smiling",
+        additionalDirection: "  Hold a newspaper.  ",
+        ignored: "discarded",
+      },
+    }],
+  });
+
+  assert.deepEqual(look.context, {
+    pose: "walking",
+    bodyOrientation: "",
+    headOrientation: "camera",
+    environmentType: "outside",
+    setting: "city",
+    weather: "",
+    expression: "smiling",
+    additionalDirection: "Hold a newspaper.",
+  });
+});
+
 test("removes only the selected modeled look and updates the compatibility image", () => {
   const original = recordWithModeledLooks({ id: "item" }, [
     { id: "first", image: "/first.png", model: "model-a" },

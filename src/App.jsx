@@ -18,6 +18,7 @@ import { formatDate, getLocale, LANGUAGE_OPTIONS, setLocale, tr, useLocale } fro
 import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
 import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
 import { ModeledLookDialog } from "./ModeledLookDialog.jsx";
+import { modeledLookContextDetails } from "./modeled-look-context.js";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { OriginalPhotoGallery } from "./OriginalPhotoGallery.jsx";
 import { cropCenteredCoverPosition, originalPhotoPosition } from "./original-photo-position.js";
@@ -1542,6 +1543,7 @@ function ItemViewer({
   const [closeBlocked, setCloseBlocked] = useState(false);
   const [sourcePhotoOpen, setSourcePhotoOpen] = useState(false);
   const [mediaPreviewOpen, setMediaPreviewOpen] = useState(null);
+  const [modeledSettingsOpen, setModeledSettingsOpen] = useState(false);
   const [garmentRegenerationOpen, setGarmentRegenerationOpen] = useState(false);
   const [garmentRegenerationBusy, setGarmentRegenerationBusy] = useState(false);
   const [garmentRegenerationError, setGarmentRegenerationError] = useState("");
@@ -1580,6 +1582,11 @@ function ItemViewer({
   const activeMedia = garmentMedia[activeMediaIndex] || garmentMedia[0] || null;
   const activeModeledLook = activeMedia?.kind === GARMENT_MEDIA_GENERATED ? activeMedia.data : null;
   const isActiveMediaGenerated = activeMedia?.kind === GARMENT_MEDIA_GENERATED;
+  const modeledSettingsRecorded = Boolean(activeModeledLook && Object.hasOwn(activeModeledLook, "context"));
+  const activeModeledSettings = useMemo(
+    () => modeledLookContextDetails(activeModeledLook?.context),
+    [activeModeledLook?.context],
+  );
   const generatingModeled = generatingModeledFor === item.id;
   const hasModeledImage = Boolean(activeModeledLook);
   const activeSourcePhoto = sourcePhotos[Math.min(sourcePhotoIndex, Math.max(0, sourcePhotos.length - 1))] || null;
@@ -1741,6 +1748,8 @@ function ItemViewer({
           }
         } else if (garmentRegenerationOpen) {
           setGarmentRegenerationOpen(false);
+        } else if (modeledSettingsOpen) {
+          setModeledSettingsOpen(false);
         } else if (mediaPreviewOpen) {
           setMediaPreviewOpen(null);
           requestAnimationFrame(() => (
@@ -1761,7 +1770,7 @@ function ItemViewer({
       document.removeEventListener("keydown", onKeyDown);
       clearTimeout(shakeTimerRef.current);
     };
-  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, garmentRegenerationOpen, generatingModeled, mediaPreviewOpen, modeledVariantPickerOpen, requestClose, sampling, sourcePhotoOpen, variantStudioOpen]);
+  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, garmentRegenerationOpen, generatingModeled, mediaPreviewOpen, modeledSettingsOpen, modeledVariantPickerOpen, requestClose, sampling, sourcePhotoOpen, variantStudioOpen]);
 
   useEffect(() => {
     if (deleteCandidate) deleteCancelButtonRef.current?.focus({ preventScroll: true });
@@ -1823,6 +1832,7 @@ function ItemViewer({
     setDraft(editableItem(item));
     setSourcePhotoOpen(false);
     setMediaPreviewOpen(null);
+    setModeledSettingsOpen(false);
     setSourceCropVisible(false);
     setSourceImageFrame(null);
     setColorEditorOpen(false);
@@ -1853,6 +1863,10 @@ function ItemViewer({
     if (activeMediaId && garmentMedia.some((media) => media.id === activeMediaId)) return;
     setActiveMediaId(garmentMedia[0]?.id || null);
   }, [activeMediaId, garmentMedia]);
+
+  useEffect(() => {
+    setModeledSettingsOpen(false);
+  }, [activeMediaId]);
 
   useLayoutEffect(() => {
     setColorVersionIndex(0);
@@ -2164,6 +2178,7 @@ function ItemViewer({
       ? modeledPhotoButtonRef.current
       : garmentArtworkButtonRef.current;
     setMediaPreviewOpen(null);
+    setModeledSettingsOpen(false);
     setGarmentRegenerationOpen(false);
     setGarmentRegenerationError("");
     requestAnimationFrame(() => trigger?.focus({ preventScroll: true }));
@@ -2857,6 +2872,46 @@ function ItemViewer({
                 <span className="garment-media-ai-badge is-dialog" role="img" tabIndex={0} aria-label={tr("AI generated")} data-tooltip={tr("AI generated")}>
                   <Sparkle size={9} weight="fill" aria-hidden="true" />
                 </span>
+              )}
+              {mediaPreviewOpen === "media" && isActiveMediaGenerated && (
+                <div className="modeled-image-settings">
+                  <button
+                    type="button"
+                    aria-expanded={modeledSettingsOpen}
+                    aria-controls="modeled-image-settings-panel"
+                    onClick={() => setModeledSettingsOpen((open) => !open)}
+                  >
+                    <Info size={15} aria-hidden="true" />
+                    <span>{tr("Image settings")}</span>
+                  </button>
+                  {modeledSettingsOpen && (
+                    <section id="modeled-image-settings-panel" aria-label={tr("Settings used for this image")}>
+                      <header>
+                        <div>
+                          <small>{tr("AI generated")}</small>
+                          <strong>{tr("Settings used for this image")}</strong>
+                        </div>
+                        <button type="button" onClick={() => setModeledSettingsOpen(false)} aria-label={tr("Hide image settings")}>
+                          <X size={15} aria-hidden="true" />
+                        </button>
+                      </header>
+                      {activeModeledSettings.length ? (
+                        <dl>
+                          {activeModeledSettings.map((detail) => (
+                            <div key={detail.id}>
+                              <dt>{tr(detail.label)}</dt>
+                              <dd>{detail.values.map((value) => detail.translateValues ? tr(value) : value).join(" · ")}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : (
+                        <p>{tr(modeledSettingsRecorded
+                          ? "No specific settings were selected. This image was freely composed."
+                          : "Settings were not recorded for this image.")}</p>
+                      )}
+                    </section>
+                  )}
+                </div>
               )}
               {mediaPreviewOpen === "media" && garmentMedia.length > 1 && (
                 <>

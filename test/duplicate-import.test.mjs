@@ -203,6 +203,13 @@ test("merges existing garments without losing original photos or modeled looks",
       image: "/api/import/library/discarded-look.png",
       preview: "/api/import/library/discarded-look-preview.webp",
       generatedAt: "2026-07-28T11:00:00.000Z",
+      context: {
+        pose: "walking",
+        environmentType: "outside",
+        setting: "city",
+        expression: "smiling",
+        additionalDirection: "Carry a newspaper.",
+      },
     }],
   }, [{
     id: "original",
@@ -227,6 +234,8 @@ test("merges existing garments without losing original photos or modeled looks",
     "/api/import/library/discarded-look.png",
   ]);
   assert.equal(merged.modeledImage, "/api/import/library/discarded-look.png");
+  assert.equal(looks[1].context.pose, "walking");
+  assert.equal(looks[1].context.additionalDirection, "Carry a newspaper.");
   assert.equal(merged.mediaOrder[0], "modeled:look-2");
   assert.equal(merged.originalImage, "/api/import/library/keeper-source.png");
   assert.ok(removedAssets.includes("/api/import/library/discarded-garment.png"));

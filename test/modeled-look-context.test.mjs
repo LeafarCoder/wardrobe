@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  modeledLookContextDetails,
   modeledLookContextPrompt,
   normalizeModeledLookContext,
 } from "../src/modeled-look-context.js";
@@ -66,4 +67,26 @@ test("leaves the base prompt unconstrained when no direction is selected", () =>
 test("bounds free-form modeled-look direction", () => {
   const context = normalizeModeledLookContext({ additionalDirection: `  ${"x".repeat(900)}  ` });
   assert.equal(context.additionalDirection.length, 800);
+});
+
+test("describes every selected modeled-look setting without translating free text", () => {
+  assert.deepEqual(modeledLookContextDetails({
+    pose: "walking",
+    bodyOrientation: "three-quarter",
+    headOrientation: "camera",
+    environmentType: "inside",
+    setting: "living-room",
+    weather: "sunny",
+    expression: "smiling",
+    additionalDirection: "Carry the red book.",
+  }), [
+    { id: "pose", label: "Pose", values: ["Walking"], translateValues: true },
+    { id: "bodyOrientation", label: "Body orientation", values: ["Three-quarters"], translateValues: true },
+    { id: "headOrientation", label: "Head orientation", values: ["Looking at camera"], translateValues: true },
+    { id: "environment", label: "Environment", values: ["Inside", "Living room"], translateValues: true },
+    { id: "weather", label: "Weather", values: ["Sunny"], translateValues: true },
+    { id: "expression", label: "Expression", values: ["Smiling"], translateValues: true },
+    { id: "additionalDirection", label: "More direction", values: ["Carry the red book."], translateValues: false },
+  ]);
+  assert.deepEqual(modeledLookContextDetails({}), []);
 });
