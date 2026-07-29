@@ -52,6 +52,7 @@ import {
   summarizeAiUsage,
 } from "../src/ai-preferences.js";
 import { normalizeTutorialState, updateTutorialState } from "../src/tutorial.js";
+import { modeledLookContextPrompt, normalizeModeledLookContext } from "../src/modeled-look-context.js";
 import {
   isCompleteGarmentMediaOrder,
   normalizeGarmentMediaOrder,
@@ -2086,7 +2087,7 @@ function modeledReferenceRoleRules() {
   return `Reference roles — mandatory: Images assigned under Subjects are identity evidence only. Use them together primarily for facial geometry and distinctive facial characteristics, including eyes, eyebrows, nose, lips, cheekbones, jawline, face and chin contour, ears, skin tone and real skin texture, and apparent age. Use visible full-body information only to preserve natural body shape, height impression, and proportions. Ignore and do not copy the identity references' clothes, jewelry, accessories, pose, gesture, expression, lighting, location, framing, or background. Hairstyle may change naturally for the requested scene, but preserve the person's stable hairline and identity-defining hair color and texture unless the user explicitly requests a hair change. Images assigned under Garments control only the named clothing products: never use a garment image's person, mannequin, hanger, styling, or background as identity evidence.`;
 }
 
-export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metadata = {}) {
+export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metadata = {}, context = {}) {
   const count = Math.max(1, Math.min(3, Math.round(personReferenceCount)));
   const subject = profile.name || "Wardrobe owner";
   const subjectBinding = modeledSubjectBinding(subject, 1, 0, count);
@@ -2106,6 +2107,7 @@ export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metad
     profile.preferences ? `Personal styling preferences and constraints: ${profile.preferences}.` : null,
   ].filter(Boolean).join(" ");
   const identityLock = modeledIdentityLock(profile.name || "the referenced person");
+  const creativeDirection = modeledLookContextPrompt(context);
 
   return `Create a professional horizontal 3:2 editorial fashion photograph.
 
@@ -2114,7 +2116,7 @@ Subjects: ${subjectBinding}
 Garments: Image ${garmentImage} is the exact garment reference for "${metadata.name || "the featured garment"}".
 ${modeledReferenceRoleRules()}
 
-Show ${subject} wearing the garment from Image ${garmentImage}. ${categoryDirection} ${profileDetails} ${identityLock} Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.`;
+Show ${subject} wearing the garment from Image ${garmentImage}. ${categoryDirection} ${profileDetails} ${identityLock} Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.${creativeDirection}`;
 }
 
 function modeledIdentityLock(subject = "the referenced person") {
@@ -5037,7 +5039,7 @@ Interpret this correction semantically in whatever language it is written. It ov
     return result.record;
   }
 
-  async function generateImportedModeledLook(itemId, user, variantId = null, payerProfile = null) {
+  async function generateImportedModeledLook(itemId, user, variantId = null, context = {}, payerProfile = null) {
     const lock = `library:${itemId}:modeled`;
     if (running.has(lock)) return running.get(lock);
     const task = (async () => {
@@ -5078,7 +5080,8 @@ Interpret this correction semantically in whatever language it is written. It ov
         name: "garment.png",
       };
       const editImage = provider.id === "openrouter" ? openRouterEdit : openAIEdit;
-      const prompt = options.modeledPrompt || buildModeledPrompt(models.length, profile, modeledRecord);
+      const modeledContext = normalizeModeledLookContext(context);
+      const prompt = options.modeledPrompt || buildModeledPrompt(models.length, profile, modeledRecord, modeledContext);
       const modeledModel = modeledModelForReferenceCount(provider, models.length);
       console.info(`[wardrobe] Generating requested modeled look with ${provider.label} / ${modeledModel} for "${record.name}" using ${models.length} identity reference${models.length === 1 ? "" : "s"}...`);
       const generation = await withGenerationSlot(() => editWithSafetyFallback({
@@ -7082,6 +7085,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           wardrobeItemMatch[1],
           user,
           typeof input.variantId === "string" ? input.variantId : null,
+          input.context,
           payerProfile,
         );
         return json(res, 200, publicImportedRecord(record, user.id));

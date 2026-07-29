@@ -17,6 +17,7 @@ import { DayDatePicker } from "./DayDatePicker.jsx";
 import { formatDate, getLocale, LANGUAGE_OPTIONS, setLocale, tr, useLocale } from "./i18n.js";
 import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
 import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
+import { ModeledLookDialog } from "./ModeledLookDialog.jsx";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { OriginalPhotoGallery } from "./OriginalPhotoGallery.jsx";
 import { cropCenteredCoverPosition, originalPhotoPosition } from "./original-photo-position.js";
@@ -1722,7 +1723,7 @@ function ItemViewer({
         } else if (variantStudioOpen) {
           setVariantStudioOpen(false);
         } else if (modeledVariantPickerOpen) {
-          setModeledVariantPickerOpen(false);
+          if (!generatingModeled) setModeledVariantPickerOpen(false);
         } else if (colorEditorOpen) {
           setColorEditorOpen(false);
           setSampling(null);
@@ -1758,7 +1759,7 @@ function ItemViewer({
       document.removeEventListener("keydown", onKeyDown);
       clearTimeout(shakeTimerRef.current);
     };
-  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, garmentRegenerationOpen, mediaPreviewOpen, modeledVariantPickerOpen, requestClose, sampling, sourcePhotoOpen, variantStudioOpen]);
+  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, garmentRegenerationOpen, generatingModeled, mediaPreviewOpen, modeledVariantPickerOpen, requestClose, sampling, sourcePhotoOpen, variantStudioOpen]);
 
   useEffect(() => {
     if (deleteCandidate) deleteCancelButtonRef.current?.focus({ preventScroll: true });
@@ -1951,7 +1952,7 @@ function ItemViewer({
     setSampling(null);
   };
 
-  const generateModeledLook = async (variantId = null) => {
+  const generateModeledLook = async (variantId = null, context = {}) => {
     if (deletingModeled) return;
     if (isDirty) {
       setViewerToast({
@@ -1965,7 +1966,7 @@ function ItemViewer({
     setGeneratingModeledFor(targetItemId);
     setViewerToast(null);
     try {
-      const updated = await onGenerateModeled(targetItemId, variantId);
+      const updated = await onGenerateModeled(targetItemId, variantId, context);
       const generatedLook = itemModeledLooks(updated).at(-1);
       if (generatedLook) setActiveMediaId(garmentMediaId(GARMENT_MEDIA_GENERATED, generatedLook.id));
       setModeledVariantPickerOpen(false);
@@ -1976,17 +1977,22 @@ function ItemViewer({
           message: readableError(requestError),
         });
       }
+      throw new Error(readableError(requestError));
     } finally {
       setGeneratingModeledFor((current) => current === targetItemId ? null : current);
     }
   };
 
   const requestGenerateModeledLook = () => {
-    if (colorVersions.length > 1) {
-      setModeledVariantPickerOpen(true);
+    if (isDirty) {
+      setViewerToast({
+        title: tr("Save this garment first"),
+        message: tr("Save your changes before creating a new style look."),
+      });
+      nudgeUnsaved(false);
       return;
     }
-    generateModeledLook();
+    setModeledVariantPickerOpen(true);
   };
 
   const rotateColorVersion = (direction) => {
@@ -2610,28 +2616,13 @@ function ItemViewer({
       />
     )}
     {modeledVariantPickerOpen && (
-      <div className="variant-picker-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setModeledVariantPickerOpen(false)}>
-        <section className="variant-picker" role="dialog" aria-modal="true" aria-labelledby="variant-picker-title">
-          <header>
-            <div><p>{tr("Create a style look")}</p><h2 id="variant-picker-title">{tr("Which garment version should be used?")}</h2></div>
-            <button type="button" onClick={() => setModeledVariantPickerOpen(false)} aria-label={tr("Close garment version chooser")}><X size={21} /></button>
-          </header>
-          <div className="variant-picker__grid">
-            {colorVersions.map((version, index) => (
-              <button type="button" disabled={generatingModeled} onClick={() => generateModeledLook(version.id)} key={version.id || "original"}>
-                <ProductStage className="variant-picker__image" staticStage>
-                  <OptimizedImage src={version.thumbnail || version.preview || version.image} alt="" sizes="180px" />
-                </ProductStage>
-                <span>{tr(version.original ? "Original" : "Color version {number}", { number: index })}</span>
-                <small>
-                  <i style={{ backgroundColor: version.primaryColor }} />
-                  {version.secondaryColor && <i style={{ backgroundColor: version.secondaryColor }} />}
-                </small>
-              </button>
-            ))}
-          </div>
-        </section>
-      </div>
+      <ModeledLookDialog
+        garmentName={draft.name || type}
+        colorVersions={colorVersions}
+        busy={generatingModeled}
+        onClose={() => !generatingModeled && setModeledVariantPickerOpen(false)}
+        onGenerate={generateModeledLook}
+      />
     )}
     {mediaPreviewOpen && (
       <div
@@ -6279,10 +6270,10 @@ export function App() {
     return updated;
   };
 
-  const generateModeledLook = async (id, variantId = null) => {
+  const generateModeledLook = async (id, variantId = null, context = {}) => {
     const generated = await profileApi(`/api/import/wardrobe/${id}/modeled?user=${encodeURIComponent(currentUserId)}`, {
       method: "POST",
-      body: JSON.stringify({ variantId }),
+      body: JSON.stringify({ variantId, context }),
     });
     setItems((current) => current.map((item) => item.id === generated.id ? { ...item, ...generated } : item));
     return generated;
