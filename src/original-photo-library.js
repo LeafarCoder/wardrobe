@@ -2,6 +2,22 @@ function assetKey(source) {
   return typeof source === "string" ? source.split(/[?#]/, 1)[0] : "";
 }
 
+function sourcePhotoUploadId(item, photo) {
+  if (typeof photo.importUploadId === "string" && photo.importUploadId) {
+    return photo.importUploadId;
+  }
+  const photoMatchesPrimary = assetKey(photo.image) === assetKey(item.originalImage)
+    || (photo.importJobId && photo.importJobId === item.importJobId);
+  return photoMatchesPrimary && typeof item.importUploadId === "string"
+    ? item.importUploadId
+    : "";
+}
+
+function sourcePhotoKey(item, photo) {
+  const uploadId = sourcePhotoUploadId(item, photo);
+  return uploadId ? `upload:${uploadId}` : assetKey(photo.image);
+}
+
 function sourcePhotosForItem(item = {}) {
   const photos = Array.isArray(item.sourcePhotos)
     ? item.sourcePhotos.filter((photo) => photo?.image)
@@ -41,8 +57,9 @@ export function collectOriginalPhotoLibrary(items = []) {
   items.forEach((item, itemIndex) => {
     if (!item?.id) return;
     sourcePhotosForItem(item).forEach((photo, photoIndex) => {
-      const key = assetKey(photo.image);
-      if (!key) return;
+      const imageAssetKey = assetKey(photo.image);
+      if (!imageAssetKey) return;
+      const key = sourcePhotoKey(item, photo);
       const existing = photos.get(key) || {
         id: key,
         image: photo.image,
