@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowCounterClockwise, ArrowsLeftRight, Camera, Check, Clipboard, CoatHanger, Crop, Dress, FolderOpen, Handbag, ImageSquare, Pants, Plus, Sneaker, SpinnerGap, Trash, TShirt, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
 import { formatNumber, getLocale, tr } from "./i18n.js";
 import { LightSelect } from "./LightSelect.jsx";
+import { garmentReviewImages } from "./import-review.js";
 import { notifyOpenRouterKeyRequired } from "./openrouter-key.js";
 import { ProductStage } from "./ProductStage.jsx";
 import "./import-flow.css";
@@ -728,10 +729,11 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
   const asset = job.stages[stage]?.assetUrl;
   const isCrop = stage === "crop";
   const isGarment = stage === "garment";
+  const comparison = isGarment ? garmentReviewImages(job) : null;
   const primaryValid = HEX_COLOR.test(draft.color);
   const secondaryValid = !draft.secondaryColor || HEX_COLOR.test(draft.secondaryColor);
   return (
-    <div className="import-editor">
+    <div className={`import-editor${isGarment ? " is-garment-review" : ""}`}>
       {isCrop && (
         <header className="import-editor__garment-heading">
           <p>{tr("Crop for")}</p>
@@ -739,17 +741,31 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
           <span>{tr("This selection will be used to create a new garment in your wardrobe.")}</span>
         </header>
       )}
-      {isCrop
-        ? <ManualCropEditor job={job} busy={busy} onSave={onCropSave} />
-        : (
+      {isCrop ? <ManualCropEditor job={job} busy={busy} onSave={onCropSave} /> : isGarment ? (
+        <div className="import-editor__comparison" aria-label={tr("Original and generated garment comparison")}>
+          <figure>
+            <div className="import-editor__comparison-media is-source">
+              <img src={comparison.source} alt={tr("Original approved garment crop")} />
+            </div>
+            <figcaption><strong>{tr("Original crop")}</strong><span>{tr("From your uploaded photo")}</span></figcaption>
+          </figure>
+          <figure>
+            <ProductStage className="import-editor__comparison-media import-editor__preview-stage" staticStage>
+              <img className="import-editor__preview" src={comparison.generated} alt={tr("Generated garment for comparison")} />
+            </ProductStage>
+            <figcaption><strong>{tr("Generated garment")}</strong><span>{tr("AI reconstruction")}</span></figcaption>
+          </figure>
+        </div>
+      ) : (
           <ProductStage className="import-editor__preview-stage" interactive animated>
-            <img className="import-editor__preview" src={asset} alt={tr(isGarment ? "Extracted garment" : "Generated modeled look")} />
+            <img className="import-editor__preview" src={asset} alt={tr("Generated modeled look")} />
           </ProductStage>
-        )}
+      )}
       <div className="import-fields">
         <p className="import-editor__stage">{tr(isCrop ? "Detected item" : isGarment ? "Garment image" : "Modeled image")}</p>
         {isCrop ? <p className="import-card__detail">{tr("Duplicate matching is complete. Check that the box contains only the intended garment, adjust it if needed, then continue.")}</p> : isGarment ? (
           <>
+            <p className="import-card__detail import-editor__comparison-guidance">{tr("Compare the generated garment with the original crop before adding it. Check the silhouette, construction, colors, pattern, closures, and distinctive details.")}</p>
             <div className="import-field"><label htmlFor={`name-${job.id}`}>{tr("Name")}</label><input id={`name-${job.id}`} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></div>
             <div className="import-field">
               <label>{tr("Category")}</label>

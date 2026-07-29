@@ -802,6 +802,7 @@ button.import-source-option:focus-visible,
 .import-card.is-selected { border-color: rgba(36, 35, 31, 0.48); background: rgba(255, 255, 255, 0.7); }
 
 .import-editor { display: grid; grid-template-columns: minmax(140px, 0.8fr) minmax(0, 1.2fr); gap: 20px; }
+.import-editor.is-garment-review { grid-template-columns: minmax(320px, .95fr) minmax(0, 1.05fr); }
 .import-editor__garment-heading {
   grid-column: 1 / -1;
   display: grid;
@@ -843,6 +844,63 @@ button.import-source-option:focus-visible,
   border-radius: 16px;
 }
 .import-editor__preview { width: 100%; height: 100%; max-height: 360px; object-fit: contain; border-radius: inherit; }
+.import-editor__comparison {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  align-content: start;
+}
+.import-editor__comparison figure {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--import-line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .34);
+}
+.import-editor__comparison-media {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  min-height: 0;
+  max-height: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 0;
+  background: var(--import-ivory);
+}
+.import-editor__comparison-media.is-source {
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, .54), transparent 68%),
+    var(--import-ivory);
+}
+.import-editor__comparison-media > img,
+.import-editor__comparison-media .product-stage__content > img {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  display: block;
+  object-fit: contain;
+  border-radius: 0;
+}
+.import-editor__comparison figcaption {
+  min-height: 48px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--import-line);
+  background: rgba(255, 255, 255, .5);
+}
+.import-editor__comparison figcaption strong { font-size: 10px; font-weight: 580; }
+.import-editor__comparison figcaption span { color: var(--import-muted); font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
+.import-editor__comparison-guidance {
+  margin: 0;
+  padding: 10px 11px;
+  border-left: 2px solid rgba(36, 35, 31, .32);
+  background: rgba(36, 35, 31, .035);
+}
 .import-crop-editor { min-width: 0; display: grid; align-content: start; gap: 10px; }
 .import-crop-canvas {
   position: relative;
@@ -1005,6 +1063,7 @@ button.import-source-option:focus-visible,
   .import-cleanup-editor + .import-card-list { margin-top: 22px; }
   .import-card-list + .import-actions { margin-top: 22px; }
   .import-editor { grid-template-columns: 1fr; }
+  .import-editor.is-garment-review { grid-template-columns: 1fr; }
   .import-editor__garment-heading { grid-template-columns: 1fr; gap: 5px; }
   .import-editor__garment-heading span { grid-column: 1; }
   .import-editor__preview { max-height: 240px; }
