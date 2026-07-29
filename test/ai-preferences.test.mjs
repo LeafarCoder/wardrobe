@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AI_TASKS,
+  aiUsageEntriesForWardrobe,
   formatAiCost,
   migrateAiModelId,
   normalizeAiPreferences,
@@ -109,6 +110,46 @@ test("records which wardrobe a request served, separately from who paid", () => 
 
   assert.equal(provider.wardrobeUserId, "sara", "the work was done in Sara's wardrobe");
   assert.equal(provider.userId, "rafael", "but Rafael's account is billed");
+});
+
+test("attributes existing payer-owned ledger rows to the wardrobe where the work happened", () => {
+  const entries = [
+    {
+      id: "owner-in-target",
+      userId: "owner",
+      wardrobeUserId: "target",
+      operationGroup: "modeled",
+      model: "google/gemini-3.1-flash-image",
+      cost: 0.08,
+      createdAt: "2026-07-29T10:00:00.000Z",
+    },
+    {
+      id: "target-own-call",
+      userId: "target",
+      operationGroup: "analysis",
+      model: "google/gemini-3.1-flash-lite",
+      cost: 0.002,
+      createdAt: "2026-07-29T09:00:00.000Z",
+    },
+    {
+      id: "owner-own-call",
+      userId: "owner",
+      wardrobeUserId: "owner",
+      operationGroup: "analysis",
+      model: "google/gemini-3.1-flash-lite",
+      cost: 1,
+      createdAt: "2026-07-29T08:00:00.000Z",
+    },
+  ];
+
+  assert.deepEqual(
+    aiUsageEntriesForWardrobe(entries, "target").map((entry) => entry.id),
+    ["owner-in-target", "target-own-call"],
+  );
+  const summary = summarizeAiUsage(entries, "target");
+  assert.equal(summary.requestCount, 2);
+  assert.equal(summary.totalCost, 0.082);
+  assert.deepEqual(summary.recent.map((entry) => entry.id), ["owner-in-target", "target-own-call"]);
 });
 
 test("summarizes recorded AI spend by person, task, and model", () => {

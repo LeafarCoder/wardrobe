@@ -213,6 +213,53 @@ test("an owner can edit the selected tenant while non-owners remain isolated", a
     }];
     await writeFile(usersFile, JSON.stringify(store, null, 2));
 
+    await writeFile(path.join(dataDir, "ai-usage.json"), JSON.stringify({
+      version: 1,
+      entries: [{
+        id: "owner-paid-target-work",
+        userId: "default",
+        wardrobeUserId: TARGET_ID,
+        provider: "openrouter",
+        model: "google/gemini-3.1-flash-image",
+        operation: "modeled-on-demand",
+        operationGroup: "modeled",
+        completed: true,
+        cost: 0.08,
+        createdAt: "2026-07-29T10:00:00.000Z",
+      }, {
+        id: "owner-own-work",
+        userId: "default",
+        wardrobeUserId: "default",
+        provider: "openrouter",
+        model: "google/gemini-3.1-flash-lite",
+        operation: "analysis",
+        operationGroup: "analysis",
+        completed: true,
+        cost: 0.002,
+        createdAt: "2026-07-29T09:00:00.000Z",
+      }],
+    }, null, 2));
+
+    const targetUsageResponse = mockResponse();
+    await api.handler(mockGetRequest(
+      withWardrobeUser(`/api/users/${TARGET_ID}/ai-usage`, TARGET_ID),
+      `wardrobe_session=${createSessionToken(SESSION_SECRET, "default")}`,
+    ), targetUsageResponse, () => {});
+    assert.equal(targetUsageResponse.statusCode, 200);
+    assert.equal(targetUsageResponse.json().requestCount, 1);
+    assert.equal(targetUsageResponse.json().totalCost, 0.08);
+    assert.equal(targetUsageResponse.json().activities[0].requests[0].id, "owner-paid-target-work");
+
+    const ownerUsageResponse = mockResponse();
+    await api.handler(mockGetRequest(
+      "/api/users/default/ai-usage",
+      `wardrobe_session=${createSessionToken(SESSION_SECRET, "default")}`,
+    ), ownerUsageResponse, () => {});
+    assert.equal(ownerUsageResponse.statusCode, 200);
+    assert.equal(ownerUsageResponse.json().requestCount, 1);
+    assert.equal(ownerUsageResponse.json().totalCost, 0.002);
+    assert.equal(ownerUsageResponse.json().activities[0].requests[0].id, "owner-own-work");
+
     const scopedPath = withWardrobeUser(`/api/users/${TARGET_ID}`, TARGET_ID);
     const ownerResponse = mockResponse();
     await api.handler(mockRequest(scopedPath, {

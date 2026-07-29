@@ -43,6 +43,7 @@ import {
   wardrobeOutfitsAfterGarmentMerge,
 } from "../src/outfit-studio.js";
 import {
+  aiUsageEntriesForWardrobe,
   aiUsageActivities,
   migrateAiModelId,
   normalizeAiPreferences,
@@ -827,7 +828,8 @@ function logAiCall({ provider, model, operation, response, result = {}, startedA
   (completed ? console.info : console.error)(`[wardrobe:ai] ${parts.join(" | ")}`);
   if (provider.userId && typeof provider.recordUsage === "function") {
     void provider.recordUsage({
-      userId: provider.userId,
+      userId: provider.wardrobeUserId || provider.userId,
+      billingUserId: provider.userId,
       wardrobeUserId: provider.wardrobeUserId || provider.userId,
       provider: provider.id,
       model,
@@ -3561,11 +3563,19 @@ export function wardrobeImportApi(options = {}) {
       const ledger = await readAiUsageLedger();
       const id = entry.requestId || randomUUID();
       if (ledger.entries.some((existing) => existing.id === id)) return;
+      const wardrobeUserId = USER_ID.test(entry.wardrobeUserId || "")
+        ? entry.wardrobeUserId
+        : entry.userId;
+      const billingUserId = USER_ID.test(entry.billingUserId || "")
+        ? entry.billingUserId
+        : entry.userId;
       ledger.entries.push({
         id,
-        userId: entry.userId,
-        // Which wardrobe the work was done in, which is not always who paid.
-        wardrobeUserId: USER_ID.test(entry.wardrobeUserId || "") ? entry.wardrobeUserId : entry.userId,
+        // The log belongs to the wardrobe where the work happened. Billing stays
+        // separate because an owner may have supplied the OpenRouter key.
+        userId: wardrobeUserId,
+        billingUserId,
+        wardrobeUserId,
         provider: cleanLogValue(entry.provider || "unknown").slice(0, 40),
         model: cleanLogValue(entry.model || "unknown").slice(0, 180),
         operation: cleanLogValue(entry.operation || "other").slice(0, 60),
@@ -3717,7 +3727,7 @@ export function wardrobeImportApi(options = {}) {
     const profile = store?.users.find((candidate) => candidate.id === userId);
     if (!profile) throw apiError("Wardrobe user not found.", 404, "user_not_found");
     return aiUsageActivities(
-      ledger.entries.filter((entry) => entry?.userId === userId),
+      aiUsageEntriesForWardrobe(ledger.entries, userId),
       {
         uploads: history.uploads.filter((upload) => upload?.userId === userId),
         garments,
@@ -5935,7 +5945,12 @@ Interpret this correction semantically in whatever language it is written. It ov
     yield* yieldBuffer("wardrobe-data/data/library.json", jsonFile(owned));
     yield* yieldBuffer("wardrobe-data/data/ai-usage.json", jsonFile({
       version: 1,
-      entries: ledger.entries.filter((entry) => entry?.userId === userId),
+      entries: aiUsageEntriesForWardrobe(ledger.entries, userId).map((entry) => ({
+        ...entry,
+        userId,
+        wardrobeUserId: userId,
+        billingUserId: entry.billingUserId || entry.userId || userId,
+      })),
     }));
     yield* yieldBuffer("wardrobe-data/data/import-history.json", jsonFile({
       version: 1,
