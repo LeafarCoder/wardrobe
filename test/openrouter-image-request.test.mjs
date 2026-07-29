@@ -117,12 +117,101 @@ test("recognizes Portuguese sleeveless construction and lets a correction replac
   ), null);
 });
 
+test("turns a common subset of neckline details into hard reconstruction requirements", () => {
+  const cases = [
+    ["V-neck", /two diagonal edges meeting at the visible V point/i],
+    ["crew neck", /close, round crew or jewel curve/i],
+    ["scoop neck", /broad, visibly deep U-shaped scoop curve/i],
+    ["square neck", /square opening with a straight horizontal lower edge/i],
+    ["boat neck", /wide, shallow boat or Sabrina curve/i],
+    ["sweetheart neckline", /two rounded upper curves and a clear central dip/i],
+    ["halter neck", /halter construction rising from the bodice/i],
+    ["high neck", /close high-neck construction/i],
+    ["off-shoulder", /off-shoulder edge below both shoulders/i],
+    ["one-shoulder", /asymmetric one-shoulder construction/i],
+    ["strapless", /strapless straight-across upper edge/i],
+    ["spaghetti straps", /two very thin spaghetti shoulder straps/i],
+    ["keyhole neckline", /distinct keyhole cutout/i],
+  ];
+
+  for (const [tag, expected] of cases) {
+    const prompt = buildGarmentPrompt({
+      name: "evening dress",
+      part: "wholebody",
+      tags: [tag],
+    }, "#00ffff");
+    assert.match(prompt, expected, tag);
+  }
+});
+
+test("preserves compatible neckline features together without applying them to accessories", () => {
+  const sweetheartStraps = buildGarmentPrompt({
+    name: "summer dress",
+    part: "wholebody",
+    tags: ["spaghetti straps", "sweetheart neckline"],
+  }, "#00ffff");
+  assert.match(sweetheartStraps, /two very thin spaghetti shoulder straps/i);
+  assert.match(sweetheartStraps, /two rounded upper curves and a clear central dip/i);
+
+  const highNeckKeyhole = buildGarmentPrompt({
+    name: "keyhole blouse",
+    part: "upperbody",
+    tags: ["high neck", "keyhole neckline"],
+  }, "#00ffff");
+  assert.match(highNeckKeyhole, /close high-neck construction/i);
+  assert.match(highNeckKeyhole, /distinct keyhole cutout/i);
+
+  const necklace = buildGarmentPrompt({
+    name: "sweetheart necklace",
+    part: "accessories_up",
+    tags: ["heart pendant"],
+  }, "#00ffff");
+  assert.doesNotMatch(necklace, /two rounded upper curves and a clear central dip/i);
+});
+
+test("rejects an explicitly contradictory generated neckline in English or Portuguese", () => {
+  assert.equal(garmentSemanticMismatch(
+    { name: "V-neck dress", part: "wholebody", tags: ["V-neck"] },
+    [{ name: "Square-neck dress", part: "wholebody", tags: ["square neckline"] }],
+  ), "generated a square neckline instead of the explicitly requested V-neckline");
+
+  assert.equal(garmentSemanticMismatch(
+    { name: "top de decote quadrado", part: "upperbody", tags: ["decote quadrado"] },
+    [{ name: "top com decote em V", part: "upperbody", tags: ["decote em V"] }],
+  ), "generated a V-neckline instead of the explicitly requested square neckline");
+
+  assert.equal(garmentSemanticMismatch(
+    { name: "scoop-neck top", part: "upperbody", tags: ["scoop neck"] },
+    [{ name: "Scoop-neck top", part: "upperbody", tags: ["scoop neckline"] }],
+  ), null);
+});
+
+test("lets an explicit neckline correction replace saved neckline metadata", () => {
+  const metadata = {
+    name: "V-neck dress",
+    part: "wholebody",
+    tags: ["V-neck", "midi"],
+  };
+  const correction = "Change the V-neck to a scoop neck.";
+  const prompt = buildGarmentPrompt(metadata, "#00ffff", { userDirection: correction });
+
+  assert.match(prompt, /broad, visibly deep U-shaped scoop curve/i);
+  assert.doesNotMatch(prompt, /two diagonal edges meeting at the visible V point/i);
+  assert.equal(garmentSemanticMismatch(
+    metadata,
+    [{ name: "Scoop-neck dress", part: "wholebody", tags: ["scoop neckline", "midi"] }],
+    correction,
+  ), null);
+});
+
 test("asks analysis to prioritize visible garment construction", () => {
   const prompt = analysisPrompt("en-US");
 
   assert.match(prompt, /whether it is sleeveless or the visible sleeve length/i);
-  assert.match(prompt, /collar or neckline, front closure, straps, waist construction/i);
+  assert.match(prompt, /collar or exact common neckline, front closure, straps, waist construction/i);
   assert.match(prompt, /mini, midi, or maxi hem length/i);
+  assert.match(prompt, /V-neck, crew or jewel neck, scoop neck, square neck/i);
+  assert.match(prompt, /off-shoulder, one-shoulder, strapless straight-across/i);
   assert.match(prompt, /Never describe a sleeveless garment as sleeved/i);
 });
 

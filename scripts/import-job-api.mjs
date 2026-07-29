@@ -124,7 +124,7 @@ export function providerWithProfilePreferences(provider = {}, profile = {}, paye
   };
 }
 
-const ANALYSIS_PROMPT = "Identify every distinct wearable clothing item visible in this image. A photo may show one isolated garment or a person wearing several items. Return one record per actual item that should enter a wardrobe. Ignore the person's body and non-wearable background objects. For each item, include a precise, tight bounding box around the visible pixels of that garment using integer coordinates normalized to a 1000 by 1000 image: x and y are the top-left corner, followed by width and height. Do not box the whole person or the whole outfit. Do not include another garment merely because it is directly above, below, or behind the intended item. For a jacket or blazer, start at the shoulders and stop at the jacket hem; exclude the trousers below it. For trousers, start at the waistband and stop at the trouser hems; exclude the shirt or jacket above them. For a small accessory, include the complete identifiable product rather than only one component: for example, a watch box must contain the complete visible face, case, crown, and strap—not merely the wrist or strap. Leave only about 2-4% visual breathing room around the intended garment. Boxes may overlap where garments physically overlap, but an upper-body box must not substantially contain the trousers or shoes box, and a trousers box must not contain the shoes box. Before responding, compare every pair of boxes and tighten any box that contains most of an item belonging to another category. Use only these category ids: upperbody for tops; wholebody_up for outerwear such as jackets, coats, and blazers; lowerbody for trousers, shorts, and skirts; wholebody for dresses, jumpsuits, rompers, and overalls; shoes for footwear; accessories_up for accessories. Suggest a concise specific name, primary hex color, optional genuinely distinct secondary hex color, 1-4 useful lowercase detail tags, likely materials only when visually supported, visible fit descriptors, and suitable seasons. Prioritize objectively visible construction in the detail tags: whether it is sleeveless or the visible sleeve length, collar or neckline, front closure, straps, waist construction, and mini, midi, or maxi hem length where applicable. Never describe a sleeveless garment as sleeved, or a sleeved garment as sleeveless. A secondary color must be a deliberately different visible exterior color with meaningful coverage, such as a contrasting panel, pattern, sole, or strap. Return secondaryColor as null when the apparent difference is only a shadow, highlight, fold, texture variation, darker interior, jacket lining, lapel facing, or another shade of the same material. Do not infer a secondary color from stitching, tiny hardware, skin, another garment, or the background. Leave size labels empty because they cannot be reliably inferred from a photograph.";
+const ANALYSIS_PROMPT = "Identify every distinct wearable clothing item visible in this image. A photo may show one isolated garment or a person wearing several items. Return one record per actual item that should enter a wardrobe. Ignore the person's body and non-wearable background objects. For each item, include a precise, tight bounding box around the visible pixels of that garment using integer coordinates normalized to a 1000 by 1000 image: x and y are the top-left corner, followed by width and height. Do not box the whole person or the whole outfit. Do not include another garment merely because it is directly above, below, or behind the intended item. For a jacket or blazer, start at the shoulders and stop at the jacket hem; exclude the trousers below it. For trousers, start at the waistband and stop at the trouser hems; exclude the shirt or jacket above them. For a small accessory, include the complete identifiable product rather than only one component: for example, a watch box must contain the complete visible face, case, crown, and strap—not merely the wrist or strap. Leave only about 2-4% visual breathing room around the intended garment. Boxes may overlap where garments physically overlap, but an upper-body box must not substantially contain the trousers or shoes box, and a trousers box must not contain the shoes box. Before responding, compare every pair of boxes and tighten any box that contains most of an item belonging to another category. Use only these category ids: upperbody for tops; wholebody_up for outerwear such as jackets, coats, and blazers; lowerbody for trousers, shorts, and skirts; wholebody for dresses, jumpsuits, rompers, and overalls; shoes for footwear; accessories_up for accessories. Suggest a concise specific name, primary hex color, optional genuinely distinct secondary hex color, 1-4 useful lowercase detail tags, likely materials only when visually supported, visible fit descriptors, and suitable seasons. Prioritize objectively visible construction in the detail tags: whether it is sleeveless or the visible sleeve length, collar or exact common neckline, front closure, straps, waist construction, and mini, midi, or maxi hem length where applicable. When clearly visible, name the neckline consistently as V-neck, crew or jewel neck, scoop neck, square neck, boat or Sabrina neck, sweetheart, halter, high neck, off-shoulder, one-shoulder, strapless straight-across, spaghetti-strap, or keyhole. Never describe a sleeveless garment as sleeved, or a sleeved garment as sleeveless. A secondary color must be a deliberately different visible exterior color with meaningful coverage, such as a contrasting panel, pattern, sole, or strap. Return secondaryColor as null when the apparent difference is only a shadow, highlight, fold, texture variation, darker interior, jacket lining, lapel facing, or another shade of the same material. Do not infer a secondary color from stitching, tiny hardware, skin, another garment, or the background. Leave size labels empty because they cannot be reliably inferred from a photograph.";
 export function analysisPrompt(language) {
   const languageInstruction = language === "pt-PT"
     ? "Write the garment name, tags, fit descriptors, and material names in European Portuguese. Keep category ids and season ids exactly as required by the schema."
@@ -1647,6 +1647,107 @@ function garmentSubtypePrompt(metadata = {}, userDirection = "") {
   return "";
 }
 
+const GARMENT_NECKLINES = [
+  {
+    id: "off-shoulder",
+    group: "support",
+    label: "off-shoulder neckline",
+    pattern: /\b(off[- ]shoulders?|bardot neckline|ombros? (?:descobertos?|de fora)|decote bardot)\b/,
+    prompt: "Neckline: preserve the off-shoulder edge below both shoulders, leaving the shoulders visibly uncovered; do not add shoulder or neck straps.",
+  },
+  {
+    id: "one-shoulder",
+    group: "support",
+    label: "one-shoulder/asymmetric neckline",
+    pattern: /\b(one[- ]shoulder|single[- ]shoulder|asymmetric neckline|asymmetrical neckline|decote assimetrico|um ombro)\b/,
+    prompt: "Neckline: preserve the asymmetric one-shoulder construction, with support on one shoulder and the other shoulder exposed; do not make both sides symmetrical.",
+  },
+  {
+    id: "strapless",
+    group: "support",
+    label: "strapless straight-across neckline",
+    pattern: /\b(strapless|straight[- ]across neckline|tomara que caia|cai[- ]cai)\b/,
+    prompt: "Neckline: preserve the strapless straight-across upper edge and bare shoulders; do not invent shoulder, spaghetti, or halter straps.",
+  },
+  {
+    id: "halter",
+    group: "support",
+    label: "halter neckline",
+    pattern: /\b(halter(?:[- ]neck| neckline| strap)?|frente unica)\b/,
+    prompt: "Neckline: preserve the halter construction rising from the bodice to fasten or wrap around the neck, with the shoulder tops exposed; keep the visible strap routing exact.",
+  },
+  {
+    id: "spaghetti-strap",
+    group: "support",
+    label: "spaghetti-strap neckline",
+    pattern: /\b(spaghetti straps?|spaghetti[- ]strap neckline|thin shoulder straps?|alcas? finas?)\b/,
+    prompt: "Neckline: preserve the two very thin spaghetti shoulder straps and the exact front edge between them; do not widen, remove, or convert the straps into sleeves or a halter.",
+  },
+  {
+    id: "keyhole",
+    group: "detail",
+    label: "keyhole neckline",
+    pattern: /\b(keyhole(?: neckline)?|decote gota|abertura em gota)\b/,
+    prompt: "Neckline: preserve the main neckline together with its distinct keyhole cutout, including the opening shape and the fabric bridge or fastening above it.",
+  },
+  {
+    id: "sweetheart",
+    group: "shape",
+    label: "sweetheart neckline",
+    pattern: /\b(sweetheart(?: neckline)?|decote coracao)\b/,
+    prompt: "Neckline: preserve the sweetheart shape with two rounded upper curves and a clear central dip; do not flatten it or turn it into a V, scoop, or square neck.",
+  },
+  {
+    id: "boat",
+    group: "shape",
+    label: "boat/Sabrina neckline",
+    pattern: /\b(boat[- ]neck|bateau neckline|sabrina neckline|sabrina neck|decote canoa)\b/,
+    prompt: "Neckline: preserve the wide, shallow boat or Sabrina curve running nearly shoulder-to-shoulder across the collarbones; do not deepen or narrow it.",
+  },
+  {
+    id: "square",
+    group: "shape",
+    label: "square neckline",
+    pattern: /\b(square[- ]neck|square neckline|decote quadrado)\b/,
+    prompt: "Neckline: preserve the square opening with a straight horizontal lower edge and near-vertical sides; do not round it or turn it into a V.",
+  },
+  {
+    id: "scoop",
+    group: "shape",
+    label: "scoop neckline",
+    pattern: /\b(scoop[- ]neck|scoop neckline|u[- ]neck|decote em u|decote redondo profundo)\b/,
+    prompt: "Neckline: preserve the broad, visibly deep U-shaped scoop curve; do not close it into a crew neck or sharpen it into a V.",
+  },
+  {
+    id: "v-neck",
+    group: "shape",
+    label: "V-neckline",
+    pattern: /\b(v[- ]neck|v neckline|decote em v|gola em v)\b/,
+    prompt: "Neckline: preserve the two diagonal edges meeting at the visible V point and its exact depth; do not round, square, or close the opening.",
+  },
+  {
+    id: "high-neck",
+    group: "shape",
+    label: "high neckline",
+    pattern: /\b(high[- ]neck|mock[- ]neck|turtleneck|roll[- ]neck|gola alta|gola subida)\b/,
+    prompt: "Neckline: preserve the close high-neck construction and its exact visible height, fold, or stand; do not lower it into an open neckline.",
+  },
+  {
+    id: "crew",
+    group: "shape",
+    label: "crew/jewel neckline",
+    pattern: /\b(crew[- ]neck|jewel neckline|jewel neck|decote redondo fechado|gola redonda justa)\b/,
+    prompt: "Neckline: preserve the close, round crew or jewel curve at the base of the neck; do not deepen it into a scoop or raise it into a high neck.",
+  },
+];
+
+function garmentNecklines(text = "") {
+  return GARMENT_NECKLINES.flatMap((neckline) => {
+    const match = text.match(neckline.pattern);
+    return match ? [{ ...neckline, index: match.index ?? 0 }] : [];
+  }).sort((a, b) => a.index - b.index);
+}
+
 function garmentStructuralTraits(metadata = {}, userDirection = "") {
   const savedText = garmentSemanticText(metadata);
   const correctionText = garmentSemanticText({}, userDirection);
@@ -1654,6 +1755,14 @@ function garmentStructuralTraits(metadata = {}, userDirection = "") {
   const lengthPattern = /\b(midi|mid[- ]calf|below[- ]knee|mini(?:dress|skirt)?|above[- ]knee|maxi(?:dress|skirt)?|ankle[- ]length|floor[- ]length)\b/;
   const sleeveText = sleevePattern.test(correctionText) ? correctionText : savedText;
   const lengthText = lengthPattern.test(correctionText) ? correctionText : savedText;
+  const supportsNeckline = ["upperbody", "wholebody_up", "wholebody"].includes(metadata.part);
+  const savedNecklines = supportsNeckline ? garmentNecklines(savedText) : [];
+  const correctedNecklines = supportsNeckline ? garmentNecklines(correctionText) : [];
+  const necklines = ["support", "shape", "detail"].flatMap((group) => {
+    const correction = correctedNecklines.filter((neckline) => neckline.group === group).at(-1);
+    const saved = savedNecklines.find((neckline) => neckline.group === group);
+    return correction || saved ? [(correction || saved).id] : [];
+  });
   let sleeves = null;
   if (/\b(sleeveless|no sleeves?|without sleeves?|remove (?:the )?sleeves?|sem mangas?)\b/.test(sleeveText)) sleeves = "sleeveless";
   else if (/\b(long[- ]?sleeved?|long sleeves?|mangas? compridas?|mangas? longas?)\b/.test(sleeveText)) sleeves = "long";
@@ -1668,6 +1777,7 @@ function garmentStructuralTraits(metadata = {}, userDirection = "") {
   return {
     sleeves,
     length,
+    necklines,
     collared: /\b(collared|shirt collar|point collar|colarinho)\b/.test(savedText),
     belted: /\b(belted|self[- ]tie belt|tie belt|waist belt|com cinto)\b/.test(savedText),
     buttonFront: /\b(button[- ]down|button[- ]front|front buttons?|shirt dress|abotoado|botoes? frontais?)\b/.test(savedText),
@@ -1684,6 +1794,10 @@ function garmentStructuralPrompt(metadata = {}, userDirection = "") {
   if (traits.length === "midi") requirements.push("Hem length: MIDI means below the knee and around mid-calf; do not turn it into a mini or ankle/floor-length maxi garment.");
   if (traits.length === "mini") requirements.push("Hem length: preserve the above-knee mini length; do not lengthen it to midi or maxi.");
   if (traits.length === "maxi") requirements.push("Hem length: preserve the ankle- or floor-length maxi silhouette; do not shorten it to midi or mini.");
+  for (const necklineId of traits.necklines) {
+    const neckline = GARMENT_NECKLINES.find((candidate) => candidate.id === necklineId);
+    if (neckline) requirements.push(neckline.prompt);
+  }
   if (traits.collared) requirements.push("Collar: preserve the visible constructed collar; do not replace it with a collarless neckline.");
   if (traits.belted) requirements.push("Waist: preserve the matching belt or self-tie and its visible attachment or loops.");
   if (traits.buttonFront) requirements.push("Closure: preserve the visible front-button or button-down construction and button placement.");
@@ -1693,7 +1807,7 @@ function garmentStructuralPrompt(metadata = {}, userDirection = "") {
 
 function garmentHasStructuralRequirements(metadata = {}, userDirection = "") {
   const traits = garmentStructuralTraits(metadata, userDirection);
-  return Boolean(traits.sleeves || traits.length || traits.collared || traits.belted || traits.buttonFront);
+  return Boolean(traits.sleeves || traits.length || traits.necklines.length || traits.collared || traits.belted || traits.buttonFront);
 }
 
 function detectedSleeveTrait(text = "") {
@@ -1726,6 +1840,15 @@ export function garmentSemanticMismatch(metadata = {}, detectedItems = [], userD
   const detectedLength = detectedLengthTrait(detected);
   if (structuralTraits.length && detectedLength && structuralTraits.length !== detectedLength) {
     return `generated a ${detectedLength}-length garment instead of the explicitly requested ${structuralTraits.length} length`;
+  }
+  const detectedNecklines = garmentNecklines(detected);
+  for (const requestedId of structuralTraits.necklines) {
+    const requestedNeckline = GARMENT_NECKLINES.find((candidate) => candidate.id === requestedId);
+    if (!requestedNeckline || requestedNeckline.group === "detail") continue;
+    const detectedGroup = detectedNecklines.filter((candidate) => candidate.group === requestedNeckline.group);
+    if (detectedGroup.length && !detectedGroup.some((candidate) => candidate.id === requestedId)) {
+      return `generated a ${detectedGroup[0].label} instead of the explicitly requested ${requestedNeckline.label}`;
+    }
   }
   if (structuralTraits.collared && /\b(collarless|sem colarinho)\b/.test(detected)) {
     return "removed the explicitly requested collar";
