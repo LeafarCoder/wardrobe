@@ -2503,9 +2503,46 @@ button { font: inherit; }
   padding: 0;
   background: rgba(250, 247, 241, .88);
   color: rgba(25, 24, 22, .68);
-  pointer-events: none;
+  cursor: help;
   backdrop-filter: blur(7px);
   -webkit-backdrop-filter: blur(7px);
+}
+
+.garment-media-ai-badge::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 7px);
+  z-index: 12;
+  width: max-content;
+  max-width: 150px;
+  visibility: hidden;
+  border: 1px solid rgba(25, 24, 22, .14);
+  border-radius: 5px;
+  padding: 6px 8px;
+  background: rgba(250, 247, 241, .96);
+  color: var(--ink);
+  box-shadow: 0 7px 20px rgba(25, 24, 22, .12);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(-3px);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms;
+  white-space: nowrap;
+}
+
+.garment-media-ai-badge:hover::after,
+.garment-media-ai-badge:focus-visible::after {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.garment-media-ai-badge:focus-visible {
+  outline: 1px solid rgba(25, 24, 22, .7);
+  outline-offset: 2px;
 }
 
 .garment-media-ai-badge.is-dialog {
