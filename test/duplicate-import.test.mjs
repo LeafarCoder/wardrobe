@@ -5,6 +5,7 @@ import {
   duplicateCandidateScore,
   importedRecordAssets,
   mergeImportedRecords,
+  modeledLooksForRecord,
   refineDetectedBoundingBoxes,
   recordWithSourcePhotos,
   selectGarmentRegenerationSources,
@@ -174,12 +175,18 @@ test("keeps every unique source-photo occurrence and exposes its assets", () => 
   assert.ok(importedRecordAssets(record).includes("/api/import/library/candidate-preview.webp"));
 });
 
-test("merges existing garments without losing either original-photo occurrence", () => {
+test("merges existing garments without losing original photos or modeled looks", () => {
   const keeper = recordWithSourcePhotos({
     id: "import-keeper",
     name: "Linen shirt",
     image: "/api/import/library/keeper-garment.png",
     imagePreview: "/api/import/library/keeper-preview.webp",
+    modeledLooks: [{
+      id: "look",
+      image: "/api/import/library/keeper-look.png",
+      preview: "/api/import/library/keeper-look-preview.webp",
+      generatedAt: "2026-07-28T10:00:00.000Z",
+    }],
   }, [{
     id: "original",
     image: "/api/import/library/keeper-source.png",
@@ -191,7 +198,12 @@ test("merges existing garments without losing either original-photo occurrence",
     name: "Duplicate shirt",
     image: "/api/import/library/discarded-garment.png",
     imagePreview: "/api/import/library/discarded-preview.webp",
-    modeledLooks: [{ id: "look", image: "/api/import/library/discarded-look.png" }],
+    modeledLooks: [{
+      id: "look",
+      image: "/api/import/library/discarded-look.png",
+      preview: "/api/import/library/discarded-look-preview.webp",
+      generatedAt: "2026-07-28T11:00:00.000Z",
+    }],
   }, [{
     id: "original",
     image: "/api/import/library/discarded-source.png",
@@ -201,6 +213,7 @@ test("merges existing garments without losing either original-photo occurrence",
 
   const merged = mergeImportedRecords(keeper, discarded, "2026-07-28T12:00:00.000Z");
   const sources = sourcePhotosForRecord(merged);
+  const looks = modeledLooksForRecord(merged);
   const removedAssets = discardedAssetsAfterMerge(merged, discarded);
 
   assert.equal(merged.id, keeper.id);
@@ -208,9 +221,17 @@ test("merges existing garments without losing either original-photo occurrence",
   assert.equal(merged.updatedAt, "2026-07-28T12:00:00.000Z");
   assert.deepEqual(sources.map((photo) => photo.id), ["original", "original-2"]);
   assert.deepEqual(sources.map((photo) => photo.importJobId), ["keeper-job", "discarded-job"]);
+  assert.deepEqual(looks.map((look) => look.id), ["look", "look-2"]);
+  assert.deepEqual(looks.map((look) => look.image), [
+    "/api/import/library/keeper-look.png",
+    "/api/import/library/discarded-look.png",
+  ]);
+  assert.equal(merged.modeledImage, "/api/import/library/discarded-look.png");
+  assert.equal(merged.mediaOrder[0], "modeled:look-2");
   assert.equal(merged.originalImage, "/api/import/library/keeper-source.png");
   assert.ok(removedAssets.includes("/api/import/library/discarded-garment.png"));
-  assert.ok(removedAssets.includes("/api/import/library/discarded-look.png"));
+  assert.equal(removedAssets.includes("/api/import/library/discarded-look.png"), false);
+  assert.equal(removedAssets.includes("/api/import/library/discarded-look-preview.webp"), false);
   assert.equal(removedAssets.includes("/api/import/library/discarded-source.png"), false);
   assert.equal(removedAssets.includes("/api/import/library/discarded-source-preview.webp"), false);
 });

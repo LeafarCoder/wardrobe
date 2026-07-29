@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import {
   createSessionToken,
+  modeledLooksForRecord,
   sourcePhotosForRecord,
   wardrobeImportApi,
 } from "../scripts/import-job-api.mjs";
@@ -44,7 +45,7 @@ function mockResponse() {
   };
 }
 
-test("the authenticated wardrobe merge endpoint keeps both source-photo histories", async () => {
+test("the authenticated wardrobe merge endpoint keeps source photos and modeled looks", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "wardrobe-merge-api-"));
   const dataDir = path.join(root, "data");
   const api = wardrobeImportApi({
@@ -66,6 +67,13 @@ test("the authenticated wardrobe merge endpoint keeps both source-photo historie
         part: "upperbody",
         color: "#e7e1d7",
         image: "/api/import/library/first-garment.png",
+        modeledLooks: [{
+          id: "first-look",
+          image: "/api/import/library/first-look.png",
+          preview: "/api/import/library/first-look-preview.webp",
+          model: "google/example",
+          generatedAt: "2026-07-28T10:00:00.000Z",
+        }],
         sourcePhotos: [{
           id: "first-source",
           image: "/api/import/library/first-source.png",
@@ -79,6 +87,11 @@ test("the authenticated wardrobe merge endpoint keeps both source-photo historie
         part: "upperbody",
         color: "#ded8cf",
         image: "/api/import/library/second-garment.png",
+        modeledLooks: [{
+          id: "second-look",
+          image: "/api/import/library/second-look.png",
+          generatedAt: "2026-07-28T11:00:00.000Z",
+        }],
         sourcePhotos: [{
           id: "second-source",
           image: "/api/import/library/second-source.png",
@@ -106,12 +119,20 @@ test("the authenticated wardrobe merge endpoint keeps both source-photo historie
     assert.equal(response.json().item.id, "import-second");
     assert.equal(response.json().removedId, "import-first");
     assert.equal(response.json().item.sourcePhotos.length, 2);
+    assert.deepEqual(
+      response.json().item.modeledLooks.map((look) => look.id),
+      ["second-look", "first-look"],
+    );
 
     const stored = JSON.parse(await readFile(path.join(dataDir, "library.json"), "utf8"));
     assert.deepEqual(stored.map((item) => item.id), ["import-second", "import-someone-elses"]);
     assert.deepEqual(
       sourcePhotosForRecord(stored[0]).map((photo) => photo.importJobId),
       ["second-job", "first-job"],
+    );
+    assert.deepEqual(
+      modeledLooksForRecord(stored[0]).map((look) => look.image),
+      ["/api/import/library/second-look.png", "/api/import/library/first-look.png"],
     );
 
     const forbiddenRequest = mockRequest("/api/import/wardrobe/merge", {

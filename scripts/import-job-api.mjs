@@ -1052,10 +1052,30 @@ export function mergeImportedRecords(keeper = {}, discarded = {}, updatedAt = ne
     seenIds.add(id);
     sourcePhotos.push({ ...photo, id });
   }
-  return recordWithSourcePhotos({
+
+  const modeledLooks = [];
+  const seenLookAssets = new Set();
+  const seenLookIds = new Set();
+  for (const look of [...modeledLooksForRecord(keeper), ...modeledLooksForRecord(discarded)]) {
+    const assetKey = look.image.split("?")[0];
+    if (seenLookAssets.has(assetKey)) continue;
+    seenLookAssets.add(assetKey);
+    const baseId = String(look.id || "look").replace(/[^a-z0-9-]/gi, "-").slice(0, 68) || "look";
+    let id = baseId;
+    let suffix = 2;
+    while (seenLookIds.has(id)) {
+      id = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+    seenLookIds.add(id);
+    modeledLooks.push({ ...look, id });
+  }
+
+  const withSources = recordWithSourcePhotos({
     ...keeper,
     updatedAt,
   }, sourcePhotos);
+  return recordWithModeledLooks(withSources, modeledLooks);
 }
 
 const DUPLICATE_GENERIC_TOKENS = new Set([
@@ -5567,7 +5587,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       console.warn(`[wardrobe] Garments merged, but import history could not be retargeted: ${error.message}`);
     });
 
-    console.info(`[wardrobe] Merged existing garment "${merged.discardedRecord.name}" into "${merged.record.name}" and retained ${sourcePhotosForRecord(merged.record).length} source photos.`);
+    console.info(`[wardrobe] Merged existing garment "${merged.discardedRecord.name}" into "${merged.record.name}" and retained ${sourcePhotosForRecord(merged.record).length} source photos and ${modeledLooksForRecord(merged.record).length} modeled looks.`);
     return { record: merged.record, profile };
   }
 
