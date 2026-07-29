@@ -124,7 +124,7 @@ export function providerWithProfilePreferences(provider = {}, profile = {}, paye
   };
 }
 
-const ANALYSIS_PROMPT = "Identify every distinct wearable clothing item visible in this image. A photo may show one isolated garment or a person wearing several items. Return one record per actual item that should enter a wardrobe. Ignore the person's body and non-wearable background objects. For each item, include a precise, tight bounding box around the visible pixels of that garment using integer coordinates normalized to a 1000 by 1000 image: x and y are the top-left corner, followed by width and height. Do not box the whole person or the whole outfit. Do not include another garment merely because it is directly above, below, or behind the intended item. For a jacket or blazer, start at the shoulders and stop at the jacket hem; exclude the trousers below it. For trousers, start at the waistband and stop at the trouser hems; exclude the shirt or jacket above them. For a small accessory, include the complete identifiable product rather than only one component: for example, a watch box must contain the complete visible face, case, crown, and strap—not merely the wrist or strap. Leave only about 2-4% visual breathing room around the intended garment. Boxes may overlap where garments physically overlap, but an upper-body box must not substantially contain the trousers or shoes box, and a trousers box must not contain the shoes box. Before responding, compare every pair of boxes and tighten any box that contains most of an item belonging to another category. Use only these category ids: upperbody for tops; wholebody_up for outerwear such as jackets, coats, and blazers; lowerbody for trousers, shorts, and skirts; wholebody for dresses, jumpsuits, rompers, and overalls; shoes for footwear; accessories_up for accessories. Suggest a concise specific name, primary hex color, optional genuinely distinct secondary hex color, 1-4 useful lowercase detail tags, likely materials only when visually supported, visible fit descriptors, and suitable seasons. A secondary color must be a deliberately different visible exterior color with meaningful coverage, such as a contrasting panel, pattern, sole, or strap. Return secondaryColor as null when the apparent difference is only a shadow, highlight, fold, texture variation, darker interior, jacket lining, lapel facing, or another shade of the same material. Do not infer a secondary color from stitching, tiny hardware, skin, another garment, or the background. Leave size labels empty because they cannot be reliably inferred from a photograph.";
+const ANALYSIS_PROMPT = "Identify every distinct wearable clothing item visible in this image. A photo may show one isolated garment or a person wearing several items. Return one record per actual item that should enter a wardrobe. Ignore the person's body and non-wearable background objects. For each item, include a precise, tight bounding box around the visible pixels of that garment using integer coordinates normalized to a 1000 by 1000 image: x and y are the top-left corner, followed by width and height. Do not box the whole person or the whole outfit. Do not include another garment merely because it is directly above, below, or behind the intended item. For a jacket or blazer, start at the shoulders and stop at the jacket hem; exclude the trousers below it. For trousers, start at the waistband and stop at the trouser hems; exclude the shirt or jacket above them. For a small accessory, include the complete identifiable product rather than only one component: for example, a watch box must contain the complete visible face, case, crown, and strap—not merely the wrist or strap. Leave only about 2-4% visual breathing room around the intended garment. Boxes may overlap where garments physically overlap, but an upper-body box must not substantially contain the trousers or shoes box, and a trousers box must not contain the shoes box. Before responding, compare every pair of boxes and tighten any box that contains most of an item belonging to another category. Use only these category ids: upperbody for tops; wholebody_up for outerwear such as jackets, coats, and blazers; lowerbody for trousers, shorts, and skirts; wholebody for dresses, jumpsuits, rompers, and overalls; shoes for footwear; accessories_up for accessories. Suggest a concise specific name, primary hex color, optional genuinely distinct secondary hex color, 1-4 useful lowercase detail tags, likely materials only when visually supported, visible fit descriptors, and suitable seasons. Prioritize objectively visible construction in the detail tags: whether it is sleeveless or the visible sleeve length, collar or neckline, front closure, straps, waist construction, and mini, midi, or maxi hem length where applicable. Never describe a sleeveless garment as sleeved, or a sleeved garment as sleeveless. A secondary color must be a deliberately different visible exterior color with meaningful coverage, such as a contrasting panel, pattern, sole, or strap. Return secondaryColor as null when the apparent difference is only a shadow, highlight, fold, texture variation, darker interior, jacket lining, lapel facing, or another shade of the same material. Do not infer a secondary color from stitching, tiny hardware, skin, another garment, or the background. Leave size labels empty because they cannot be reliably inferred from a photograph.";
 export function analysisPrompt(language) {
   const languageInstruction = language === "pt-PT"
     ? "Write the garment name, tags, fit descriptors, and material names in European Portuguese. Keep category ids and season ids exactly as required by the schema."
@@ -1647,14 +1647,96 @@ function garmentSubtypePrompt(metadata = {}, userDirection = "") {
   return "";
 }
 
+function garmentStructuralTraits(metadata = {}, userDirection = "") {
+  const savedText = garmentSemanticText(metadata);
+  const correctionText = garmentSemanticText({}, userDirection);
+  const sleevePattern = /\b(sleeveless|no sleeves?|without sleeves?|remove (?:the )?sleeves?|sem mangas?|long[- ]?sleeved?|long sleeves?|short[- ]?sleeved?|short sleeves?|cap sleeves?|three[- ]quarter sleeves?|3\/?4 sleeves?|mangas? compridas?|mangas? longas?|mangas? curtas?|mangas? tres quartos?)\b/;
+  const lengthPattern = /\b(midi|mid[- ]calf|below[- ]knee|mini(?:dress|skirt)?|above[- ]knee|maxi(?:dress|skirt)?|ankle[- ]length|floor[- ]length)\b/;
+  const sleeveText = sleevePattern.test(correctionText) ? correctionText : savedText;
+  const lengthText = lengthPattern.test(correctionText) ? correctionText : savedText;
+  let sleeves = null;
+  if (/\b(sleeveless|no sleeves?|without sleeves?|remove (?:the )?sleeves?|sem mangas?)\b/.test(sleeveText)) sleeves = "sleeveless";
+  else if (/\b(long[- ]?sleeved?|long sleeves?|mangas? compridas?|mangas? longas?)\b/.test(sleeveText)) sleeves = "long";
+  else if (/\b(three[- ]quarter sleeves?|3\/?4 sleeves?|mangas? tres quartos?)\b/.test(sleeveText)) sleeves = "three-quarter";
+  else if (/\b(short[- ]?sleeved?|short sleeves?|cap sleeves?|mangas? curtas?)\b/.test(sleeveText)) sleeves = "short";
+
+  let length = null;
+  if (/\b(midi|mid[- ]calf|below[- ]knee)\b/.test(lengthText)) length = "midi";
+  else if (/\b(mini(?:dress|skirt)?|above[- ]knee)\b/.test(lengthText)) length = "mini";
+  else if (/\b(maxi(?:dress|skirt)?|ankle[- ]length|floor[- ]length)\b/.test(lengthText)) length = "maxi";
+
+  return {
+    sleeves,
+    length,
+    collared: /\b(collared|shirt collar|point collar|colarinho)\b/.test(savedText),
+    belted: /\b(belted|self[- ]tie belt|tie belt|waist belt|com cinto)\b/.test(savedText),
+    buttonFront: /\b(button[- ]down|button[- ]front|front buttons?|shirt dress|abotoado|botoes? frontais?)\b/.test(savedText),
+  };
+}
+
+function garmentStructuralPrompt(metadata = {}, userDirection = "") {
+  const traits = garmentStructuralTraits(metadata, userDirection);
+  const requirements = [];
+  if (traits.sleeves === "sleeveless") requirements.push("Sleeves: SLEEVELESS means no sleeves at all. Preserve the open armholes and shoulder line; do not add cap, short, three-quarter, or long sleeves.");
+  if (traits.sleeves === "short") requirements.push("Sleeves: preserve the visible short or cap-sleeve length; do not lengthen them.");
+  if (traits.sleeves === "three-quarter") requirements.push("Sleeves: preserve the visible three-quarter sleeve length; do not shorten or lengthen them.");
+  if (traits.sleeves === "long") requirements.push("Sleeves: preserve the full long-sleeve construction and cuffs; do not shorten or remove the sleeves.");
+  if (traits.length === "midi") requirements.push("Hem length: MIDI means below the knee and around mid-calf; do not turn it into a mini or ankle/floor-length maxi garment.");
+  if (traits.length === "mini") requirements.push("Hem length: preserve the above-knee mini length; do not lengthen it to midi or maxi.");
+  if (traits.length === "maxi") requirements.push("Hem length: preserve the ankle- or floor-length maxi silhouette; do not shorten it to midi or mini.");
+  if (traits.collared) requirements.push("Collar: preserve the visible constructed collar; do not replace it with a collarless neckline.");
+  if (traits.belted) requirements.push("Waist: preserve the matching belt or self-tie and its visible attachment or loops.");
+  if (traits.buttonFront) requirements.push("Closure: preserve the visible front-button or button-down construction and button placement.");
+  if (!requirements.length) return "";
+  return `Construction requirements — mandatory: Saved garment details are hard reconstruction constraints, not styling suggestions.\n- ${requirements.join("\n- ")}\nA USER CORRECTION, when present, may explicitly replace a conflicting saved detail; otherwise every requirement above must remain visible in the output.`;
+}
+
+function garmentHasStructuralRequirements(metadata = {}, userDirection = "") {
+  const traits = garmentStructuralTraits(metadata, userDirection);
+  return Boolean(traits.sleeves || traits.length || traits.collared || traits.belted || traits.buttonFront);
+}
+
+function detectedSleeveTrait(text = "") {
+  if (/\b(sleeveless|no sleeves?|without sleeves?|sem mangas?)\b/.test(text)) return "sleeveless";
+  if (/\b(long[- ]?sleeved?|long sleeves?|mangas? compridas?|mangas? longas?)\b/.test(text)) return "long";
+  if (/\b(three[- ]quarter sleeves?|3\/?4 sleeves?|mangas? tres quartos?)\b/.test(text)) return "three-quarter";
+  if (/\b(short[- ]?sleeved?|short sleeves?|cap sleeves?|mangas? curtas?)\b/.test(text)) return "short";
+  return null;
+}
+
+function detectedLengthTrait(text = "") {
+  if (/\b(midi|mid[- ]calf|below[- ]knee)\b/.test(text)) return "midi";
+  if (/\b(mini(?:dress|skirt)?|above[- ]knee)\b/.test(text)) return "mini";
+  if (/\b(maxi(?:dress|skirt)?|ankle[- ]length|floor[- ]length)\b/.test(text)) return "maxi";
+  return null;
+}
+
 export function garmentSemanticMismatch(metadata = {}, detectedItems = [], userDirection = "") {
   const subtype = garmentSemanticSubtype(metadata, userDirection);
-  if (!subtype) return null;
+  const structuralTraits = garmentStructuralTraits(metadata, userDirection);
   const detected = garmentSemanticText({
     name: detectedItems.map((item) => item?.name).filter(Boolean).join(" "),
     tags: detectedItems.flatMap((item) => Array.isArray(item?.tags) ? item.tags : []),
     materials: detectedItems.flatMap((item) => Array.isArray(item?.materials) ? item.materials : []),
   });
+  const detectedSleeves = detectedSleeveTrait(detected);
+  if (structuralTraits.sleeves && detectedSleeves && structuralTraits.sleeves !== detectedSleeves) {
+    return `generated ${detectedSleeves === "sleeveless" ? "a sleeveless construction" : `${detectedSleeves} sleeves`} instead of the explicitly requested ${structuralTraits.sleeves === "sleeveless" ? "sleeveless construction" : `${structuralTraits.sleeves} sleeves`}`;
+  }
+  const detectedLength = detectedLengthTrait(detected);
+  if (structuralTraits.length && detectedLength && structuralTraits.length !== detectedLength) {
+    return `generated a ${detectedLength}-length garment instead of the explicitly requested ${structuralTraits.length} length`;
+  }
+  if (structuralTraits.collared && /\b(collarless|sem colarinho)\b/.test(detected)) {
+    return "removed the explicitly requested collar";
+  }
+  if (structuralTraits.buttonFront && /\b(no buttons?|buttonless|sem botoes?)\b/.test(detected)) {
+    return "removed the explicitly requested front-button closure";
+  }
+  if (structuralTraits.belted && /\b(unbelted|no belt|without (?:a )?belt|sem cinto)\b/.test(detected)) {
+    return "removed the explicitly requested belt";
+  }
+  if (!subtype) return null;
   if (subtype === "bracelet") {
     if (/\b(watch|wristwatch|timepiece|relogio|clock|dial)\b/.test(detected)) return "generated a watch instead of a bracelet";
     if (detected && !/\b(bracelet|bangle|wrist\s*chain|pulseira|jewelry|jewellery|chain)\b/.test(detected)) {
@@ -1733,6 +1815,7 @@ export function buildGarmentPrompt(metadata = {}, chromaKey = "#00ff00", {
       : "Apply the saved colors to the actual accessory subtype shown and named. Do not infer watch parts unless the requested product is explicitly a watch."
     : "";
   const subtypeDirection = garmentSubtypePrompt(metadata, userDirection);
+  const structuralDirection = garmentStructuralPrompt(metadata, userDirection);
   const separateItems = (Array.isArray(otherDetectedItems) ? otherDetectedItems : [])
     .filter((item) => item && (item.name || item.part))
     .map((item) => {
@@ -1761,6 +1844,8 @@ References: ${references}
 Target identity — highest priority: The requested item is "${name}", classified as a ${direction.label}. Reconstruct exactly that product type. Do not reinterpret it as another kind of clothing or accessory.
 
 ${subtypeDirection}
+
+${structuralDirection}
 
 ${userCorrection}
 
@@ -5144,6 +5229,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           const validateSemantics = Boolean(
             userDirection
             || garmentSemanticSubtype(current.metadata, userDirection)
+            || garmentHasStructuralRequirements(current.metadata, userDirection)
             || otherDetectedItems.length,
           );
           console.info(`[wardrobe] Generating garment with ${provider.label} / ${provider.garmentModel} (${diagnostics.cropWidth}x${diagnostics.cropHeight}px crop${generationImages.length > 1 ? ", contextual reference" : ""})...`);

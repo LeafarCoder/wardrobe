@@ -67,6 +67,65 @@ test("keeps women's pointed high heels from becoming men's dress shoes", () => {
   ), "generated men's or flat dress footwear instead of a high heel");
 });
 
+test("treats explicit sleeveless midi dress construction as mandatory", () => {
+  const metadata = {
+    name: "button-down shirt dress",
+    part: "wholebody",
+    color: "#e3a830",
+    tags: ["midi", "collared", "belted", "sleeveless"],
+  };
+  const prompt = buildGarmentPrompt(metadata, "#00ffff");
+
+  assert.match(prompt, /Construction requirements — mandatory/);
+  assert.match(prompt, /SLEEVELESS means no sleeves at all/);
+  assert.match(prompt, /do not add cap, short, three-quarter, or long sleeves/i);
+  assert.match(prompt, /MIDI means below the knee and around mid-calf/i);
+  assert.match(prompt, /preserve the visible constructed collar/i);
+  assert.match(prompt, /preserve the matching belt or self-tie/i);
+  assert.match(prompt, /preserve the visible front-button or button-down construction/i);
+  assert.equal(garmentSemanticMismatch(
+    metadata,
+    [{ name: "Long-sleeve shirt dress", part: "wholebody", tags: ["midi", "collared", "belted", "long-sleeve"] }],
+  ), "generated long sleeves instead of the explicitly requested sleeveless construction");
+  assert.equal(garmentSemanticMismatch(
+    metadata,
+    [{ name: "Sleeveless midi shirt dress", part: "wholebody", tags: ["collared", "belted", "sleeveless"] }],
+  ), null);
+});
+
+test("recognizes Portuguese sleeveless construction and lets a correction replace it", () => {
+  const metadata = {
+    name: "vestido camisa",
+    part: "wholebody",
+    tags: ["midi", "com colarinho", "com cinto", "sem mangas"],
+  };
+
+  assert.equal(garmentSemanticMismatch(
+    metadata,
+    [{ name: "Vestido de manga comprida", part: "wholebody", tags: ["mangas compridas"] }],
+  ), "generated long sleeves instead of the explicitly requested sleeveless construction");
+
+  const correctedPrompt = buildGarmentPrompt(metadata, "#00ffff", {
+    userDirection: "Change it to long sleeves.",
+  });
+  assert.match(correctedPrompt, /preserve the full long-sleeve construction/i);
+  assert.doesNotMatch(correctedPrompt, /SLEEVELESS means no sleeves at all/);
+  assert.equal(garmentSemanticMismatch(
+    metadata,
+    [{ name: "Long-sleeve dress", part: "wholebody", tags: ["long-sleeve"] }],
+    "Change it to long sleeves.",
+  ), null);
+});
+
+test("asks analysis to prioritize visible garment construction", () => {
+  const prompt = analysisPrompt("en-US");
+
+  assert.match(prompt, /whether it is sleeveless or the visible sleeve length/i);
+  assert.match(prompt, /collar or neckline, front closure, straps, waist construction/i);
+  assert.match(prompt, /mini, midi, or maxi hem length/i);
+  assert.match(prompt, /Never describe a sleeveless garment as sleeved/i);
+});
+
 test("grounds a planned modeled outfit in every garment, place, date, and occasion", () => {
   const prompt = buildPlannedOutfitPrompt(
     2,
