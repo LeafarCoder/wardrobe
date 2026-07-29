@@ -4603,6 +4603,22 @@ button { font: inherit; }
   background: rgba(248, 245, 239, .9);
   box-shadow: 0 6px 18px rgba(25, 25, 25, .1);
   backdrop-filter: blur(7px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.viewer-art:hover .garment-version-nav,
+.viewer-art:focus-within .garment-version-nav {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .garment-version-nav {
+    opacity: .9;
+    pointer-events: auto;
+  }
 }
 
 .garment-version-nav button {
