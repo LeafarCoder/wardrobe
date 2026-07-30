@@ -28,7 +28,9 @@ import {
   currentNorthernSeason,
   normalizeOutfitContext,
   normalizeOutfitPresentation,
+  outfitPresentationForPeople,
   OUTFIT_BACKGROUNDS,
+  OUTFIT_HAIRSTYLES,
   OUTFIT_MAX_GARMENTS,
   OUTFIT_OCCASIONS,
   OUTFIT_POSES,
@@ -163,7 +165,7 @@ export function OutfitStudio({
   const [draft, setDraft] = useState(blankDraft);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
-  const [activeWardrobeId, setActiveWardrobeId] = useState(user.id);
+  const [activePersonId, setActivePersonId] = useState(user.id);
   const [aiCandidates, setAiCandidates] = useState([]);
   const [activeAiIndex, setActiveAiIndex] = useState(0);
   const [aiOriginal, setAiOriginal] = useState(null);
@@ -190,12 +192,36 @@ export function OutfitStudio({
   const itemMap = useMemo(() => new Map(allItems.map((item) => [item.id, item])), [allItems]);
   const savedOutfits = user.wardrobeOutfits || [];
   const selectedIds = new Set(draft.garments.map((entry) => entry.itemId));
-  const activeItems = activeWardrobeId === user.id ? items : connectionMap.get(activeWardrobeId)?.garments || [];
+  const scenePeople = [
+    { id: user.id, name: user.name || tr("Me"), profile: user, isMe: true },
+    ...draft.companions.flatMap((personId) => {
+      const connection = connectionMap.get(personId);
+      return connection ? [{ id: personId, name: connection.person.name, profile: connection.person, connection }] : [];
+    }),
+  ];
+  const wearerIdFor = (selection) => selection.wearerId
+    || selection.ownerId
+    || itemMap.get(selection.itemId)?.userId
+    || user.id;
+  const boardGarments = draft.garments.flatMap((selection, draftIndex) => (
+    wearerIdFor(selection) === activePersonId ? [{ selection, draftIndex }] : []
+  ));
+  const garmentCountByPerson = new Map(scenePeople.map((person) => [
+    person.id,
+    draft.garments.filter((selection) => wearerIdFor(selection) === person.id).length,
+  ]));
+  const activePerson = scenePeople.find((person) => person.id === activePersonId) || scenePeople[0];
+  const availableBoardConnections = connections.filter((connection) => (
+    connection.person.referenceCount
+    && connection.permissions.garments
+    && !draft.companions.includes(connection.person.id)
+  ));
+  const activeItems = activePersonId === user.id ? items : connectionMap.get(activePersonId)?.garments || [];
   const filteredItems = activeItems.filter((item) => {
     const words = `${item.name || ""} ${item.brand || ""} ${(item.tags || []).join(" ")}`.toLocaleLowerCase();
     return (category === "all" || item.part === category) && words.includes(search.trim().toLocaleLowerCase());
   });
-  const pickerItems = allItems.filter((item) => {
+  const pickerItems = activeItems.filter((item) => {
     const words = `${item.name || ""} ${item.brand || ""} ${(item.tags || []).join(" ")}`.toLocaleLowerCase();
     return !selectedIds.has(item.id) && words.includes(pickerSearch.trim().toLocaleLowerCase());
   });
@@ -214,6 +240,7 @@ export function OutfitStudio({
 
   const loadOutfit = (outfit) => {
     setDraft({ ...outfit, garments: outfit.garments.map((garment) => ({ ...garment })) });
+    setActivePersonId(user.id);
     resetAiResult();
     setDeleteId(null);
     setDeleteLookId(null);
@@ -231,6 +258,7 @@ export function OutfitStudio({
     const item = itemMap.get(itemId);
     if (!item) return;
     const wearerId = item.userId || user.id;
+    if (wearerId !== activePersonId) return;
     const companions = wearerId === user.id || draft.companions.includes(wearerId)
       ? draft.companions
       : [...draft.companions, wearerId];
@@ -249,17 +277,26 @@ export function OutfitStudio({
     const garments = active
       ? draft.garments.filter((entry) => (entry.ownerId || itemMap.get(entry.itemId)?.userId) !== personId)
       : draft.garments;
-    if (activeWardrobeId === personId && active) setActiveWardrobeId(user.id);
+    if (activePersonId === personId && active) setActivePersonId(user.id);
+    if (!active) setActivePersonId(personId);
+    setPickerOpen(false);
     changeDraft({ companions, garments, source: "manual" });
+  };
+
+  const addNextPersonBoard = () => {
+    const connection = availableBoardConnections[0];
+    if (connection) toggleCompanion(connection.person.id);
   };
 
   const removeGarment = (itemId) => changeDraft({ garments: draft.garments.filter((entry) => entry.itemId !== itemId), source: "manual" });
 
   const moveGarment = (index, direction) => {
     const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= draft.garments.length) return;
+    if (nextIndex < 0 || nextIndex >= boardGarments.length) return;
+    const currentDraftIndex = boardGarments[index].draftIndex;
+    const nextDraftIndex = boardGarments[nextIndex].draftIndex;
     const garments = [...draft.garments];
-    [garments[index], garments[nextIndex]] = [garments[nextIndex], garments[index]];
+    [garments[currentDraftIndex], garments[nextDraftIndex]] = [garments[nextDraftIndex], garments[currentDraftIndex]];
     changeDraft({ garments });
   };
 
@@ -352,8 +389,26 @@ export function OutfitStudio({
   };
 
   const beginModeled = () => {
-    setPendingPresentation({ ...draft.presentation });
+    const undressedPeople = scenePeople.filter((person) => !(garmentCountByPerson.get(person.id) || 0));
+    if (undressedPeople.length) {
+      setError(tr("Add at least one garment to every person's board before generating."));
+      setActivePersonId(undressedPeople[0].id);
+      return;
+    }
+    setPendingPresentation(outfitPresentationForPeople(
+      draft.presentation,
+      scenePeople.map((person) => person.id),
+    ));
     setModeledDialogOpen(true);
+  };
+
+  const updatePendingPerson = (personId, change) => {
+    setPendingPresentation((current) => ({
+      ...current,
+      people: current.people.map((person) => person.personId === personId
+        ? { ...person, ...change }
+        : person),
+    }));
   };
 
   const generateModeled = async () => {
@@ -502,28 +557,51 @@ export function OutfitStudio({
             </div>
 
             <section
-              className={`outfit-board${draft.garments.length ? " has-garments" : ""}`}
+              className={`outfit-board${boardGarments.length ? " has-garments" : ""}`}
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => { event.preventDefault(); addGarment(event.dataTransfer.getData("application/x-wardrobe-garment")); }}
             >
-              <div className="outfit-board-heading"><span>{tr("Outfit board")}</span><small>{tr("{count} of {maximum} pieces", { count: draft.garments.length, maximum: OUTFIT_MAX_GARMENTS })}</small></div>
+              <div className="outfit-board-tabs" role="tablist" aria-label={tr("Outfit boards")}>
+                {scenePeople.map((person) => (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activePerson.id === person.id}
+                    className={activePerson.id === person.id ? "active" : ""}
+                    onClick={() => { setActivePersonId(person.id); setPickerOpen(false); }}
+                    key={person.id}
+                  >
+                    <span>{person.isMe ? tr("Me") : person.name}</span>
+                    <small>{garmentCountByPerson.get(person.id) || 0}</small>
+                  </button>
+                ))}
+                {!!availableBoardConnections.length && (
+                  <button type="button" className="add-person" onClick={addNextPersonBoard} aria-label={tr("Add another person board")}>
+                    <Plus /><span>{tr("Add person")}</span>
+                  </button>
+                )}
+              </div>
+              <div className="outfit-board-heading">
+                <span>{tr("Outfit board: {name}", { name: activePerson.isMe ? tr("Me") : activePerson.name })}</span>
+                <small>{tr("{count} selected pieces", { count: boardGarments.length })}</small>
+              </div>
               <button type="button" className="outfit-board-ai" onClick={beginRefine} disabled={busy === "refine" || !items.length || Boolean(draft.companions.length)} aria-label={tr("Improve outfit selection")}>
                 {busy === "refine" ? <SpinnerGap className="spin" /> : <MagicWand />}<span>{tr("Improve outfit selection")}</span>
               </button>
-              {!draft.garments.length && <div className="outfit-board-empty"><CoatHanger size={30} /><strong>{tr("Add garment from your wardrobe")}</strong><p>{tr("Click or drag up to ten pieces here. Your board stays unchanged until you choose an AI option.")}</p></div>}
+              {!boardGarments.length && <div className="outfit-board-empty"><CoatHanger size={30} /><strong>{tr("Add garments for {name}", { name: activePerson.isMe ? tr("Me") : activePerson.name })}</strong><p>{tr("Only this person's wardrobe appears on the right. Their selected clothes stay on this board.")}</p></div>}
               <div className="outfit-board-grid">
-                {draft.garments.map((selection, index) => {
+                {boardGarments.map(({ selection, draftIndex }, index) => {
                   const item = itemMap.get(selection.itemId);
                   if (!item) return null;
                   const variants = garmentColorVariants(item);
                   return (
                     <article key={selection.itemId}>
                       <OptimizedImage src={garmentImage(item, selection)} alt={item.name} sizes="160px" />
-                      <div><strong>{item.name}</strong><small>{(selection.wearerId || item.userId) === user.id ? tr("For me") : tr("For {name}", { name: connectionMap.get(selection.wearerId || item.userId)?.person.name || tr("Companion") })} · {tr(CATEGORY_OPTIONS.find((option) => option.id === item.part)?.label || "Garment")}</small></div>
+                      <div><strong>{item.name}</strong><small>{tr(CATEGORY_OPTIONS.find((option) => option.id === item.part)?.label || "Garment")}</small></div>
                       <nav>
                         <button type="button" onClick={() => moveGarment(index, -1)} disabled={!index} aria-label={tr("Move {name} earlier", { name: item.name })}><ArrowUp /></button>
-                        <button type="button" onClick={() => moveGarment(index, 1)} disabled={index === draft.garments.length - 1} aria-label={tr("Move {name} later", { name: item.name })}><ArrowDown /></button>
-                        {!!variants.length && <button type="button" className={selection.variantId ? "active" : ""} onClick={() => cycleVariant(index)} aria-label={tr("Change color version for {name}", { name: item.name })}><Palette /></button>}
+                        <button type="button" onClick={() => moveGarment(index, 1)} disabled={index === boardGarments.length - 1} aria-label={tr("Move {name} later", { name: item.name })}><ArrowDown /></button>
+                        {!!variants.length && <button type="button" className={selection.variantId ? "active" : ""} onClick={() => cycleVariant(draftIndex)} aria-label={tr("Change color version for {name}", { name: item.name })}><Palette /></button>}
                         <button type="button" onClick={() => removeGarment(item.id)} aria-label={tr("Remove {name} from outfit", { name: item.name })}><X /></button>
                       </nav>
                     </article>
@@ -567,18 +645,23 @@ export function OutfitStudio({
           <aside className="outfit-library">
             <div className="outfit-people-heading"><span>{tr("People in this scene")}</span><small>{tr("Your account is always included")}</small></div>
             <div className="outfit-people-list">
-              <button type="button" className="active" aria-pressed="true"><span className="outfit-person-avatar">{user.referenceImages?.[0] ? <img src={user.referenceImages[0].avatarUrl || user.referenceImages[0].url} alt="" /> : user.name?.[0]}</span><span><strong>{tr("Me")}</strong><small>{user.name}</small></span><Check /></button>
+              <button type="button" className={`active${activePersonId === user.id ? " is-current-board" : ""}`} aria-pressed="true" onClick={() => { setActivePersonId(user.id); setPickerOpen(false); }}><span className="outfit-person-avatar">{user.referenceImages?.[0] ? <img src={user.referenceImages[0].avatarUrl || user.referenceImages[0].url} alt="" /> : user.name?.[0]}</span><span><strong>{tr("Me")}</strong><small>{user.name}</small></span><Check /></button>
               {connections.map((connection) => {
                 const active = draft.companions.includes(connection.person.id);
                 const reference = connection.person.referenceImages?.[0];
-                return <button type="button" className={active ? "active" : ""} aria-pressed={active} disabled={!connection.person.referenceCount} onClick={() => toggleCompanion(connection.person.id)} key={connection.person.id}><span className="outfit-person-avatar">{reference ? <img src={reference.avatarUrl} alt="" /> : connection.person.name?.[0]}</span><span><strong>{connection.person.name}</strong><small>{connection.person.referenceCount ? connection.relationship : tr("Needs a reference photo")}</small></span>{active ? <Check /> : <Plus />}</button>;
+                const unavailable = !connection.person.referenceCount || !connection.permissions.garments;
+                return <button type="button" className={`${active ? "active" : ""}${activePersonId === connection.person.id ? " is-current-board" : ""}`} aria-pressed={active} disabled={!active && unavailable} onClick={() => toggleCompanion(connection.person.id)} key={connection.person.id}><span className="outfit-person-avatar">{reference ? <img src={reference.avatarUrl} alt="" /> : connection.person.name?.[0]}</span><span><strong>{connection.person.name}</strong><small>{!connection.person.referenceCount ? tr("Needs a reference photo") : !connection.permissions.garments ? tr("Does not share garments") : connection.relationship}</small></span>{active ? <Check /> : <Plus />}</button>;
               })}
             </div>
 
-            <div className="outfit-wardrobe-heading"><h3>{tr("Choose clothes for")}</h3><div><button type="button" className={activeWardrobeId === user.id ? "active" : ""} onClick={() => setActiveWardrobeId(user.id)}>{tr("Me")}</button>{draft.companions.map((personId) => { const connection = connectionMap.get(personId); return connection?.permissions.garments ? <button type="button" className={activeWardrobeId === personId ? "active" : ""} onClick={() => setActiveWardrobeId(personId)} key={personId}>{connection.person.name}</button> : null; })}</div></div>
+            <div className="outfit-wardrobe-heading">
+              <h3>{tr("Choose clothes for {name}", { name: activePerson.isMe ? tr("Me") : activePerson.name })}</h3>
+              <small>{tr("{count} selected pieces", { count: boardGarments.length })}</small>
+            </div>
             <label className="outfit-search"><MagnifyingGlass /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tr("Search garments")} /></label>
             <div className="outfit-category-tabs">{CATEGORY_OPTIONS.map((option) => <button type="button" className={category === option.id ? "active" : ""} key={option.id} onClick={() => setCategory(option.id)}>{tr(option.label)}</button>)}</div>
             <div className="outfit-library-grid">{filteredItems.map((item) => <button type="button" className={selectedIds.has(item.id) ? "selected" : ""} key={item.id} draggable onDragStart={(event) => event.dataTransfer.setData("application/x-wardrobe-garment", item.id)} onClick={() => addGarment(item.id)} disabled={selectedIds.has(item.id)}><OptimizedImage src={item.thumbnail || item.imagePreview || item.image} alt="" sizes="110px" /><span>{item.name}</span>{selectedIds.has(item.id) ? <Check /> : <Plus />}</button>)}</div>
+            {!filteredItems.length && <p className="outfit-library-empty">{tr("No matching garments in this wardrobe.")}</p>}
           </aside>
         </div>
 
@@ -586,7 +669,65 @@ export function OutfitStudio({
 
         {!!aiCandidates.length && activeAi && <StudioDialog title={tr("Choose an improved outfit")} eyebrow={tr("AI suggestions")} onCancel={() => { setAiCandidates([]); setAiOriginal(null); }} actions={<><button type="button" onClick={() => { setAiCandidates([]); setAiOriginal(null); }}>{tr("Keep mine")}</button><button type="button" className="primary" onClick={() => applyCandidate(activeAi)}><Check />{tr("Use this outfit")}</button></>}><div className="outfit-ai-tabs">{aiCandidates.map((candidate, index) => <button type="button" className={activeAiIndex === index ? "active" : ""} key={candidate.id || index} onClick={() => setActiveAiIndex(index)}>{tr("Option {number}", { number: index + 1 })}</button>)}</div><div className="outfit-comparison-boards"><article><span>{tr("Your outfit")}</span><h4>{aiOriginal?.name || tr("Current board")}</h4><div>{(aiOriginal?.garments || []).map((selection) => <MiniGarment key={selection.itemId} item={itemMap.get(selection.itemId)} selection={selection} changed={!candidateIds.has(selection.itemId)} removed={!candidateIds.has(selection.itemId)} />)}</div></article><article className="ai-option"><span><Sparkle />{tr("AI option")}</span><h4>{activeAi.name}</h4><div>{activeAi.itemIds.map((id) => <MiniGarment key={id} item={itemMap.get(id)} changed={!originalIds.has(id)} />)}</div><p>{activeAi.explanation}</p></article></div></StudioDialog>}
 
-        {modeledDialogOpen && <StudioDialog title={tr("Direct the modeled look")} eyebrow={tr("Paid AI image")} onCancel={() => setModeledDialogOpen(false)} actions={<><button type="button" onClick={() => setModeledDialogOpen(false)}>{tr("Cancel")}</button><button type="button" className="primary" onClick={generateModeled}><Sparkle />{tr("Generate image")}</button></>}><p>{tr("Choose the scene only when you are ready. Generating an image is a paid AI action and saves this outfit first.")}</p><ChipGroup title="Background" options={OUTFIT_BACKGROUNDS} value={pendingPresentation.background} onChange={(background) => setPendingPresentation((value) => ({ ...value, background }))} /><ChipGroup title="Style" options={OUTFIT_STYLES} value={pendingPresentation.style} onChange={(style) => setPendingPresentation((value) => ({ ...value, style }))} /><ChipGroup title="Pose" options={OUTFIT_POSES} value={pendingPresentation.pose} onChange={(pose) => setPendingPresentation((value) => ({ ...value, pose }))} /><label className="outfit-direction"><span>{tr("Additional direction")} <small>{tr("optional")}</small></span><textarea rows="3" maxLength="300" value={pendingPresentation.direction} onChange={(event) => setPendingPresentation((value) => ({ ...value, direction: event.target.value }))} placeholder={tr("For example: soft evening light, relaxed expression, full outfit visible…")} /><small>{pendingPresentation.direction.length}/300</small></label></StudioDialog>}
+        {modeledDialogOpen && (
+          <StudioDialog
+            title={tr("Direct the modeled look")}
+            eyebrow={tr("Paid AI image")}
+            onCancel={() => setModeledDialogOpen(false)}
+            actions={(
+              <>
+                <button type="button" onClick={() => setModeledDialogOpen(false)}>{tr("Cancel")}</button>
+                <button type="button" className="primary" onClick={generateModeled}><Sparkle />{tr("Generate image")}</button>
+              </>
+            )}
+          >
+            <p>{tr("Choose the scene only when you are ready. Generating an image is a paid AI action and saves this outfit first.")}</p>
+            <ChipGroup title="Background" options={OUTFIT_BACKGROUNDS} value={pendingPresentation.background} onChange={(background) => setPendingPresentation((value) => ({ ...value, background }))} />
+            <ChipGroup title="Style" options={OUTFIT_STYLES} value={pendingPresentation.style} onChange={(style) => setPendingPresentation((value) => ({ ...value, style }))} />
+            <div className="outfit-person-directions">
+              <div className="outfit-person-directions__heading">
+                <span>{tr("People in this image")}</span>
+                <small>{tr("Pose and hairstyle belong to each person.")}</small>
+              </div>
+              {scenePeople.map((person) => {
+                const personPresentation = pendingPresentation.people.find((entry) => entry.personId === person.id);
+                if (!personPresentation) return null;
+                const reference = person.profile.referenceImages?.[0];
+                return (
+                  <article key={person.id}>
+                    <header>
+                      <span className="outfit-person-avatar">
+                        {reference ? <img src={reference.avatarUrl || reference.url} alt="" /> : person.name?.[0]}
+                      </span>
+                      <div>
+                        <strong>{person.isMe ? tr("Me") : person.name}</strong>
+                        <small>{tr("{count} selected pieces", { count: garmentCountByPerson.get(person.id) || 0 })}</small>
+                      </div>
+                    </header>
+                    <ChipGroup title="Pose" options={OUTFIT_POSES} value={personPresentation.pose} onChange={(pose) => updatePendingPerson(person.id, { pose })} />
+                    <ChipGroup title="Hairstyle" options={OUTFIT_HAIRSTYLES} value={personPresentation.hairstyle} onChange={(hairstyle) => updatePendingPerson(person.id, { hairstyle })} />
+                    <label className="outfit-direction">
+                      <span>{tr("Direction for {name}", { name: person.isMe ? tr("Me") : person.name })} <small>{tr("optional")}</small></span>
+                      <textarea
+                        rows="2"
+                        maxLength="300"
+                        value={personPresentation.direction}
+                        onChange={(event) => updatePendingPerson(person.id, { direction: event.target.value })}
+                        placeholder={tr("For example: looking toward the other person, relaxed expression…")}
+                      />
+                      <small>{personPresentation.direction.length}/300</small>
+                    </label>
+                  </article>
+                );
+              })}
+            </div>
+            <label className="outfit-direction">
+              <span>{tr("Scene direction")} <small>{tr("optional")}</small></span>
+              <textarea rows="3" maxLength="300" value={pendingPresentation.direction} onChange={(event) => setPendingPresentation((value) => ({ ...value, direction: event.target.value }))} placeholder={tr("For example: soft evening light, natural interaction, full outfits visible…")} />
+              <small>{pendingPresentation.direction.length}/300</small>
+            </label>
+          </StudioDialog>
+        )}
       </section>
     </div>
   );

@@ -10,6 +10,7 @@ import { buildModeledPrompt } from "../scripts/import-job-api.mjs";
 test("normalizes modeled-look direction and keeps settings contextual", () => {
   assert.deepEqual(normalizeModeledLookContext({
     pose: "walking",
+    hairstyle: "ponytail",
     bodyOrientation: "three-quarter",
     headOrientation: "camera",
     environmentType: "inside",
@@ -20,6 +21,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
     ignored: "not persisted",
   }), {
     pose: "walking",
+    hairstyle: "ponytail",
     bodyOrientation: "three-quarter",
     headOrientation: "camera",
     environmentType: "inside",
@@ -37,6 +39,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
 test("adds only selected creative direction to the modeled-look prompt", () => {
   const directed = buildModeledPrompt(1, { name: "Rafael" }, { name: "Navy jacket" }, {
     pose: "crouching",
+    hairstyle: "long-loose",
     bodyOrientation: "side",
     headOrientation: "left",
     environmentType: "outside",
@@ -48,6 +51,8 @@ test("adds only selected creative direction to the modeled-look prompt", () => {
 
   assert.match(directed, /Creative direction for this image/);
   assert.match(directed, /crouching in a balanced, natural pose/);
+  assert.match(directed, /long loose hair with its natural texture/);
+  assert.match(directed, /Preserve the person's real hair color, hairline, and texture/);
   assert.match(directed, /body shown from the side/);
   assert.match(directed, /head turned and looking to their left/);
   assert.match(directed, /a natural forest/);
@@ -72,6 +77,7 @@ test("bounds free-form modeled-look direction", () => {
 test("describes every selected modeled-look setting without translating free text", () => {
   assert.deepEqual(modeledLookContextDetails({
     pose: "walking",
+    hairstyle: "ponytail",
     bodyOrientation: "three-quarter",
     headOrientation: "camera",
     environmentType: "inside",
@@ -81,6 +87,7 @@ test("describes every selected modeled-look setting without translating free tex
     additionalDirection: "Carry the red book.",
   }), [
     { id: "pose", label: "Pose", values: ["Walking"], translateValues: true },
+    { id: "hairstyle", label: "Hairstyle", values: ["Ponytail"], translateValues: true },
     { id: "bodyOrientation", label: "Body orientation", values: ["Three-quarters"], translateValues: true },
     { id: "headOrientation", label: "Head orientation", values: ["Looking at camera"], translateValues: true },
     { id: "environment", label: "Environment", values: ["Inside", "Living room"], translateValues: true },

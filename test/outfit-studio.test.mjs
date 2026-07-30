@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   currentNorthernSeason,
   generateLocalOutfitCandidates,
+  normalizeOutfitPresentation,
   normalizeWardrobeOutfits,
+  outfitPresentationForPeople,
   wardrobeOutfitAssets,
   wardrobeOutfitsAfterGarmentMerge,
   OUTFIT_MAX_GARMENTS,
@@ -71,4 +73,33 @@ test("keeps at most ten garments on an outfit board", () => {
   const [outfit] = normalizeWardrobeOutfits([{ id: "ten", name: "Ten pieces", garments }]);
   assert.equal(OUTFIT_MAX_GARMENTS, 10);
   assert.equal(outfit.garments.length, 10);
+});
+
+test("keeps pose, hairstyle, and direction separate for each person board", () => {
+  const presentation = outfitPresentationForPeople({
+    background: "park",
+    style: "candid",
+    people: [
+      { personId: "owner", pose: "walking", hairstyle: "short", direction: "Look toward Sara." },
+      { personId: "sara", pose: "standing", hairstyle: "ponytail", direction: "Hold the bag." },
+      { personId: "not-in-scene", pose: "sitting", hairstyle: "bun" },
+    ],
+  }, ["owner", "sara"]);
+
+  assert.deepEqual(presentation.people, [
+    { personId: "owner", pose: "walking", hairstyle: "short", direction: "Look toward Sara." },
+    { personId: "sara", pose: "standing", hairstyle: "ponytail", direction: "Hold the bag." },
+  ]);
+});
+
+test("migrates a legacy shared pose to the only person and rejects invalid hairstyle choices", () => {
+  assert.deepEqual(outfitPresentationForPeople({ pose: "sitting" }, ["owner"]).people, [{
+    personId: "owner",
+    pose: "sitting",
+    hairstyle: "automatic",
+    direction: "",
+  }]);
+  assert.equal(normalizeOutfitPresentation({
+    people: [{ personId: "owner", hairstyle: "invented-style" }],
+  }).people[0].hairstyle, "automatic");
 });

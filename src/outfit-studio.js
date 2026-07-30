@@ -1,4 +1,5 @@
 import { garmentColorVariants } from "./garment-variants.js";
+import { MODELED_LOOK_CONTEXT_OPTIONS } from "./modeled-look-context.js";
 
 export const OUTFIT_OCCASIONS = [
   { id: "everyday", label: "Everyday" },
@@ -41,22 +42,26 @@ export const OUTFIT_STYLES = [
 
 export const OUTFIT_POSES = [
   { id: "automatic", label: "Automatic" },
-  { id: "standing", label: "Standing" },
-  { id: "walking", label: "Walking" },
-  { id: "sitting", label: "Sitting" },
-  { id: "running", label: "Running" },
-  { id: "picnic-seated", label: "Seated on a picnic blanket" },
-  { id: "picnic-lying", label: "Lying on a picnic blanket" },
+  ...MODELED_LOOK_CONTEXT_OPTIONS.pose,
+  { id: "picnic-seated", label: "Seated on a picnic blanket", prompt: "seated naturally on a picnic blanket" },
+  { id: "picnic-lying", label: "Lying on a picnic blanket", prompt: "lying naturally on a picnic blanket" },
+];
+
+export const OUTFIT_HAIRSTYLES = [
+  { id: "automatic", label: "Automatic", prompt: "" },
+  ...MODELED_LOOK_CONTEXT_OPTIONS.hairstyle,
 ];
 
 export const OUTFIT_SEASONS = ["spring", "summer", "autumn", "winter"];
 export const OUTFIT_MAX_GARMENTS = 10;
+export const OUTFIT_MAX_PEOPLE = 4;
 
 const OCCASION_IDS = new Set(OUTFIT_OCCASIONS.map((option) => option.id));
 const WEATHER_IDS = new Set(OUTFIT_WEATHER.map((option) => option.id));
 const BACKGROUND_IDS = new Set(OUTFIT_BACKGROUNDS.map((option) => option.id));
 const STYLE_IDS = new Set(OUTFIT_STYLES.map((option) => option.id));
 const POSE_IDS = new Set(OUTFIT_POSES.map((option) => option.id));
+const HAIRSTYLE_IDS = new Set(OUTFIT_HAIRSTYLES.map((option) => option.id));
 const SEASON_IDS = new Set(OUTFIT_SEASONS);
 const SOURCE_IDS = new Set(["manual", "local", "ai"]);
 
@@ -97,12 +102,55 @@ export function normalizeOutfitContext(value = {}) {
 
 export function normalizeOutfitPresentation(value = {}) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const seenPeople = new Set();
+  const people = (Array.isArray(source.people) ? source.people : []).flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const personId = cleanText(entry.personId, 80);
+    if (!personId || seenPeople.has(personId)) return [];
+    seenPeople.add(personId);
+    return [{
+      personId,
+      pose: POSE_IDS.has(entry.pose) ? entry.pose : "automatic",
+      hairstyle: HAIRSTYLE_IDS.has(entry.hairstyle) ? entry.hairstyle : "automatic",
+      direction: cleanText(entry.direction, 300),
+    }];
+  }).slice(0, OUTFIT_MAX_PEOPLE);
   return {
     background: BACKGROUND_IDS.has(source.background) ? source.background : "automatic",
     style: STYLE_IDS.has(source.style) ? source.style : "automatic",
     pose: POSE_IDS.has(source.pose) ? source.pose : "automatic",
     direction: cleanText(source.direction, 300),
+    people,
   };
+}
+
+export function outfitPresentationForPeople(value = {}, personIds = []) {
+  const presentation = normalizeOutfitPresentation(value);
+  const existing = new Map(presentation.people.map((entry) => [entry.personId, entry]));
+  const seen = new Set();
+  const normalizedIds = (Array.isArray(personIds) ? personIds : []).flatMap((personId) => {
+    const id = cleanText(personId, 80);
+    if (!id || seen.has(id)) return [];
+    seen.add(id);
+    return [id];
+  }).slice(0, OUTFIT_MAX_PEOPLE);
+  return {
+    ...presentation,
+    people: normalizedIds.map((personId, index) => existing.get(personId) || {
+      personId,
+      pose: normalizedIds.length === 1 && index === 0 ? presentation.pose : "automatic",
+      hairstyle: "automatic",
+      direction: "",
+    }),
+  };
+}
+
+export function outfitPosePrompt(value) {
+  return OUTFIT_POSES.find((option) => option.id === value)?.prompt || "";
+}
+
+export function outfitHairstylePrompt(value) {
+  return OUTFIT_HAIRSTYLES.find((option) => option.id === value)?.prompt || "";
 }
 
 export function normalizeOutfitGarments(value = {}) {
@@ -327,4 +375,5 @@ export const OUTFIT_TRANSLATION_KEYS = [
   ...OUTFIT_BACKGROUNDS.map((option) => option.label),
   ...OUTFIT_STYLES.map((option) => option.label),
   ...OUTFIT_POSES.map((option) => option.label),
+  ...OUTFIT_HAIRSTYLES.map((option) => option.label),
 ];

@@ -114,6 +114,7 @@ export function ModeledLookDialog({
           <div className="modeled-context__columns">
             <div>
               <ChoiceGroup label="Pose" options={MODELED_LOOK_CONTEXT_OPTIONS.pose} value={context.pose} onChange={(value) => update("pose", value)} />
+              <ChoiceGroup label="Hairstyle" options={MODELED_LOOK_CONTEXT_OPTIONS.hairstyle} value={context.hairstyle} onChange={(value) => update("hairstyle", value)} />
               <ChoiceGroup label="Body orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.bodyOrientation} value={context.bodyOrientation} onChange={(value) => update("bodyOrientation", value)} />
               <ChoiceGroup label="Head orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.headOrientation} value={context.headOrientation} onChange={(value) => update("headOrientation", value)} />
             </div>

@@ -107,12 +107,24 @@ test("saved outfit CRUD validates garments and persists context, variants, and p
         { itemId: "import-22222222-2222-4222-8222-222222222222" },
       ],
       context: { occasion: "dinner", weather: ["mild"], season: "summer" },
-      presentation: { background: "restaurant", style: "candid", pose: "sitting", direction: "Warm evening light" },
+      presentation: {
+        background: "restaurant",
+        style: "candid",
+        pose: "sitting",
+        direction: "Warm evening light",
+        people: [{ personId: "default", pose: "sitting", hairstyle: "ponytail", direction: "Look left." }],
+      },
     });
     assert.equal(created.statusCode, 201);
     assert.equal(created.json().outfit.name, "Dinner layers");
     assert.equal(created.json().outfit.garments[0].variantId, "blue-version");
     assert.deepEqual(created.json().outfit.context.weather, ["mild"]);
+    assert.deepEqual(created.json().outfit.presentation.people, [{
+      personId: "default",
+      pose: "sitting",
+      hairstyle: "ponytail",
+      direction: "Look left.",
+    }]);
     const outfitId = created.json().outfit.id;
 
     const second = await request(api, "/api/import/outfits", "POST", {
@@ -129,11 +141,16 @@ test("saved outfit CRUD validates garments and persists context, variants, and p
     const updated = await request(api, `/api/import/outfits/${outfitId}`, "PATCH", {
       name: "Summer dinner",
       garments: [{ itemId: "import-11111111-1111-4111-8111-111111111111" }],
-      presentation: { background: "city-street", style: "editorial", pose: "walking" },
+      presentation: {
+        background: "city-street",
+        style: "editorial",
+        people: [{ personId: "default", pose: "walking", hairstyle: "short", direction: "Mid-step." }],
+      },
     });
     assert.equal(updated.statusCode, 200);
     assert.equal(updated.json().outfit.name, "Summer dinner");
     assert.equal(updated.json().outfit.garments.length, 1);
+    assert.equal(updated.json().outfit.presentation.people[0].hairstyle, "short");
 
     const forbidden = await request(api, "/api/import/outfits", "POST", {
       name: "Not mine",

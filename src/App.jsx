@@ -3388,7 +3388,7 @@ function InfoTooltip({ label, children, className = "" }) {
   );
 }
 
-function ProfileMenu({ users, currentUser, canCreate, connectionCount, onConnections, onCreate, onSelect, onEdit, onExport, onLogout }) {
+function ProfileMenu({ users, currentUser, canCreate, connectionCount, originalPhotoCount, onConnections, onOriginalPhotos, onCreate, onSelect, onEdit, onExport, onLogout }) {
   const detailsRef = useRef(null);
   const closeMenu = () => { if (detailsRef.current) detailsRef.current.open = false; };
 
@@ -3465,6 +3465,9 @@ function ProfileMenu({ users, currentUser, canCreate, connectionCount, onConnect
         <div className="profile-menu__actions">
           <button className="profile-menu__export" type="button" onClick={() => { onConnections(); closeMenu(); }}>
             <Link size={14} /> {tr("Connections")}{connectionCount > 0 && <span className="profile-menu__notification">{connectionCount}</span>}
+          </button>
+          <button className="profile-menu__export" type="button" onClick={() => { onOriginalPhotos(); closeMenu(); }}>
+            <ImageSquare size={14} /> {tr("Original photos")}<span className="profile-menu__notification is-neutral">{originalPhotoCount}</span>
           </button>
           <button className="profile-menu__export" type="button" onClick={() => { onExport(); closeMenu(); }} title={tr("Includes only your own wardrobe and photos")}>
             <DownloadSimple size={14} /> {tr("Download data")}
@@ -6647,18 +6650,6 @@ export function App() {
               <Sparkle size={16} weight="regular" aria-hidden="true" />
               {tr("Outfit Studio")}
             </button>
-            <button
-              type="button"
-              disabled={Boolean(mergeSourceItem)}
-              onClick={() => {
-                setSelectedOriginalPhotoId(null);
-                setOriginalPhotosOpen(true);
-              }}
-            >
-              <ImageSquare size={16} weight="regular" aria-hidden="true" />
-              {tr("Original photos")}
-              <span className="toolbar-count">{originalPhotoLibrary.length}</span>
-            </button>
             <div className="wardrobe-arrangement-control sort-control">
               <span><ArrowsDownUp size={14} weight="regular" aria-hidden="true" />{tr("Sort")}</span>
               <LightSelect
@@ -6871,7 +6862,12 @@ export function App() {
           currentUser={currentUser}
           canCreate={isOwner}
           connectionCount={connectionsData.notificationCount || 0}
+          originalPhotoCount={originalPhotoLibrary.length}
           onConnections={() => { setConnectionsError(""); setConnectionsOpen(true); }}
+          onOriginalPhotos={() => {
+            setSelectedOriginalPhotoId(null);
+            setOriginalPhotosOpen(true);
+          }}
           onCreate={() => { setProfileError(""); setProfileEditor("new"); }}
           onSelect={selectUser}
           onEdit={() => { setProfileError(""); setProfileEditor(currentUser.id); }}

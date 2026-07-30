@@ -390,13 +390,20 @@ test("grounds an Outfit Studio image in every chosen garment and presentation co
 test("keeps connected people and their assigned garments distinct in Outfit Studio", () => {
   const prompt = buildOutfitStudioModeledPrompt(
     [
-      { profile: { name: "Rafael", age: 34 }, referenceCount: 2 },
-      { profile: { name: "Sara", age: 31 }, referenceCount: 1 },
+      { profile: { id: "rafael", name: "Rafael", age: 34 }, referenceCount: 2 },
+      { profile: { id: "sara", name: "Sara", age: 31 }, referenceCount: 1 },
     ],
     { name: "Rafael" },
     {
       context: { occasion: "walk", weather: ["mild"], season: "spring" },
-      presentation: { background: "park", style: "candid", pose: "walking" },
+      presentation: {
+        background: "park",
+        style: "candid",
+        people: [
+          { personId: "rafael", pose: "walking", hairstyle: "short", direction: "Look toward Sara." },
+          { personId: "sara", pose: "standing", hairstyle: "ponytail", direction: "Hold Rafael's hand." },
+        ],
+      },
     },
     [
       { name: "Navy jacket", part: "wholebody_up", wearerName: "Rafael" },
@@ -410,6 +417,10 @@ test("keeps connected people and their assigned garments distinct in Outfit Stud
   assert.match(prompt, /Image 4 is the exact reference for "Cream dress".*worn by Sara/);
   assert.match(prompt, /Show exactly 2 people/);
   assert.match(prompt, /never blend faces, bodies, ages, or features/i);
+  assert.match(prompt, /Rafael: Pose: walking with a natural mid-step stride; hairstyle: short hair with its natural texture/i);
+  assert.match(prompt, /Sara: Pose: standing naturally; hairstyle: hair gathered into a natural ponytail/i);
+  assert.match(prompt, /Look toward Sara/);
+  assert.match(prompt, /Hold Rafael's hand/);
 });
 
 test("uses a compact strict schema for three AI outfit candidates", () => {

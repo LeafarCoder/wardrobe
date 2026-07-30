@@ -479,6 +479,16 @@ button { font: inherit; }
   font-size: 9px;
   font-weight: 700;
 }
+.profile-menu__notification.is-neutral {
+  background: rgba(25, 25, 25, .09);
+  color: var(--muted);
+  font-weight: 600;
+}
+.profile-menu__actions button:hover .profile-menu__notification.is-neutral,
+.profile-menu__actions button:focus-visible .profile-menu__notification.is-neutral {
+  background: rgba(255, 253, 249, .16);
+  color: var(--paper);
+}
 .profile-menu__actions button:hover,
 .profile-menu__actions button:focus-visible,
 .profile-menu__actions a:hover,

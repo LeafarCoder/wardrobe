@@ -39,6 +39,9 @@ import {
   normalizeOutfitGarments,
   normalizeOutfitPresentation,
   normalizeWardrobeOutfits,
+  outfitHairstylePrompt,
+  outfitPosePrompt,
+  outfitPresentationForPeople,
   wardrobeOutfitAssets,
   wardrobeOutfitsAfterGarmentMerge,
 } from "../src/outfit-studio.js";
@@ -2254,19 +2257,34 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
   ].filter(Boolean).join(" — ")).join("; ");
   const context = normalizeOutfitContext(outfit.context);
   const presentation = normalizeOutfitPresentation(outfit.presentation);
+  const presentationByPerson = new Map(outfitPresentationForPeople(
+    presentation,
+    people.map((person) => person.profile?.id).filter(Boolean),
+  ).people.map((entry) => [entry.personId, entry]));
   const profileDetails = people.map((person, index) => [
     `${person.profile?.name || `Person ${index + 1}`} is Character ${index + 1}.`,
     person.profile?.age ? `They are ${person.profile.age} years old.` : null,
     person.profile?.fashionStyle ? `Their preferred style is ${person.profile.fashionStyle}.` : null,
     person.profile?.preferences ? `Their personal constraints are ${person.profile.preferences}.` : null,
   ].filter(Boolean).join(" ")).join(" ");
+  const personDirections = people.map((person, index) => {
+    const label = person.profile?.name || `Person ${index + 1}`;
+    const personal = presentationByPerson.get(person.profile?.id);
+    const pose = personal?.pose || (people.length === 1 ? presentation.pose : "automatic");
+    const details = [
+      pose !== "automatic" ? `Pose: ${outfitPosePrompt(pose) || pose}` : null,
+      personal?.hairstyle && personal.hairstyle !== "automatic" ? `hairstyle: ${outfitHairstylePrompt(personal.hairstyle) || personal.hairstyle}; preserve their real hair color, hairline, and texture` : null,
+      personal?.direction ? `individual user direction: ${personal.direction}` : null,
+    ].filter(Boolean);
+    return details.length ? `${label}: ${details.join("; ")}.` : `${label}: choose a natural pose that keeps their assigned outfit readable.`;
+  }).join(" ");
   const identityLock = people.length === 1
     ? modeledIdentityLock(people[0].profile?.name || "the referenced person")
     : `Identity lock — highest priority: Maintain the exact identity of every named character from only that character's own subject mapping. For each person, keep the same facial geometry and distinctive eye shape, color and spacing; eyebrows; nose; mouth and lips; cheekbones; jawline and face contour; chin contour; ears; hairline, hair color and texture; skin tone and visible skin texture; apparent age; body shape; height impression; and proportions. Expressions, poses, hairstyles, clothing and lighting may change, but identity traits must not. Do not beautify, idealize, age, slim, enlarge, symmetrize, reshape, smooth away real skin texture, add unreferenced makeup, substitute generic fashion-model faces, or transfer any feature between people. Reconcile different views within each character's mapped images as the same real person; never average, blend or invent identities.`;
   const presentationDirection = [
     presentation.background !== "automatic" ? `Background: ${presentation.background}.` : "Choose a tasteful background appropriate to the outfit context.",
     presentation.style !== "automatic" ? `Photographic style: ${presentation.style}.` : "Use a natural editorial fashion-photography style.",
-    presentation.pose !== "automatic" ? `Pose: ${presentation.pose}.` : "Choose a natural pose that keeps the complete outfit readable.",
+    `Per-person direction: ${personDirections}`,
     presentation.direction ? `Additional user direction: ${presentation.direction}` : null,
   ].filter(Boolean).join(" ");
 
@@ -5392,6 +5410,10 @@ Interpret this correction semantically in whatever language it is written. It ov
           : null;
         return { record, variant, image: variant?.image || record.image, wearerId: selection.wearerId };
       });
+      const undressedPerson = people.find((person) => !selections.some((selection) => selection.wearerId === person.id));
+      if (undressedPerson) {
+        throw apiError(`Add at least one garment to ${undressedPerson.name || "each person"}'s outfit board before generating.`, 400, "outfit_person_undressed");
+      }
 
       const provider = providerWithProfilePreferences(aiProvider(payerProfile?.id || user.id), profile, payerProfile);
       if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
@@ -6652,7 +6674,7 @@ Interpret this correction semantically in whatever language it is written. It ov
             garments,
             companions,
             context: normalizeOutfitContext(input.context),
-            presentation: normalizeOutfitPresentation(input.presentation),
+            presentation: outfitPresentationForPeople(input.presentation, [user.id, ...companions]),
             source: input.source,
             explanation: input.explanation,
             modeledLooks: [],
@@ -6807,7 +6829,9 @@ Interpret this correction semantically in whatever language it is written. It ov
             garments,
             companions,
             context: Object.hasOwn(input, "context") ? normalizeOutfitContext(input.context) : existing.context,
-            presentation: Object.hasOwn(input, "presentation") ? normalizeOutfitPresentation(input.presentation) : existing.presentation,
+            presentation: Object.hasOwn(input, "presentation")
+              ? outfitPresentationForPeople(input.presentation, [user.id, ...companions])
+              : outfitPresentationForPeople(existing.presentation, [user.id, ...companions]),
             source: Object.hasOwn(input, "source") ? input.source : existing.source,
             explanation: Object.hasOwn(input, "explanation") ? input.explanation : existing.explanation,
             modeledLooks: existing.modeledLooks,

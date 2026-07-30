@@ -8,6 +8,15 @@ export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
     { id: "lying", label: "Lying down", prompt: "lying down in a natural editorial pose" },
     { id: "crouching", label: "Crouching", prompt: "crouching in a balanced, natural pose" },
   ]),
+  hairstyle: Object.freeze([
+    { id: "long-loose", label: "Long hair, loose", prompt: "long loose hair with its natural texture" },
+    { id: "shoulder-length", label: "Shoulder-length hair", prompt: "shoulder-length hair with its natural texture" },
+    { id: "short", label: "Short hair", prompt: "short hair with its natural texture" },
+    { id: "ponytail", label: "Ponytail", prompt: "hair gathered into a natural ponytail" },
+    { id: "bun", label: "Bun", prompt: "hair gathered into a neat natural bun" },
+    { id: "braid", label: "Braid", prompt: "hair styled in a natural braid" },
+    { id: "updo", label: "Formal updo", prompt: "hair styled in a polished formal updo" },
+  ]),
   bodyOrientation: Object.freeze([
     { id: "front", label: "Straight forward", prompt: "body facing straight toward the camera" },
     { id: "three-quarter", label: "Three-quarters", prompt: "body at a three-quarter angle" },
@@ -81,6 +90,7 @@ export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
 
 export const EMPTY_MODELED_LOOK_CONTEXT = Object.freeze({
   pose: "",
+  hairstyle: "",
   bodyOrientation: "",
   headOrientation: "",
   environmentType: "",
@@ -108,6 +118,7 @@ export function normalizeModeledLookContext(input = {}) {
   const settingGroup = environmentType === "inside" ? "insideSetting" : "outsideSetting";
   return {
     pose: validOption("pose", source.pose),
+    hairstyle: validOption("hairstyle", source.hairstyle),
     bodyOrientation: validOption("bodyOrientation", source.bodyOrientation),
     headOrientation: validOption("headOrientation", source.headOrientation),
     environmentType,
@@ -124,6 +135,7 @@ export function modeledLookContextPrompt(input = {}) {
   const context = normalizeModeledLookContext(input);
   const details = [
     context.pose ? `Pose and action: ${optionPrompt("pose", context.pose)}.` : null,
+    context.hairstyle ? `Hairstyle: ${optionPrompt("hairstyle", context.hairstyle)}. Preserve the person's real hair color, hairline, and texture.` : null,
     context.bodyOrientation ? `Body orientation: ${optionPrompt("bodyOrientation", context.bodyOrientation)}.` : null,
     context.headOrientation ? `Head orientation: ${optionPrompt("headOrientation", context.headOrientation)}.` : null,
     context.environmentType
@@ -148,6 +160,7 @@ export function modeledLookContextDetails(input = {}) {
     : null;
   return [
     translated("pose", "Pose", [optionLabel("pose", context.pose)]),
+    translated("hairstyle", "Hairstyle", [optionLabel("hairstyle", context.hairstyle)]),
     translated("bodyOrientation", "Body orientation", [optionLabel("bodyOrientation", context.bodyOrientation)]),
     translated("headOrientation", "Head orientation", [optionLabel("headOrientation", context.headOrientation)]),
     translated("environment", "Environment", [

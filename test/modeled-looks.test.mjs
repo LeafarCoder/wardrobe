@@ -59,6 +59,7 @@ test("preserves normalized generation settings on modeled looks", () => {
 
   assert.deepEqual(look.context, {
     pose: "walking",
+    hairstyle: "",
     bodyOrientation: "",
     headOrientation: "camera",
     environmentType: "outside",
