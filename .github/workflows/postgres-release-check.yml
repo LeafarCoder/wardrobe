@@ -1,0 +1,39 @@
+name: PostgreSQL minor release check
+
+on:
+  schedule:
+    - cron: "23 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare supported PostgreSQL 18 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED_VERSION: "18.4"
+        run: |
+          set -Eeuo pipefail
+          latest="$(curl -fsSL https://www.postgresql.org/versions.json \
+            | jq -r '[.[] | select(.major == "18")][0] | "\(.major).\(.latestMinor)"')"
+          if [[ -z "$latest" || "$latest" == "null" ]]; then
+            echo "Could not determine the latest PostgreSQL 18 release." >&2
+            exit 1
+          fi
+          if [[ "$latest" == "$PINNED_VERSION" ]]; then
+            echo "PostgreSQL $PINNED_VERSION is current."
+            exit 0
+          fi
+          title="Evaluate PostgreSQL 18 minor upgrade: $PINNED_VERSION → $latest"
+          existing="$(gh issue list --state open --search "$title in:title" --json number --jq 'length')"
+          if [[ "$existing" == "0" ]]; then
+            gh issue create \
+              --title "$title" \
+              --body "The official PostgreSQL release feed now reports **$latest** while Wardrobe is pinned to **$PINNED_VERSION**. Do not upgrade automatically. First create and verify a logical dump, confirm pgBackRest archive health, restore into an isolated database, run integrity checks and the full test suite, then update the pinned database and backup images deliberately."
+          fi

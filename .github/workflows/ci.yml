@@ -19,3 +19,47 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+
+  persistence-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.4-bookworm
+        env:
+          POSTGRES_USER: wardrobe
+          POSTGRES_PASSWORD: wardrobe
+          POSTGRES_DB: wardrobe
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wardrobe -d wardrobe"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Start S3-compatible integration service
+        run: |
+          docker run --detach --name wardrobe-minio \
+            --publish 9000:9000 \
+            --env MINIO_ROOT_USER=minio \
+            --env MINIO_ROOT_PASSWORD=minio123 \
+            minio/minio:latest server /data
+          for attempt in {1..20}; do
+            curl --fail --silent http://127.0.0.1:9000/minio/health/live && exit 0
+            sleep 2
+          done
+          docker logs wardrobe-minio
+          exit 1
+      - run: npm run test:integration
+        env:
+          TEST_DATABASE_URL: postgresql://wardrobe:wardrobe@127.0.0.1:5432/wardrobe
+          TEST_S3_ENDPOINT: http://127.0.0.1:9000
+          TEST_S3_BUCKET: wardrobe-test
+          TEST_S3_ACCESS_KEY_ID: minio
+          TEST_S3_SECRET_ACCESS_KEY: minio123

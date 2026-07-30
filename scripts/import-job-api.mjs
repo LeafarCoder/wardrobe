@@ -1,6 +1,16 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  copyFile as fsCopyFile,
+  lstat as fsLstat,
+  mkdir,
+  readFile as fsReadFile,
+  readdir,
+  rename,
+  rm as fsRm,
+  stat as fsStat,
+  writeFile as fsWriteFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -71,6 +81,9 @@ import {
   selectImportGenerationCandidate,
   selectedImportGenerationCandidate,
 } from "../src/import-candidates.js";
+import { createDatabasePool, verifyDatabase } from "./db.mjs";
+import { createObjectStorage } from "./object-storage.mjs";
+import { PostgresRepository } from "./postgres-repository.mjs";
 
 const API_ROOT = "/api/import/jobs";
 const ASSET_ROOT = "/api/import/assets";
@@ -1256,39 +1269,47 @@ export function duplicateCandidateScore(record = {}, metadata = {}) {
   };
 }
 
+function storedAssetUrl(owner, value, userId) {
+  if (!value) return value;
+  const fileName = path.basename(new URL(value, "http://localhost").pathname);
+  const assetId = owner?.assetIds?.[fileName];
+  return withUser(assetId ? `/api/assets/${assetId}` : value, userId);
+}
+
 function publicImportedRecord(record, userId) {
   const regenerationCandidate = garmentRegenerationCandidateForRecord(record);
+  const { assetIds, ...publicRecord } = record;
   return {
-    ...record,
+    ...publicRecord,
     seasons: normalizeGarmentSeasons(record.seasons),
     careInstructions: normalizeCareInstructions(record.careInstructions),
-    image: withUser(record.image, userId),
-    imagePreview: withUser(record.imagePreview, userId),
-    thumbnail: withUser(record.thumbnail, userId),
+    image: storedAssetUrl(record, record.image, userId),
+    imagePreview: storedAssetUrl(record, record.imagePreview, userId),
+    thumbnail: storedAssetUrl(record, record.thumbnail, userId),
     colorVariants: garmentColorVariants(record).map((variant) => ({
       ...variant,
-      image: withUser(variant.image, userId),
-      preview: withUser(variant.preview, userId),
-      thumbnail: withUser(variant.thumbnail, userId),
+      image: storedAssetUrl(record, variant.image, userId),
+      preview: storedAssetUrl(record, variant.preview, userId),
+      thumbnail: storedAssetUrl(record, variant.thumbnail, userId),
     })),
-    modeledImage: withUser(record.modeledImage, userId),
+    modeledImage: storedAssetUrl(record, record.modeledImage, userId),
     modeledLooks: modeledLooksForRecord(record).map((look) => ({
       ...look,
-      image: withUser(look.image, userId),
-      preview: withUser(look.preview, userId),
+      image: storedAssetUrl(record, look.image, userId),
+      preview: storedAssetUrl(record, look.preview, userId),
     })),
-    originalImage: withUser(record.originalImage, userId),
-    originalPreview: withUser(record.originalPreview, userId),
+    originalImage: storedAssetUrl(record, record.originalImage, userId),
+    originalPreview: storedAssetUrl(record, record.originalPreview, userId),
     sourcePhotos: sourcePhotosForRecord(record).map((photo) => ({
       ...photo,
-      image: withUser(photo.image, userId),
-      preview: withUser(photo.preview, userId),
+      image: storedAssetUrl(record, photo.image, userId),
+      preview: storedAssetUrl(record, photo.preview, userId),
     })),
     garmentRegenerationCandidate: regenerationCandidate ? {
       ...regenerationCandidate,
-      image: withUser(regenerationCandidate.image, userId),
-      preview: withUser(regenerationCandidate.preview, userId),
-      thumbnail: withUser(regenerationCandidate.thumbnail, userId),
+      image: storedAssetUrl(record, regenerationCandidate.image, userId),
+      preview: storedAssetUrl(record, regenerationCandidate.preview, userId),
+      thumbnail: storedAssetUrl(record, regenerationCandidate.thumbnail, userId),
     } : null,
   };
 }
@@ -1350,17 +1371,18 @@ export function wardrobePlanAssets(value = []) {
 function publicJob(job) {
   const copy = structuredClone(job);
   delete copy.internal;
-  copy.originalAssetUrl = withUser(copy.originalAssetUrl, copy.userId);
+  delete copy.assetIds;
+  copy.originalAssetUrl = storedAssetUrl(job, copy.originalAssetUrl, copy.userId);
   for (const [stageName, stage] of Object.entries(copy.stages || {})) {
     if (stageName === "garment") {
       stage.candidates = importGenerationCandidates(stage).map((candidate) => ({
         ...candidate,
-        assetUrl: withUser(candidate.assetUrl, copy.userId),
+        assetUrl: storedAssetUrl(job, candidate.assetUrl, copy.userId),
       }));
     }
-    stage.assetUrl = withUser(stage.assetUrl, copy.userId);
-    stage.failedAssetUrl = withUser(stage.failedAssetUrl, copy.userId);
-    stage.cleanupPreviewUrl = withUser(stage.cleanupPreviewUrl, copy.userId);
+    stage.assetUrl = storedAssetUrl(job, stage.assetUrl, copy.userId);
+    stage.failedAssetUrl = storedAssetUrl(job, stage.failedAssetUrl, copy.userId);
+    stage.cleanupPreviewUrl = storedAssetUrl(job, stage.cleanupPreviewUrl, copy.userId);
   }
   if (copy.duplicateReview?.candidate) {
     copy.duplicateReview.candidate.image = withUser(copy.duplicateReview.candidate.image, copy.userId);
@@ -2651,31 +2673,31 @@ async function verifyNoChromaSpill(bytes, key) {
 
 async function atomicJson(file, value) {
   const tmp = `${file}.${randomUUID()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`);
+  await fsWriteFile(tmp, `${JSON.stringify(value, null, 2)}\n`);
   try {
     await rename(tmp, file);
   } catch (error) {
     if (!["EBUSY", "EXDEV", "EPERM"].includes(error.code)) {
-      await rm(tmp, { force: true });
+      await fsRm(tmp, { force: true });
       throw error;
     }
-    await copyFile(tmp, file);
-    await rm(tmp, { force: true });
+    await fsCopyFile(tmp, file);
+    await fsRm(tmp, { force: true });
   }
 }
 
 async function atomicFile(file, value) {
   const tmp = `${file}.${randomUUID()}.tmp`;
-  await writeFile(tmp, value);
+  await fsWriteFile(tmp, value);
   try {
     await rename(tmp, file);
   } catch (error) {
     if (!["EBUSY", "EXDEV", "EPERM"].includes(error.code)) {
-      await rm(tmp, { force: true });
+      await fsRm(tmp, { force: true });
       throw error;
     }
-    await copyFile(tmp, file);
-    await rm(tmp, { force: true });
+    await fsCopyFile(tmp, file);
+    await fsRm(tmp, { force: true });
   }
 }
 
@@ -3483,11 +3505,280 @@ export function wardrobeImportApi(options = {}) {
   let usersFile;
   let aiUsageFile;
   let importHistoryFile;
+  let databasePool;
+  let repository;
+  let objectStorage;
   let initialization;
   let usageWriteQueue = Promise.resolve();
   let importHistoryWriteQueue = Promise.resolve();
   const running = new Map();
   const loginAttempts = new Map();
+
+  const mediaPath = (file) => {
+    if (!dataDir || typeof file !== "string") return null;
+    const absolute = path.resolve(file);
+    for (const [kind, directory] of [
+      ["library", libraryAssetDir],
+      ["profile", profilesDir],
+      ["job", jobsDir],
+    ]) {
+      if (directory && absolute.startsWith(`${directory}${path.sep}`)) {
+        return { kind, absolute, fileName: path.basename(absolute) };
+      }
+    }
+    return null;
+  };
+
+  const hydrateMediaFile = async (file) => {
+    const media = mediaPath(file);
+    if (!media || objectStorageDriver() !== "s3" || !databasePool) return false;
+    const result = await databasePool.query(
+      `SELECT object_key FROM assets
+       WHERE original_name = $1 AND deleted_at IS NULL
+       ORDER BY created_at DESC LIMIT 1`,
+      [media.fileName],
+    );
+    if (!result.rows[0]) return false;
+    const object = await objectStorage.get(result.rows[0].object_key);
+    const bytes = Buffer.from(await object.Body.transformToByteArray());
+    await mkdir(path.dirname(media.absolute), { recursive: true });
+    await fsWriteFile(media.absolute, bytes);
+    return true;
+  };
+
+  async function readFile(file, ...args) {
+    try {
+      return await fsReadFile(file, ...args);
+    } catch (error) {
+      if (error.code !== "ENOENT" || !(await hydrateMediaFile(file))) throw error;
+      return fsReadFile(file, ...args);
+    }
+  }
+
+  async function stat(file, ...args) {
+    try {
+      return await fsStat(file, ...args);
+    } catch (error) {
+      if (error.code !== "ENOENT" || !(await hydrateMediaFile(file))) throw error;
+      return fsStat(file, ...args);
+    }
+  }
+
+  async function lstat(file, ...args) {
+    try {
+      return await fsLstat(file, ...args);
+    } catch (error) {
+      if (error.code !== "ENOENT" || !(await hydrateMediaFile(file))) throw error;
+      return fsLstat(file, ...args);
+    }
+  }
+
+  async function writeFile(file, value, ...args) {
+    return fsWriteFile(file, value, ...args);
+  }
+
+  async function copyFile(source, destination, ...args) {
+    try {
+      return await fsCopyFile(source, destination, ...args);
+    } catch (error) {
+      if (error.code !== "ENOENT" || !(await hydrateMediaFile(source))) throw error;
+      return fsCopyFile(source, destination, ...args);
+    }
+  }
+
+  async function rm(file, options = {}) {
+    const media = mediaPath(file);
+    if (media && objectStorageDriver() === "s3" && databasePool && !options.recursive) {
+      const profileRelative = media.kind === "profile" ? path.relative(profilesDir, media.absolute).split(path.sep) : [];
+      const ownerUserId = profileRelative.length > 2 ? profileRelative[0] : null;
+      await databasePool.query(
+        `WITH candidates AS (
+           SELECT id, count(*) OVER () AS matching
+           FROM assets
+           WHERE original_name = $1 AND deleted_at IS NULL
+             AND ($2::text IS NULL OR owner_user_id = $2)
+         ), removed AS (
+           UPDATE assets SET deleted_at = now()
+           WHERE id IN (
+             SELECT id FROM candidates WHERE $2::text IS NOT NULL OR matching = 1
+           )
+           RETURNING id, object_key
+         )
+         INSERT INTO pending_storage_operations(operation, asset_id, object_key)
+         SELECT 'delete', id, object_key FROM removed`,
+        [media.fileName, ownerUserId],
+      );
+    }
+    return fsRm(file, options);
+  }
+
+  const registerLocalAsset = async ({
+    file,
+    ownerUserId,
+    entityType,
+    entityId,
+    role,
+    mediaKind,
+    cachePolicy = "private-no-store",
+  }) => {
+    if (objectStorageDriver() !== "s3" || !databasePool) return null;
+    let bytes;
+    try {
+      bytes = await readFile(file);
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const fileName = path.basename(file);
+    const prior = await databasePool.query(
+      `SELECT id, object_key FROM assets
+       WHERE owner_user_id = $1 AND original_name = $2 AND sha256 = $3 AND deleted_at IS NULL
+       LIMIT 1`,
+      [ownerUserId, fileName, digest],
+    );
+    let assetId = prior.rows[0]?.id;
+    if (!assetId) {
+      assetId = randomUUID();
+      const objectKey = [
+        "users",
+        encodeURIComponent(ownerUserId),
+        entityType,
+        encodeURIComponent(String(entityId)),
+        `${digest.slice(0, 16)}-${fileName}`,
+      ].join("/");
+      const contentType = imageMime(file);
+      const cacheControl = cachePolicy === "private-immutable"
+        ? "private, max-age=31536000, immutable"
+        : "private, no-store";
+      await objectStorage.put(objectKey, bytes, { contentType, cacheControl, sha256: digest });
+      await databasePool.query(
+        `INSERT INTO assets(
+           id, owner_user_id, object_key, media_kind, content_type, byte_size,
+           sha256, cache_policy, original_name
+         ) VALUES($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [assetId, ownerUserId, objectKey, mediaKind, contentType, bytes.length, digest, cachePolicy, fileName],
+      );
+    }
+    await databasePool.query(
+      `INSERT INTO asset_links(asset_id, entity_type, entity_id, role)
+       VALUES($1::uuid, $2, $3, $4) ON CONFLICT DO NOTHING`,
+      [assetId, entityType, String(entityId), role],
+    );
+    return assetId;
+  };
+
+  const syncProfileAssets = async (store) => {
+    if (objectStorageDriver() !== "s3") return;
+    for (const profile of store.users || []) {
+      profile.assetIds = { ...(profile.assetIds || {}) };
+      for (const reference of profile.referenceImages || []) {
+        const referenceDir = profileReferenceDir(profile.id);
+        const referenceAssetId = await registerLocalAsset({
+          file: path.join(referenceDir, reference.fileName),
+          ownerUserId: profile.id,
+          entityType: "profile",
+          entityId: profile.id,
+          role: "reference",
+          mediaKind: "profile-reference",
+        });
+        if (referenceAssetId) profile.assetIds[reference.fileName] = referenceAssetId;
+        if (reference.avatarFileName) {
+          const avatarAssetId = await registerLocalAsset({
+            file: path.join(referenceDir, reference.avatarFileName),
+            ownerUserId: profile.id,
+            entityType: "profile",
+            entityId: profile.id,
+            role: "avatar",
+            mediaKind: "profile-avatar",
+            cachePolicy: "private-immutable",
+          });
+          if (avatarAssetId) profile.assetIds[reference.avatarFileName] = avatarAssetId;
+        }
+      }
+      for (const asset of [
+        ...wardrobePlanAssets(profile.wardrobePlans),
+        ...wardrobeOutfitAssets(profile.wardrobeOutfits),
+      ]) {
+        const fileName = path.basename(new URL(asset, "http://localhost").pathname);
+        const assetId = await registerLocalAsset({
+          file: path.join(libraryAssetDir, fileName),
+          ownerUserId: profile.id,
+          entityType: "profile",
+          entityId: profile.id,
+          role: "generated-look",
+          mediaKind: "modeled-look",
+          cachePolicy: fileName.endsWith(".webp") ? "private-immutable" : "private-no-store",
+        });
+        if (assetId) profile.assetIds[fileName] = assetId;
+      }
+    }
+  };
+
+  const syncGarmentAssets = async (records) => {
+    if (objectStorageDriver() !== "s3") return;
+    for (const record of records) {
+      record.assetIds = { ...(record.assetIds || {}) };
+      for (const asset of importedRecordAssets(record)) {
+        const fileName = path.basename(new URL(asset, "http://localhost").pathname);
+        const assetId = await registerLocalAsset({
+          file: path.join(libraryAssetDir, fileName),
+          ownerUserId: record.userId,
+          entityType: "garment",
+          entityId: record.id,
+          role: fileName.endsWith(".webp") ? "derivative" : "source",
+          mediaKind: fileName.endsWith(".webp") ? "garment-derivative" : "garment-media",
+          cachePolicy: fileName.endsWith(".webp") ? "private-immutable" : "private-no-store",
+        });
+        if (assetId) record.assetIds[fileName] = assetId;
+      }
+    }
+  };
+
+  const jobAssetNames = (job) => new Set([
+      ...Object.values(job.internal || {}).filter((value) => typeof value === "string" && /\.[a-z0-9]+$/i.test(value)),
+      ...Object.values(job.stages || {}).flatMap((stage) => {
+        const urls = [
+          stage?.assetUrl,
+          stage?.failedAssetUrl,
+          stage?.cleanupPreviewUrl,
+          ...importGenerationCandidates(stage || {}).map((candidate) => candidate.assetUrl),
+        ].filter(Boolean);
+        return urls.map((value) => path.basename(new URL(value, "http://localhost").pathname));
+      }),
+    ]);
+
+  const syncJobAssets = async (job) => {
+    if (objectStorageDriver() !== "s3") return;
+    job.assetIds = { ...(job.assetIds || {}) };
+    for (const fileName of jobAssetNames(job)) {
+      const assetId = await registerLocalAsset({
+        file: path.join(jobsDir, job.id, fileName),
+        ownerUserId: job.userId,
+        entityType: "job",
+        entityId: job.id,
+        role: fileName,
+        mediaKind: "import-job",
+      });
+      if (assetId) job.assetIds[fileName] = assetId;
+    }
+  };
+
+  const redirectStoredAsset = async (res, ownerUserId, fileName) => {
+    if (objectStorageDriver() !== "s3" || !databasePool) return false;
+    const result = await databasePool.query(
+      `SELECT object_key FROM assets
+       WHERE owner_user_id = $1 AND original_name = $2 AND deleted_at IS NULL
+       ORDER BY created_at DESC LIMIT 1`,
+      [ownerUserId, fileName],
+    );
+    if (!result.rows[0]) return false;
+    res.statusCode = 302;
+    res.setHeader("Location", await objectStorage.signedUrl(result.rows[0].object_key, 300));
+    res.setHeader("Cache-Control", "private, no-store");
+    res.end();
+    return true;
+  };
   // Serializes read-modify-write cycles on a JSON store so two in-flight requests
   // cannot both read the same snapshot and have the later write discard the earlier.
   // Never wrap a provider call in one of these sections; they must stay short.
@@ -3584,7 +3875,11 @@ export function wardrobeImportApi(options = {}) {
     res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
     if (requestIsSecure(req)) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     if (setting("NODE_ENV") === "production" || setting("RAILWAY_ENVIRONMENT_NAME")) {
-      res.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+      let storageOrigin = "";
+      try {
+        storageOrigin = new URL(setting("WARDROBE_MEDIA_S3_PUBLIC_ENDPOINT") || setting("WARDROBE_MEDIA_S3_ENDPOINT")).origin;
+      } catch {}
+      res.setHeader("Content-Security-Policy", `default-src 'self'; img-src 'self' data: blob:${storageOrigin ? ` ${storageOrigin}` : ""}; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'${storageOrigin ? ` ${storageOrigin}` : ""}; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     }
   };
   const modelReferenceSettings = () => {
@@ -3626,8 +3921,12 @@ export function wardrobeImportApi(options = {}) {
     const value = setting(name, fallback ? "true" : "false").trim().toLowerCase();
     return !["0", "false", "no", "off"].includes(value);
   };
+  const persistenceDriver = () => String(setting("WARDROBE_PERSISTENCE_DRIVER", "filesystem")).trim().toLowerCase();
+  const objectStorageDriver = () => String(setting("WARDROBE_OBJECT_STORAGE_DRIVER", "filesystem")).trim().toLowerCase();
+  const maintenanceEnabled = () => booleanSetting("WARDROBE_MAINTENANCE_MODE", false);
 
   const readAiUsageLedger = async () => {
+    if (repository) return repository.readAiUsageLedger();
     try {
       const value = JSON.parse(await readFile(aiUsageFile, "utf8"));
       return {
@@ -3651,7 +3950,7 @@ export function wardrobeImportApi(options = {}) {
       const billingUserId = USER_ID.test(entry.billingUserId || "")
         ? entry.billingUserId
         : entry.userId;
-      ledger.entries.push({
+      const normalizedEntry = {
         id,
         // The log belongs to the wardrobe where the work happened. Billing stays
         // separate because an owner may have supplied the OpenRouter key.
@@ -3683,13 +3982,18 @@ export function wardrobeImportApi(options = {}) {
         sourceFileName: entry.sourceFileName ? cleanLogValue(entry.sourceFileName).slice(0, 220) : null,
         companionCount: Number.isInteger(entry.companionCount) ? Math.max(0, Math.min(3, entry.companionCount)) : 0,
         createdAt: entry.createdAt || new Date().toISOString(),
-      });
-      await atomicJson(aiUsageFile, ledger);
+      };
+      if (repository) await repository.appendAiUsage(normalizedEntry);
+      else {
+        ledger.entries.push(normalizedEntry);
+        await atomicJson(aiUsageFile, ledger);
+      }
     });
     return usageWriteQueue;
   };
 
   const readImportHistory = async () => {
+    if (repository) return repository.readImportHistory();
     try {
       const value = JSON.parse(await readFile(importHistoryFile, "utf8"));
       return {
@@ -3717,7 +4021,8 @@ export function wardrobeImportApi(options = {}) {
       };
       if (index >= 0) history.uploads[index] = normalized;
       else history.uploads.push(normalized);
-      await atomicJson(importHistoryFile, history);
+      if (repository) await repository.saveImportHistory(history);
+      else await atomicJson(importHistoryFile, history);
     });
     return importHistoryWriteQueue;
   };
@@ -3774,7 +4079,10 @@ export function wardrobeImportApi(options = {}) {
         });
         return uploadChanged ? { ...upload, items, updatedAt: new Date().toISOString() } : upload;
       });
-      if (changed) await atomicJson(importHistoryFile, history);
+      if (changed) {
+        if (repository) await repository.saveImportHistory(history);
+        else await atomicJson(importHistoryFile, history);
+      }
     });
     return importHistoryWriteQueue;
   };
@@ -3956,6 +4264,7 @@ export function wardrobeImportApi(options = {}) {
 
   const publicProfile = ({
     openRouterApiKey,
+    assetIds,
     googleSubject,
     accountPreparedAt,
     accountClaimedAt,
@@ -3979,8 +4288,8 @@ export function wardrobeImportApi(options = {}) {
               ? outfit.modeledLooks
               : [outfit.modeledLook]).map((look) => ({
               ...look,
-              image: withUser(look.image, profile.id),
-              preview: withUser(look.preview, profile.id),
+              image: storedAssetUrl({ assetIds }, look.image, profile.id),
+              preview: storedAssetUrl({ assetIds }, look.preview, profile.id),
             }));
             return { modeledLooks, modeledLook: modeledLooks.at(-1) };
           })() : {}),
@@ -3991,20 +4300,28 @@ export function wardrobeImportApi(options = {}) {
       ...outfit,
       modeledLooks: outfit.modeledLooks.map((look) => ({
         ...look,
-        image: withUser(look.image, profile.id),
-        preview: withUser(look.preview, profile.id),
+        image: storedAssetUrl({ assetIds }, look.image, profile.id),
+        preview: storedAssetUrl({ assetIds }, look.preview, profile.id),
       })),
     })),
     referenceImages: (profile.referenceImages || []).map((reference) => ({
       ...reference,
-      url: withUser(profileReferenceUrl(profile.id, reference.fileName), profile.id),
+      url: storedAssetUrl({ assetIds }, profileReferenceUrl(profile.id, reference.fileName), profile.id),
       avatarUrl: reference.avatarFileName
-        ? withUser(profileReferenceUrl(profile.id, reference.avatarFileName), profile.id)
+        ? storedAssetUrl({ assetIds }, profileReferenceUrl(profile.id, reference.avatarFileName), profile.id)
         : undefined,
     })),
   });
 
   async function loadUsersStore() {
+    if (repository) {
+      const value = await repository.loadUsersStore();
+      if (!value) return null;
+      if (!value.users.some((user) => user.id === value.currentUserId)) value.currentUserId = value.users[0].id;
+      value.connectionInvites = normalizeConnectionInvites(value.connectionInvites);
+      value.connections = normalizeAccountConnections(value.connections);
+      return value;
+    }
     try {
       const value = JSON.parse(await readFile(usersFile, "utf8"));
       if (!Array.isArray(value.users) || !value.users.length) throw new Error("users.json contains no profiles");
@@ -4019,6 +4336,21 @@ export function wardrobeImportApi(options = {}) {
   }
 
   async function saveUsersStore(store) {
+    if (repository) {
+      const normalizedStore = {
+        version: 2,
+        currentUserId: store.currentUserId,
+        users: store.users,
+        connectionInvites: normalizeConnectionInvites(store.connectionInvites),
+        connections: normalizeAccountConnections(store.connections),
+      };
+      // The first write establishes new profile foreign keys. The second stores
+      // asset IDs added while the private objects are registered.
+      await repository.saveUsersStore(normalizedStore);
+      await syncProfileAssets(store);
+      await repository.saveUsersStore(normalizedStore);
+      return;
+    }
     await atomicJson(usersFile, {
       version: 2,
       currentUserId: store.currentUserId,
@@ -4468,9 +4800,7 @@ export function wardrobeImportApi(options = {}) {
       }
       if (JSON.stringify(migrated) !== JSON.stringify(records)) await saveImported(migrated);
     }
-    const ids = await readdir(jobsDir).catch(() => []);
-    for (const id of ids) {
-      const job = await loadJob(id);
+    for (const job of await listJobs()) {
       if (job && !job.userId) {
         job.userId = ownerId;
         await saveJob(job);
@@ -4525,13 +4855,44 @@ export function wardrobeImportApi(options = {}) {
 
   async function loadJob(id) {
     if (!/^[a-f0-9-]{36}$/i.test(id)) return null;
+    if (repository) return repository.loadJob(id);
     try { return JSON.parse(await readFile(path.join(jobsDir, id, "job.json"), "utf8")); }
     catch (error) { if (error.code === "ENOENT") return null; throw error; }
   }
 
   async function saveJob(job) {
+    if (repository) {
+      await syncJobAssets(job);
+      return repository.saveJob(job);
+    }
     job.updatedAt = new Date().toISOString();
     await atomicJson(path.join(jobsDir, job.id, "job.json"), job);
+  }
+
+  async function listJobs() {
+    if (repository) return repository.listJobs();
+    const ids = await readdir(jobsDir).catch(() => []);
+    return (await Promise.all(ids.map((id) => loadJob(id)))).filter(Boolean);
+  }
+
+  async function deleteJob(id) {
+    if (repository) {
+      await databasePool.query(
+        `WITH removed AS (
+           UPDATE assets SET deleted_at = now()
+           WHERE id IN (
+             SELECT asset_id FROM asset_links
+             WHERE entity_type = 'job' AND entity_id = $1
+           ) AND deleted_at IS NULL
+           RETURNING id, object_key
+         )
+         INSERT INTO pending_storage_operations(operation, asset_id, object_key)
+         SELECT 'delete', id, object_key FROM removed`,
+        [id],
+      );
+      await repository.deleteJob(id);
+    }
+    await rm(path.join(jobsDir, id), { recursive: true, force: true });
   }
 
   // The wardrobe grid requests one authorized asset per image, so the library is
@@ -4540,6 +4901,7 @@ export function wardrobeImportApi(options = {}) {
   let libraryCache = null;
 
   async function readLibraryRecords() {
+    if (repository) return repository.readLibraryRecords();
     let details;
     try {
       details = await stat(importedFile);
@@ -4559,6 +4921,12 @@ export function wardrobeImportApi(options = {}) {
   }
 
   async function saveImported(records) {
+    if (repository) {
+      await syncGarmentAssets(records);
+      await repository.saveLibraryRecords(records);
+      libraryCache = null;
+      return;
+    }
     await atomicJson(importedFile, records);
     try {
       const details = await stat(importedFile);
@@ -4769,7 +5137,7 @@ export function wardrobeImportApi(options = {}) {
       garmentId: merged.id,
       mergedIntoId: merged.id,
     });
-    await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
+    await deleteJob(job.id);
     console.info(`[wardrobe] Merged duplicate import "${job.metadata?.name || job.id}" into "${merged.name}" and attached its source photo.`);
     return merged;
   }
@@ -6097,10 +6465,20 @@ Interpret this correction semantically in whatever language it is written. It ov
       );
     }
 
-    for (const id of await readdir(jobsDir).catch(() => [])) {
-      const job = await loadJob(id);
+    for (const job of await listJobs()) {
       if (job?.userId !== userId) continue;
-      for (const entry of await readdir(path.join(jobsDir, id)).catch(() => [])) {
+      const id = job.id;
+      const entries = objectStorageDriver() === "s3"
+        ? [...jobAssetNames(job), "job.json"]
+        : await readdir(path.join(jobsDir, id)).catch(() => []);
+      for (const entry of entries) {
+        if (entry === "job.json" && repository) {
+          yield* yieldBuffer(
+            path.posix.join("wardrobe-data", "data", "jobs", id, entry),
+            jsonFile(job),
+          );
+          continue;
+        }
         yield* yieldFile(
           path.posix.join("wardrobe-data", "data", "jobs", id, entry),
           path.join(jobsDir, id, entry),
@@ -6117,6 +6495,15 @@ Interpret this correction semantically in whatever language it is written. It ov
     try {
       if (url.pathname === "/healthz" && req.method === "GET") {
         return json(res, 200, { status: "healthy" });
+      }
+      if (url.pathname === "/readyz" && req.method === "GET") {
+        const checks = {
+          persistence: persistenceDriver(),
+          objectStorage: objectStorageDriver(),
+          database: persistenceDriver() === "postgres" ? await verifyDatabase(databasePool) : { ready: true },
+          bucket: await objectStorage.ready().then(() => ({ ready: true })),
+        };
+        return json(res, 200, { status: "ready", checks });
       }
       if (url.pathname === "/api/auth/status" && req.method === "GET") {
         if (!authEnabled()) {
@@ -6211,7 +6598,15 @@ Interpret this correction semantically in whatever language it is written. It ov
         res.setHeader("Set-Cookie", authCookie(req, "", 0));
         return json(res, 200, { enabled: authEnabled(), authenticated: false });
       }
+      if (maintenanceEnabled() && !["GET", "HEAD"].includes(req.method)) {
+        res.setHeader("Retry-After", "300");
+        return json(res, 503, {
+          error: "Wardrobe is temporarily read-only while storage maintenance is in progress. Your photos and data remain available.",
+          code: "maintenance_read_only",
+        });
+      }
       const protectedPath = url.pathname.startsWith("/api/import/")
+        || url.pathname.startsWith("/api/assets/")
         || url.pathname.startsWith(USERS_ROOT)
         || url.pathname === EXPORT_ROOT;
       if (protectedPath && !sessionUserId(req)) {
@@ -6225,6 +6620,29 @@ Interpret this correction semantically in whatever language it is written. It ov
       // AI spend always follows the signed-in account, so an owner working in
       // somebody else's wardrobe uses their own OpenRouter key and credit.
       const payerProfile = signedInIdentity;
+      const privateAssetMatch = url.pathname.match(/^\/api\/assets\/([a-f0-9-]{36})$/i);
+      if (privateAssetMatch && req.method === "GET") {
+        if (!databasePool || objectStorageDriver() !== "s3") {
+          throw apiError("Private object storage is not configured.", 503, "object_storage_unavailable");
+        }
+        const assetResult = await databasePool.query(
+          `SELECT id, owner_user_id, object_key, media_kind
+           FROM assets WHERE id = $1::uuid AND deleted_at IS NULL`,
+          [privateAssetMatch[1]],
+        );
+        const asset = assetResult.rows[0];
+        const permission = asset?.media_kind === "profile-reference" ? "referenceImages" : "garments";
+        const allowed = asset && (
+          asset.owner_user_id === signedInUser.id
+          || (isOwner && profileStore.users.some((profile) => profile.id === asset.owner_user_id))
+          || connectionCanShare(profileStore.connections, asset.owner_user_id, signedInIdentity.id, permission)
+        );
+        if (!allowed) throw apiError("Wardrobe image not found.", 404, "wardrobe_image_not_found");
+        res.statusCode = 302;
+        res.setHeader("Location", await objectStorage.signedUrl(asset.object_key, 300));
+        res.setHeader("Cache-Control", "private, no-store");
+        return res.end();
+      }
       if (url.pathname === EXPORT_ROOT && req.method === "GET") {
         const date = new Date().toISOString().slice(0, 10);
         res.statusCode = 200;
@@ -6436,6 +6854,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const reference = target?.referenceImages?.[0];
         if (!reference) throw apiError("Profile image not found.", 404, "connection_avatar_not_found");
         const fileName = reference.avatarFileName || reference.fileName;
+        if (await redirectStoredAsset(res, target.id, fileName)) return;
         const file = path.join(profileReferenceDir(target.id), fileName);
         const details = await stat(file);
         res.setHeader("Content-Type", fileName === reference.avatarFileName ? "image/webp" : reference.mime || imageMime(file));
@@ -6577,6 +6996,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const reference = profile?.referenceImages?.find((candidate) => profileReferenceAssetNames(candidate).includes(referenceMatch[2]));
         if (!reference) throw apiError("Reference photo not found.", 404, "reference_not_found");
         const fileName = referenceMatch[2];
+        if (await redirectStoredAsset(res, profile.id, fileName)) return;
         const file = path.join(profileReferenceDir(profile.id), fileName);
         const details = await stat(file);
         const isAvatar = fileName === reference.avatarFileName;
@@ -7322,6 +7742,10 @@ Interpret this correction semantically in whatever language it is written. It ov
             (asset) => path.basename(new URL(asset, "http://localhost").pathname) === requestedAsset,
           );
         if (!allowed) throw apiError("Wardrobe image not found.", 404, "wardrobe_image_not_found");
+        const assetOwnerId = ownedAssets.get(user.id)?.has(requestedAsset)
+          ? user.id
+          : sharedOwnerId || user.id;
+        if (await redirectStoredAsset(res, assetOwnerId, requestedAsset)) return;
         const file = path.join(libraryAssetDir, path.basename(libraryAssetMatch[1]));
         const details = await stat(file);
         const isOptimized = file.endsWith(".webp");
@@ -7345,6 +7769,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (assetMatch && req.method === "GET") {
         const assetJob = await loadJob(assetMatch[1]);
         if (!assetJob || assetJob.userId !== user.id) throw apiError("Import image not found.", 404, "import_image_not_found");
+        if (await redirectStoredAsset(res, assetJob.userId, assetMatch[2])) return;
         const file = path.join(jobsDir, assetMatch[1], path.basename(assetMatch[2]));
         await stat(file);
         res.setHeader("Content-Type", file.endsWith(".svg") ? "image/svg+xml" : "image/png");
@@ -7473,10 +7898,9 @@ Interpret this correction semantically in whatever language it is written. It ov
         return json(res, 202, { jobs, noClothingDetected: jobs.length === 0 });
       }
       if (url.pathname === API_ROOT && req.method === "GET") {
-        const ids = await readdir(jobsDir).catch(() => []);
-        const loadedJobs = (await Promise.all(ids.map((id) => loadJob(id)))).filter((job) => job?.userId === user.id);
+        const loadedJobs = (await listJobs()).filter((job) => job?.userId === user.id);
         const hiddenJobs = loadedJobs.filter((job) => job.status === "complete" || job.stages.crop?.status === "rejected" || job.stages.garment.status === "rejected" || job.stages.modeled.status === "rejected");
-        await Promise.all(hiddenJobs.map((job) => rm(path.join(jobsDir, job.id), { recursive: true, force: true })));
+        await Promise.all(hiddenJobs.map((job) => deleteJob(job.id)));
         const jobs = loadedJobs.filter((job) => !hiddenJobs.includes(job)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
         return json(res, 200, jobs.map(publicJob));
       }
@@ -7488,7 +7912,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (!action && req.method === "GET") return json(res, 200, publicJob(job));
       if (!action && req.method === "DELETE") {
         await updateImportHistoryItem(job, { outcome: "deleted" });
-        await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
+        await deleteJob(job.id);
         return json(res, 200, { deleted: true, id: job.id });
       }
       if (action === "crop" && (req.method === "PATCH" || req.method === "PUT")) {
@@ -7691,12 +8115,12 @@ Interpret this correction semantically in whatever language it is written. It ov
             outcome: "unselected",
             rejectedStage: stageName,
           });
-          await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
+          await deleteJob(job.id);
         }
         if (startGarment && job.duplicateReview?.status !== "review") void generate(job, "garment");
         const response = publicJob(job);
         if (importedRecord) response.importedRecord = publicImportedRecord(importedRecord, user.id);
-        if (job.status === "complete") await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
+        if (job.status === "complete") await deleteJob(job.id);
         return json(res, 200, response);
       }
       return json(res, 404, { error: "Not found" });
@@ -7725,18 +8149,32 @@ Interpret this correction semantically in whatever language it is written. It ov
       importHistoryFile = path.join(dataDir, "import-history.json");
       await mkdir(jobsDir, { recursive: true });
       await mkdir(libraryAssetDir, { recursive: true });
+      if ((persistenceDriver() === "postgres") !== (objectStorageDriver() === "s3")) {
+        throw new Error("Production persistence requires WARDROBE_PERSISTENCE_DRIVER=postgres and WARDROBE_OBJECT_STORAGE_DRIVER=s3 together");
+      }
+      if (persistenceDriver() === "postgres") {
+        databasePool = createDatabasePool(options.env || process.env);
+        await verifyDatabase(databasePool);
+        repository = new PostgresRepository(databasePool, options.env || process.env);
+      } else if (persistenceDriver() !== "filesystem") {
+        throw new Error(`Unsupported WARDROBE_PERSISTENCE_DRIVER: ${persistenceDriver()}`);
+      }
+      objectStorage = createObjectStorage({
+        env: options.env || process.env,
+        root: path.join(dataDir, "objects"),
+      });
+      await objectStorage.ready();
       await initializeUsers();
-      await backfillProfileReferenceAvatars();
-      await backfillLibraryVariants();
-      const ids = await readdir(jobsDir).catch(() => []);
-      for (const id of ids) {
-        const job = await loadJob(id);
-        if (!job) continue;
+      if (objectStorageDriver() === "filesystem") {
+        await backfillProfileReferenceAvatars();
+        await backfillLibraryVariants();
+      }
+      for (const job of await listJobs()) {
         if (job.status === "complete") {
           try {
             const includeModeled = Boolean(job.stages.modeled?.assetUrl);
             await persistImported(job, includeModeled);
-            await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
+            await deleteJob(job.id);
           } catch (error) {
             job.status = "active";
             job.stages.garment.status = "review";
@@ -7750,14 +8188,14 @@ Interpret this correction semantically in whatever language it is written. It ov
           try {
             const includeModeled = job.stages.modeled?.status === "review" && Boolean(job.stages.modeled.assetUrl);
             await persistImported(job, includeModeled);
-            await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
+            await deleteJob(job.id);
           } catch (error) {
             console.warn(`[wardrobe] Could not finish legacy import ${job.id}: ${error.message}`);
           }
           continue;
         }
         if (job.stages.crop?.status === "rejected" || job.stages.garment.status === "rejected" || job.stages.modeled.status === "rejected") {
-          await rm(path.join(jobsDir, job.id), { recursive: true, force: true });
+          await deleteJob(job.id);
           continue;
         }
         if (job.stages.crop && job.stages.crop.status !== "approved") continue;

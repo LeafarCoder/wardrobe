@@ -1,0 +1,11 @@
+FROM postgres:18.4-bookworm
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends awscli jq ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY scripts/backup/run.sh /app/run-backup
+RUN chmod 0755 /app/run-backup
+
+ENTRYPOINT ["/app/run-backup"]

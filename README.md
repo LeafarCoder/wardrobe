@@ -248,61 +248,30 @@ Add your own AI key to the new `.env`. Keep `data-before-restore` until you have
 
 ## Deploy privately on Railway
 
-Wardrobe includes a production Node server, a Railway health check, and a shared-password wall. The password protects the profiles, wardrobe records, reference photos, originals, generated photos, and import endpoints. It is deliberately a shared household password, not separate login accounts: anyone who knows it can switch between all configured wardrobes.
+Wardrobe supports two persistence configurations:
 
-One Railway Hobby workspace can contain this alongside another project. The plan's included usage is shared across the whole workspace, so both projects contribute to the same monthly total.
+- local development and tests: JSON plus filesystem storage under `data/`;
+- production: PostgreSQL 18 plus a private S3-compatible media bucket.
 
-### First deployment without GitHub
+The production server exposes `/healthz` for process liveness and `/readyz` for
+database schema and bucket readiness. Railway uses `/readyz`; the deploy-time
+command applies checksum-protected migrations and refuses schema drift.
 
-Install and sign in to the [Railway CLI](https://docs.railway.com/cli), then run from this repository:
-
-```bash
-railway init --name wardrobe
-railway up
-```
-
-The first upload creates the service. Do not generate a public domain yet. In the Railway project:
-
-1. Add a volume to the Wardrobe service and mount it at `/data`.
-2. Add the service variables below. Use Railway's sealed/secret value option for the password and API key.
-3. Redeploy the service.
-4. Open the volume browser with `railway volume browse` and upload the **contents** of the local `data/` directory into the volume root. Restart once after the transfer.
-5. In the service's Networking settings, choose **Generate Domain**. Railway terminates HTTPS automatically.
-
-```dotenv
-WARDROBE_DATA_DIR=/data
-GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your-client-secret
-WARDROBE_ALLOWED_EMAILS=you@gmail.com=default, partner@gmail.com
-WARDROBE_SESSION_SECRET=a-long-random-string
-WARDROBE_AI_PROVIDER=openrouter
-OPENROUTER_API_KEY=sk-or-v1-your-key
-OPENROUTER_ZDR=true
-```
-
-Create the OAuth client in Google Cloud Console under **APIs & Services > Credentials > OAuth client ID > Web application**, and add `https://<your-domain>/api/auth/google/callback` as an authorized redirect URI (plus `http://localhost:5173/api/auth/google/callback` for local development). Generate the session secret with `openssl rand -base64 24`. `railway.json` tells Railway to build with `npm run build`, run the production server with `npm start`, and probe `/healthz`.
-
-If you do not want to move the existing local wardrobe, skip the volume upload and the app will initialize a fresh one. Never upload `.env`; copy each value into Railway's Variables screen.
-
-### Cost and storage
-
-The Railway Hobby plan has a $5 monthly subscription that includes $5 of resource usage across the workspace. CPU, memory, public-network egress, volumes, and any other metered infrastructure for both projects draw from that allowance. OpenRouter or OpenAI usage is billed separately by that provider.
-
-At current Railway rates, persistent volumes cost $0.15 per GB-month. A 1 GB photo library is about $0.15/month and the Hobby volume limit is 5 GB. For this small app, the always-running service's CPU and memory will normally matter more than photo storage.
-
-To inspect it, open the account/workspace switcher in Railway, choose the Hobby workspace, and open **Usage**. Expand **Usage by project** to compare the current and estimated cost of the customer project and Wardrobe. Set a custom email alert before adding a hard compute limit; a hard limit takes all workloads in that workspace offline when reached.
-
-Railway also offers private S3-compatible Buckets at a lower per-GB storage rate. Moving images there is a sensible later optimization, but the JSON database still needs durable storage. Supabase Storage is another option; if used, keep the bucket private and serve signed URLs. Its Free plan currently includes 1 GB of files and 5 GB egress, but inactive Free projects can pause after seven days and the Free plan does not include automatic database backups. Storage objects still need a separate backup. The Railway volume is the simplest and most reliable first deployment.
+The complete provisioning, pgBackRest, nightly backups, migration, verification,
+cutover, rollback, and 30-day cleanup procedure is in
+[Railway Postgres and buckets migration](docs/railway-postgres-migration.md).
+Never enable the production drivers until its verification gate succeeds.
 
 ### Security checklist
 
 - Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `WARDROBE_ALLOWED_EMAILS` before generating the public domain. Without the allowlist nobody can sign in, which fails closed rather than open.
 - Each Google account owns exactly one wardrobe. Profiles cannot be switched, another person's assets return 404, and a personal-data export contains only the signed-in person's data.
-- Keep `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_CLIENT_SECRET`, and `WARDROBE_SESSION_SECRET` in Railway variables only. Never use a `VITE_` prefix for secrets.
-- Keep a single service replica. The JSON store and attached volume are not safe for concurrent writers, and Railway volumes do not support horizontal replicas.
-- Turn on volume backups and periodically download an off-platform copy. A login wall does not replace a backup.
+- Keep API keys, OAuth secrets, S3 credentials, `WARDROBE_SESSION_SECRET`, and `WARDROBE_DATA_ENCRYPTION_KEY` in server-only Railway variables. Never use a `VITE_` prefix for secrets.
+- Keep the encryption-key recovery copy outside Railway. Losing it makes personal encrypted provider keys unrecoverable.
+- Keep a single service replica while using filesystem persistence. PostgreSQL removes the whole-file rewrite limitation after cutover.
+- Use all three backup layers in the runbook. A login wall and a media bucket do not replace database or recovery backups.
 - Leave `OPENROUTER_ZDR=true` if the selected routes support it. Imports send clothing photos to the configured AI provider; profile reference photos are sent only for explicitly requested modeled looks.
-- Do not use a public Supabase or S3 bucket for these photos. Use a private bucket plus short-lived signed URLs if storage is moved later.
+- Keep both Railway buckets private. The server authorizes asset ownership and sharing before issuing a five-minute signed redirect.
 - Review Railway logs after deployment. The server logs AI model, status, duration, token usage, and reported provider cost, but never logs API keys or image contents.
 
 ## License
