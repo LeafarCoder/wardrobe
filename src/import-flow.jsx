@@ -832,7 +832,7 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
             <figcaption><strong>{tr("Original crop")}</strong><span>{tr("From your uploaded photo")}</span></figcaption>
           </figure>
           <figure>
-            <ProductStage className="import-editor__comparison-media import-editor__preview-stage" staticStage>
+            <ProductStage className="import-editor__comparison-media import-editor__preview-stage" animated staticStage>
               <img className="import-editor__preview" src={comparison.generated} alt={tr("Generated garment for comparison")} />
             </ProductStage>
             <figcaption><strong>{tr("Generated garment")}</strong><span>{tr("AI reconstruction")}</span></figcaption>

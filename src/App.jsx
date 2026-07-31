@@ -2992,7 +2992,7 @@ function ItemViewer({
               <div className="garment-regeneration__scroll">
                 <div className={`garment-regeneration__comparison${garmentRegenerationCandidate ? " has-candidate" : ""}`} aria-label={tr("Current and regenerated garment comparison")}>
                   <figure>
-                    <ProductStage className="garment-regeneration__stage" staticStage>
+                    <ProductStage className="garment-regeneration__stage" animated staticStage>
                       <OptimizedImage
                         src={item.imagePreview || item.image}
                         alt={tr("Current garment image for {name}", { name: item.name || type })}
@@ -3004,7 +3004,7 @@ function ItemViewer({
                     <figcaption><strong>{tr("Current garment")}</strong><span>{tr("Stays unchanged until you approve a replacement")}</span></figcaption>
                   </figure>
                   <figure>
-                    <ProductStage className="garment-regeneration__stage" staticStage>
+                    <ProductStage className="garment-regeneration__stage" animated staticStage>
                       {garmentRegenerationCandidate ? (
                         <>
                           <OptimizedImage

@@ -22,6 +22,48 @@
   transform: translate3d(-1.5%, 0, 0) scale(1.02);
 }
 
+.product-stage__waves {
+  position: absolute;
+  z-index: 0;
+  inset: -18%;
+  display: block;
+  overflow: hidden;
+  opacity: .92;
+  pointer-events: none;
+  transform: translate3d(-1.5%, .5%, 0) rotate(-2deg) scale(1.04);
+}
+
+.product-stage__waves::before,
+.product-stage__waves::after {
+  content: "";
+  position: absolute;
+  left: -12%;
+  width: 124%;
+  border-radius: 45% 55% 48% 52% / 54% 44% 56% 46%;
+  filter: blur(11px);
+  transform-origin: center;
+}
+
+.product-stage__waves::before {
+  top: 17%;
+  height: 44%;
+  background:
+    radial-gradient(ellipse at 18% 54%, rgba(177, 137, 101, .38) 0 17%, transparent 50%),
+    radial-gradient(ellipse at 50% 38%, rgba(91, 133, 149, .36) 0 18%, transparent 51%),
+    radial-gradient(ellipse at 82% 57%, rgba(155, 111, 132, .35) 0 17%, transparent 49%);
+  transform: rotate(-7deg) scaleY(.92);
+}
+
+.product-stage__waves::after {
+  bottom: 8%;
+  height: 44%;
+  background:
+    radial-gradient(ellipse at 18% 45%, rgba(184, 111, 76, .35) 0 16%, transparent 49%),
+    radial-gradient(ellipse at 51% 60%, rgba(116, 140, 93, .39) 0 18%, transparent 52%),
+    radial-gradient(ellipse at 83% 39%, rgba(85, 119, 158, .37) 0 17%, transparent 50%);
+  transform: rotate(8deg) scaleY(.95);
+}
+
 .product-stage__ground {
   position: absolute;
   z-index: 1;
@@ -66,6 +108,18 @@
   animation: product-stage-light-drift 28s ease-in-out infinite alternate;
 }
 
+.product-stage--animated .product-stage__waves {
+  animation: product-stage-waves-drift 16s ease-in-out infinite alternate;
+}
+
+.product-stage--animated .product-stage__waves::before {
+  animation: product-stage-wave-upper 11s ease-in-out infinite alternate;
+}
+
+.product-stage--animated .product-stage__waves::after {
+  animation: product-stage-wave-lower 13s ease-in-out infinite alternate;
+}
+
 .product-stage--static .product-stage__content {
   transition: none;
 }
@@ -80,6 +134,7 @@
 }
 
 .product-stage--transparency .product-stage__light,
+.product-stage--transparency .product-stage__waves,
 .product-stage--transparency .product-stage__ground {
   display: none;
 }
@@ -89,10 +144,27 @@
   to { transform: translate3d(1.5%, -.7%, 0) scale(1.045); opacity: .82; }
 }
 
+@keyframes product-stage-waves-drift {
+  from { transform: translate3d(-2.5%, 1%, 0) rotate(-2deg) scale(1.04); }
+  to { transform: translate3d(2.5%, -2%, 0) rotate(2deg) scale(1.08); }
+}
+
+@keyframes product-stage-wave-upper {
+  from { transform: translate3d(-7%, 0, 0) rotate(-8deg) scaleY(.9); }
+  to { transform: translate3d(8%, 10%, 0) rotate(2deg) scaleY(1.1); }
+}
+
+@keyframes product-stage-wave-lower {
+  from { transform: translate3d(7%, 0, 0) rotate(9deg) scaleY(.93); }
+  to { transform: translate3d(-8%, -11%, 0) rotate(-2deg) scaleY(1.11); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .product-stage__light {
+  .product-stage__light,
+  .product-stage__waves,
+  .product-stage__waves::before,
+  .product-stage__waves::after {
     animation: none !important;
-    transform: none;
   }
 
   .product-stage__content {
