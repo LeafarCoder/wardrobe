@@ -6,6 +6,15 @@ export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
     { id: "cinematic", label: "Cinematic", description: "Dramatic light and atmosphere", prompt: "cinematic photography with natural depth and atmosphere" },
     { id: "minimal", label: "Minimal", description: "Quiet, clean, restrained frame", prompt: "restrained minimal fashion photography" },
   ]),
+  framing: Object.freeze([
+    { id: "extreme-close-up", label: "Extreme close-up", description: "Face fills the frame", prompt: "an extreme close-up portrait in which the face fills the frame, cropped above the shoulders" },
+    { id: "head-and-shoulders", label: "Head & shoulders", description: "Head and upper chest", prompt: "a close head-and-shoulders portrait, framed from the upper chest to just above the head" },
+    { id: "waist-up", label: "Waist-up", description: "Head to waist", prompt: "a waist-up medium close-up, framed from the waist to just above the head" },
+    { id: "three-quarter", label: "Three-quarter", description: "Head to knees", prompt: "a three-quarter portrait, framed from the knees to just above the head" },
+    { id: "full-body", label: "Full body", description: "Head to toe", prompt: "a full-body head-to-toe portrait with the entire person comfortably inside the frame" },
+    { id: "medium-distance", label: "Medium distance", description: "Full body with surroundings", prompt: "a medium-distance full-body shot with generous surrounding space while the person remains clearly recognizable" },
+    { id: "environmental-wide", label: "Environmental wide", description: "Person small within the scene", prompt: "a distant environmental wide shot with the full person appearing relatively small within a clearly readable setting" },
+  ]),
   pose: Object.freeze([
     { id: "standing", label: "Standing", prompt: "standing naturally" },
     { id: "walking", label: "Walking", prompt: "walking with a natural mid-step stride" },
@@ -143,6 +152,7 @@ export const MODELED_LOOK_CONTEXT_TRANSLATION_KEYS = Object.freeze(
 export const EMPTY_MODELED_LOOK_CONTEXT = Object.freeze({
   imageRatio: "portrait",
   photographicStyle: "",
+  framing: "",
   pose: "",
   gesture: "",
   hairstyle: "",
@@ -215,6 +225,7 @@ export function normalizeModeledLookContext(input = {}) {
   return {
     imageRatio: normalizeModeledLookImageRatio(source.imageRatio),
     photographicStyle: validOption("photographicStyle", source.photographicStyle === "street-style" ? "freestyle" : source.photographicStyle),
+    framing: validOption("framing", source.framing),
     pose: validOption("pose", source.pose),
     gesture: validOption("gesture", source.gesture),
     hairstyle: validOption("hairstyle", source.hairstyle),
@@ -243,6 +254,7 @@ export function modeledLookContextPrompt(input = {}) {
   const context = normalizeModeledLookContext(input);
   const details = [
     context.photographicStyle ? `Photographic style: ${optionPrompt("photographicStyle", context.photographicStyle)}.` : null,
+    context.framing ? `Framing and camera distance: ${optionPrompt("framing", context.framing)}. Follow this crop and subject scale exactly; do not automatically widen the shot to show more of the outfit.` : null,
     context.pose ? `Body pose and action: ${optionPrompt("pose", context.pose)}.` : null,
     context.gesture ? `Arm and hand gesture: ${optionPrompt("gesture", context.gesture)}.` : null,
     context.hairstyle ? `Hairstyle: ${optionPrompt("hairstyle", context.hairstyle)}. Preserve the person's real hair color, hairline, and texture.` : null,
@@ -280,6 +292,7 @@ export function modeledLookContextDetails(input = {}) {
   return [
     translated("imageRatio", "Image ratio", [MODELED_LOOK_IMAGE_RATIO_OPTIONS.find((option) => option.id === context.imageRatio)?.label]),
     translated("photographicStyle", "Style", [optionLabel("photographicStyle", context.photographicStyle)]),
+    translated("framing", "Framing", [optionLabel("framing", context.framing)]),
     translated("pose", "Body pose", [optionLabel("pose", context.pose)]),
     translated("gesture", "Gesture", [optionLabel("gesture", context.gesture)]),
     translated("hairstyle", "Hairstyle", [optionLabel("hairstyle", context.hairstyle)]),

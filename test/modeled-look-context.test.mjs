@@ -19,12 +19,14 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
     season: "autumn",
     weather: "sunny",
     timeOfDay: "sunset",
+    framing: "waist-up",
     expression: "smiling",
     additionalDirection: "  Carry a small bouquet.  ",
     ignored: "not persisted",
   }), {
     imageRatio: "",
     photographicStyle: "",
+    framing: "waist-up",
     pose: "walking",
     gesture: "arms-crossed",
     hairstyle: "ponytail",
@@ -46,6 +48,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
   assert.equal(normalizeModeledLookContext({ environmentType: "invalid", setting: "forest" }).environmentType, "");
   assert.equal(normalizeModeledLookContext({ season: "monsoon" }).season, "");
   assert.equal(normalizeModeledLookContext({ timeOfDay: "midday" }).timeOfDay, "");
+  assert.equal(normalizeModeledLookContext({ framing: "a-bit-closer" }).framing, "");
   assert.equal(normalizeModeledLookContext({ photographicStyle: "street-style" }).photographicStyle, "freestyle");
   assert.equal(normalizeModeledLookContext({ imageRatio: "landscape" }).imageRatio, "landscape");
   assert.equal(normalizeModeledLookContext({ imageRatio: "wide-ish" }).imageRatio, "");
@@ -63,6 +66,7 @@ test("adds only selected creative direction to the modeled-look prompt", () => {
     setting: "forest",
     season: "autumn",
     weather: "light-rain",
+    framing: "extreme-close-up",
     expression: "smirking",
     additionalDirection: "Hold a closed umbrella.",
   });
@@ -78,6 +82,9 @@ test("adds only selected creative direction to the modeled-look prompt", () => {
   assert.match(directed, /autumn, with seasonally appropriate light/);
   assert.match(directed, /a believable light rain/);
   assert.match(directed, /plausible weather moment within the selected season/);
+  assert.match(directed, /face fills the frame/);
+  assert.match(directed, /do not automatically widen the shot/);
+  assert.doesNotMatch(directed, /keep the complete outfit inside its safe central frame/);
   assert.match(directed, /a subtle smirk/);
   assert.match(directed, /Additional user direction: Hold a closed umbrella\./);
 });
@@ -98,6 +105,7 @@ test("bounds free-form modeled-look direction", () => {
 test("normalizes shared style, saved backgrounds, stair poses, and per-person direction", () => {
   const context = normalizeModeledLookContext({
     photographicStyle: "cinematic",
+    framing: "environmental-wide",
     timeOfDay: "night",
     backgroundReferenceId: "background-1",
     backgroundReferenceName: "Garden",
@@ -107,6 +115,7 @@ test("normalizes shared style, saved backgrounds, stair poses, and per-person di
     ],
   });
   assert.equal(context.photographicStyle, "cinematic");
+  assert.equal(context.framing, "environmental-wide");
   assert.equal(context.timeOfDay, "night");
   assert.equal(context.backgroundReferenceId, "background-1");
   assert.equal(context.people.length, 1);
@@ -117,6 +126,7 @@ test("normalizes shared style, saved backgrounds, stair poses, and per-person di
   const prompt = buildModeledPrompt(2, { name: "Rafael" }, { name: "Coat" }, context);
   assert.match(prompt, /Scene reference: Image 3/);
   assert.match(prompt, /cinematic photography/);
+  assert.match(prompt, /full person appearing relatively small within a clearly readable setting/);
   assert.match(prompt, /at night with believable ambient and practical lighting/);
   assert.match(prompt, /hands gently clasped together in front/);
 });
@@ -124,6 +134,7 @@ test("normalizes shared style, saved backgrounds, stair poses, and per-person di
 test("describes every selected modeled-look setting without translating free text", () => {
   assert.deepEqual(modeledLookContextDetails({
     imageRatio: "square",
+    framing: "full-body",
     pose: "walking",
     gesture: "hands-pockets",
     hairstyle: "ponytail",
@@ -138,6 +149,7 @@ test("describes every selected modeled-look setting without translating free tex
     additionalDirection: "Carry the red book.",
   }), [
     { id: "imageRatio", label: "Image ratio", values: ["Square"], translateValues: true },
+    { id: "framing", label: "Framing", values: ["Full body"], translateValues: true },
     { id: "pose", label: "Body pose", values: ["Walking"], translateValues: true },
     { id: "gesture", label: "Gesture", values: ["Hands in pockets"], translateValues: true },
     { id: "hairstyle", label: "Hairstyle", values: ["Ponytail"], translateValues: true },

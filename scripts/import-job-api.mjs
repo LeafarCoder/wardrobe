@@ -2486,7 +2486,10 @@ export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metad
   const subject = profile.name || "Wardrobe owner";
   const subjectBinding = modeledSubjectBinding(subject, 1, 0, count);
   const garmentImage = count;
-  const categoryDirection = metadata.part === "shoes"
+  const modeledContext = normalizeModeledLookContext(context);
+  const hasSelectedFraming = Boolean(modeledContext.framing);
+  const usesCroppedFraming = ["extreme-close-up", "head-and-shoulders", "waist-up", "three-quarter"].includes(modeledContext.framing);
+  const categoryDirection = metadata.part === "shoes" && !hasSelectedFraming
     ? "The featured item is footwear. Compose this as a conventional retail fashion editorial: show the complete person in ordinary daywear, standing naturally in a head-to-toe view, with both pieces of footwear fully visible and worn normally. Keep the footwear prominent through framing and pose rather than an isolated body-part close-up. Preserve the person's apparent age exactly from the identity references."
     : "";
   const structuredSizes = sizeProfileSummary(profile.sizeProfile);
@@ -2502,13 +2505,12 @@ export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metad
   ].filter(Boolean).join(" ");
   const heightDirection = modeledHeightDirection([profile]);
   const identityLock = modeledIdentityLock(profile.name || "the referenced person");
-  const modeledContext = normalizeModeledLookContext(context);
   const creativeDirection = modeledLookContextPrompt(modeledContext);
   const sceneReference = modeledContext.backgroundReferenceId
     ? `Scene reference: Image ${garmentImage + 1} is the user's exact saved background. Preserve its recognizable architecture, layout, materials, vegetation, and atmosphere while placing the person naturally and photorealistically into that location. Do not copy any people, animals, text, or transient objects from it.`
     : "";
 
-  return `Create a professional ${modeledLookImageRatioPrompt(modeledContext.imageRatio)} editorial fashion photograph. Compose specifically for this final aspect ratio and keep the complete outfit inside its safe central frame.
+  return `Create a professional ${modeledLookImageRatioPrompt(modeledContext.imageRatio)} editorial fashion photograph. Compose specifically for this final aspect ratio and ${hasSelectedFraming ? "follow the selected framing and camera distance exactly inside its safe central frame" : "keep the complete outfit inside its safe central frame"}.
 
 Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
 Subjects: ${subjectBinding}
@@ -2516,7 +2518,7 @@ Garments: Image ${garmentImage} is the exact garment reference for "${metadata.n
 ${sceneReference}
 ${modeledReferenceRoleRules()}
 
-Show ${subject} wearing the garment from Image ${garmentImage}. ${categoryDirection} ${profileDetails} ${identityLock} ${heightDirection} Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.${creativeDirection}`;
+Show ${subject} wearing the garment from Image ${garmentImage}. ${categoryDirection} ${profileDetails} ${identityLock} ${heightDirection} Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. ${usesCroppedFraming ? "The person is still wearing the complete featured item beyond the crop; preserve every part visible within the selected framing without widening the shot." : "Keep the complete featured item clearly visible and unobstructed."} Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.${creativeDirection}`;
 }
 
 function modeledIdentityLock(subject = "the referenced person") {
@@ -2563,6 +2565,8 @@ export function buildPlannedOutfitPrompt(personReferenceCount = 1, profile = {},
   const identityLock = modeledIdentityLock(profile.name || "the wardrobe owner");
   const heightDirection = modeledHeightDirection([profile]);
   const modeledContext = normalizeModeledLookContext(context);
+  const hasSelectedFraming = Boolean(modeledContext.framing);
+  const usesCroppedFraming = ["extreme-close-up", "head-and-shoulders", "waist-up", "three-quarter"].includes(modeledContext.framing);
   const sceneReference = modeledContext.backgroundReferenceId
     ? `Scene reference: Image ${count + garments.length} is the user's exact saved background. Preserve its recognizable architecture, layout, materials, vegetation, and atmosphere while composing the person naturally into that place. Do not copy people, animals, text, or transient objects from it.`
     : "";
@@ -2571,7 +2575,7 @@ export function buildPlannedOutfitPrompt(personReferenceCount = 1, profile = {},
     ? "Use the saved scene reference as the actual location even when it differs from the plan destination; keep the plan's season, weather, and occasion cues believable within that place."
     : setting;
 
-  return `Create one professional ${modeledLookImageRatioPrompt(modeledContext.imageRatio)} editorial fashion photograph for the saved wardrobe plan. Compose specifically for this final aspect ratio and keep the complete outfit inside its safe central frame.
+  return `Create one professional ${modeledLookImageRatioPrompt(modeledContext.imageRatio)} editorial fashion photograph for the saved wardrobe plan. Compose specifically for this final aspect ratio and ${hasSelectedFraming ? "follow the selected framing and camera distance exactly inside its safe central frame" : "keep the complete outfit inside its safe central frame"}.
 
 Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
 Subjects: ${identityReferences}
@@ -2587,7 +2591,7 @@ Person: ${profileDetails} ${identityLock} ${heightDirection} Show exactly one pe
 
 Setting and season: ${settingDirection} ${season} Make the environment, natural light, pose, layering, and overall mood appropriate to the stated place, time of year, weather expectations, dress code, and outfit note. For walking or casual plans, use a natural active street or neighborhood moment. For formal plans, use a refined setting and composed posture. Avoid an artificial studio unless the plan explicitly calls for one.
 
-Composition: Keep the entire outfit readable. Use a head-to-toe or sufficiently wide view whenever trousers, skirts, dresses, or footwear are included. Do not obscure one supplied garment with another unnecessarily.
+Composition: ${usesCroppedFraming ? "Follow the selected crop and subject scale without widening the shot. The person must still wear every supplied garment, including portions intentionally outside the frame; preserve all visible garment areas exactly." : "Keep the entire outfit readable. Use a head-to-toe or sufficiently wide view whenever trousers, skirts, dresses, or footwear are included."} Do not obscure one supplied garment with another unnecessarily.
 
 No text, captions, watermark, collage, split screen, product mockup, extra people, duplicate person, or synthetic appearance.${creativeDirection}`;
 }
@@ -2620,6 +2624,8 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
   const hasModeledContext = contextInput && typeof contextInput === "object" && !Array.isArray(contextInput)
     && Object.keys(contextInput).length > 0;
   const modeledContext = normalizeModeledLookContext(contextInput);
+  const hasSelectedFraming = Boolean(modeledContext.framing);
+  const usesCroppedFraming = ["extreme-close-up", "head-and-shoulders", "waist-up", "three-quarter"].includes(modeledContext.framing);
   const presentation = normalizeOutfitPresentation(outfit.presentation);
   const presentationByPerson = new Map(outfitPresentationForPeople(
     presentation,
@@ -2660,15 +2666,17 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
       : !hasModeledContext && presentation.style !== "automatic" ? `Photographic style: ${presentation.style}.` : "Use a natural editorial fashion-photography style.",
     `Per-person direction: ${personDirections}`,
     modeledLookContextPrompt({
+      framing: modeledContext.framing,
       environmentType: modeledContext.environmentType,
       setting: modeledContext.setting,
       season: modeledContext.season,
       weather: modeledContext.weather,
+      timeOfDay: modeledContext.timeOfDay,
       additionalDirection: modeledContext.additionalDirection || (!hasModeledContext ? presentation.direction : ""),
     }),
   ].filter(Boolean).join(" ");
 
-  return `Create one professional ${modeledLookImageRatioPrompt(modeledContext.imageRatio)} modeled fashion photograph for Outfit Studio. Compose specifically for this final aspect ratio and keep every person and complete outfit inside its safe central frame.
+  return `Create one professional ${modeledLookImageRatioPrompt(modeledContext.imageRatio)} modeled fashion photograph for Outfit Studio. Compose specifically for this final aspect ratio and ${hasSelectedFraming ? "follow the selected framing and camera distance exactly inside its safe central frame" : "keep every person and complete outfit inside its safe central frame"}.
 
 Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
 Subjects: ${identityReferences}
@@ -2684,7 +2692,7 @@ Context: Occasion ${context.occasion || "not specified"}; weather ${context.weat
 
 Presentation: ${presentationDirection}
 
-Composition: Keep the entire outfit readable. Use a head-to-toe view whenever bottoms, dresses, or footwear are supplied. Do not obscure one supplied garment with another unnecessarily.
+Composition: ${usesCroppedFraming ? "Follow the selected crop and subject scale without widening the shot. Every person must still wear every garment assigned to them, including portions intentionally outside the frame; preserve all visible garment areas exactly." : "Keep the entire outfit readable. Use a head-to-toe view whenever bottoms, dresses, or footwear are supplied."} Do not obscure one supplied garment with another unnecessarily.
 
 No text, captions, watermark, collage, split screen, product mockup, extra people, duplicate person, or synthetic appearance.`;
 }

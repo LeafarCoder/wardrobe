@@ -42,9 +42,10 @@ const GROUP_ICONS = {
   Weather: CloudSun,
   "Day period": Clock,
   Style: Aperture,
+  Framing: ImageSquare,
 };
 
-function ChoiceGroup({ label, options, value, onChange, visual = false, wide = false }) {
+function ChoiceGroup({ label, options, value, onChange, visual = false, descriptions = visual, wide = false }) {
   const GroupIcon = GROUP_ICONS[label];
   return (
     <fieldset className={`modeled-context__group${wide ? " is-wide" : ""}`}>
@@ -62,7 +63,7 @@ function ChoiceGroup({ label, options, value, onChange, visual = false, wide = f
             onClick={() => onChange(value === option.id ? "" : option.id)}
           >
             {value === option.id && <Check className="modeled-context__selected-check" size={12} weight="bold" aria-hidden="true" />}
-            <span>{tr(option.label)}{visual && option.description && <small>{tr(option.description)}</small>}</span>
+            <span>{tr(option.label)}{descriptions && option.description && <small>{tr(option.description)}</small>}</span>
           </button>
         ))}
       </div>
@@ -307,9 +308,10 @@ export function ModeledLookDialog({
           </details>
 
           <details className="modeled-context__section" open>
-            <summary><span>{tr("Photography & composition")}</span><small>{tr("Visual style and any final direction")}</small></summary>
+            <summary><span>{tr("Photography & composition")}</span><small>{tr("Visual style, framing, and final direction")}</small></summary>
             <div className="modeled-context__section-body">
               <ImageRatioGroup value={context.imageRatio} onChange={(value) => update("imageRatio", value)} />
+              <ChoiceGroup wide descriptions label="Framing" options={MODELED_LOOK_CONTEXT_OPTIONS.framing} value={context.framing} onChange={(value) => update("framing", value)} />
               <ChoiceGroup visual label="Style" options={MODELED_LOOK_CONTEXT_OPTIONS.photographicStyle} value={context.photographicStyle} onChange={(value) => update("photographicStyle", value)} />
               <label className="modeled-context__additional">
                 <span>{tr("More direction")}</span>
