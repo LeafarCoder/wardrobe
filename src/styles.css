@@ -2397,7 +2397,7 @@ button { font: inherit; }
   grid-column: 2;
   grid-row: 1;
   align-self: start;
-  z-index: 20;
+  z-index: 120;
   width: var(--viewer-width);
   height: 100dvh;
   animation: viewer-in 240ms cubic-bezier(.22, .8, .22, 1) both;
@@ -2477,6 +2477,11 @@ button { font: inherit; }
   background: var(--paper);
   overflow: auto;
   box-shadow: -18px 0 50px rgba(25, 24, 22, .08);
+}
+
+.viewer:has(.viewer-art.has-version-spread:hover),
+.viewer:has(.viewer-art.has-version-spread:focus-within) {
+  overflow: visible;
 }
 
 .viewer.has-hero-image {
@@ -4279,6 +4284,12 @@ button { font: inherit; }
   transform: translateY(-5px) scale(1.1) rotate(calc(var(--piece-rotation) + 2deg));
 }
 
+.viewer-art-floating.has-version-spread:hover,
+.viewer-art-floating.has-version-spread:focus-within {
+  z-index: 130;
+  transform: translateY(-2px) rotate(var(--piece-rotation));
+}
+
 .viewer-art-floating.sampling {
   transform: rotate(var(--piece-rotation));
 }
@@ -4359,7 +4370,7 @@ button { font: inherit; }
   opacity: 1;
   transition-delay: 0ms;
   transform:
-    translateX(calc(var(--spread-x-percent) + var(--spread-x-gap)))
+    translateX(var(--spread-x))
     scale(var(--spread-scale));
 }
 
@@ -4368,7 +4379,7 @@ button { font: inherit; }
   z-index: 100;
   filter: drop-shadow(0 7px 7px rgba(39, 31, 23, .16));
   transform:
-    translateX(calc(var(--spread-x-percent) + var(--spread-x-gap)))
+    translateX(var(--spread-x))
     translateY(-7px)
     scale(calc(var(--spread-scale) + .045));
 }
@@ -4392,7 +4403,7 @@ button { font: inherit; }
   position: absolute;
   inset: 0;
   transform:
-    translateX(calc(var(--spread-x-percent) + var(--spread-x-gap)))
+    translateX(var(--spread-x))
     scale(var(--spread-scale));
   transform-origin: 50% 50%;
 }

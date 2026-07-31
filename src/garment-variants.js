@@ -112,3 +112,9 @@ export function garmentVersionFanSlot(index, versionCount) {
 
   return index - ((versionCount - 1) / 2);
 }
+
+export function garmentVersionSpreadMetrics(versionCount) {
+  return versionCount === 4
+    ? { scale: 0.42, stepPx: 42 }
+    : { scale: 0.35, stepPx: 36 };
+}

@@ -47,6 +47,7 @@ import {
   garmentVersionFanSlot,
   garmentVersionLayout,
   garmentVersionOrder,
+  garmentVersionSpreadMetrics,
   moveGarmentVersion,
   selectedGarmentVariantId,
 } from "./garment-variants.js";
@@ -2493,17 +2494,14 @@ function ItemViewer({
     const slot = garmentVersionFanSlot(index, colorVersions.length);
     const fanStep = colorVersions.length === 2 ? 24 : 13;
     const horizontalStep = colorVersions.length === 2 ? 20 : 10;
-    const spreadScale = colorVersions.length === 4 ? .48 : .4;
-    const spreadStep = colorVersions.length === 4 ? 54 : 46;
-    const spreadGap = colorVersions.length === 4 ? 10 : 9;
+    const spread = garmentVersionSpreadMetrics(colorVersions.length);
     return {
       "--fan-angle": `${slot * fanStep}deg`,
       "--fan-x": `${slot * horizontalStep}px`,
       "--fan-rank": Math.abs(slot),
       "--fan-layer": 80 - Math.abs(slot),
-      "--spread-x-percent": `${slot * spreadStep}%`,
-      "--spread-x-gap": `${slot * spreadGap}px`,
-      "--spread-scale": spreadScale,
+      "--spread-x": `${slot * spread.stepPx}px`,
+      "--spread-scale": spread.scale,
     };
   };
 
