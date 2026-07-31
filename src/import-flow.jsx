@@ -10,6 +10,7 @@ import {
   importGenerationCandidates,
   selectedImportGenerationCandidate,
 } from "./import-candidates.js";
+import { hasFileDrag } from "./import-drag.js";
 import { LightSelect } from "./LightSelect.jsx";
 import { garmentReviewImages } from "./import-review.js";
 import { notifyOpenRouterKeyRequired } from "./openrouter-key.js";
@@ -1189,7 +1190,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
   useEffect(() => {
     let depth = 0;
     const onDragEnter = (event) => {
-      if (![...event.dataTransfer.types].includes("Files")) return;
+      if (!hasFileDrag(event.dataTransfer)) return;
       event.preventDefault();
       if (sourceChooserVisible) {
         setDragging(false);
@@ -1198,14 +1199,21 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
       depth += 1;
       setDragging(true);
     };
-    const onDragOver = (event) => { if ([...event.dataTransfer.types].includes("Files")) event.preventDefault(); };
+    const onDragOver = (event) => { if (hasFileDrag(event.dataTransfer)) event.preventDefault(); };
     const onDragLeave = (event) => {
+      if (!hasFileDrag(event.dataTransfer)) return;
       event.preventDefault();
       if (sourceChooserVisible) return;
       depth = Math.max(0, depth - 1);
       if (!depth) setDragging(false);
     };
-    const onDrop = (event) => { event.preventDefault(); depth = 0; setDragging(false); submitFiles(event.dataTransfer.files); };
+    const onDrop = (event) => {
+      if (!hasFileDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      depth = 0;
+      setDragging(false);
+      submitFiles(event.dataTransfer.files);
+    };
     window.addEventListener("dragenter", onDragEnter); window.addEventListener("dragover", onDragOver); window.addEventListener("dragleave", onDragLeave); window.addEventListener("drop", onDrop);
     return () => { window.removeEventListener("dragenter", onDragEnter); window.removeEventListener("dragover", onDragOver); window.removeEventListener("dragleave", onDragLeave); window.removeEventListener("drop", onDrop); };
   }, [sourceChooserVisible, submitFiles]);
