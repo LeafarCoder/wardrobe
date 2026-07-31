@@ -13,6 +13,7 @@ import {
 import { hasFileDrag } from "./import-drag.js";
 import { LightSelect } from "./LightSelect.jsx";
 import { garmentReviewImages } from "./import-review.js";
+import { imageFallbackToast } from "./image-fallback-notice.js";
 import { notifyOpenRouterKeyRequired } from "./openrouter-key.js";
 import { ProductStage } from "./ProductStage.jsx";
 import "./import-flow.css";
@@ -966,6 +967,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
   const inputRef = useRef(null);
   const sourcePickerRef = useRef(null);
   const notifiedFailures = useRef(new Set());
+  const notifiedFallbacks = useRef(new Set());
   const [jobs, setJobs] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [regenerationPrompts, setRegenerationPrompts] = useState({});
@@ -990,6 +992,10 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
   const showCameraError = useCallback((error, message) => {
     showError(message || error, "Could not open camera");
   }, [showError]);
+  const showFallbackNotice = useCallback((fallbackNotice) => {
+    const nextToast = imageFallbackToast(fallbackNotice);
+    if (nextToast) setToast(nextToast);
+  }, []);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -1033,10 +1039,18 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
           showError(failureDetail, failedStage === "garment" ? "Garment image failed" : "Import failed");
         }
       }
+      const fallbackNotice = Object.values(next.stages || {})
+        .map((stage) => stage?.fallbackNotice)
+        .filter(Boolean)
+        .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0];
+      if (fallbackNotice && !notifiedFallbacks.current.has(fallbackNotice.id)) {
+        notifiedFallbacks.current.add(fallbackNotice.id);
+        showFallbackNotice(fallbackNotice);
+      }
       setJobs((current) => current.map((job) => job.id === id ? next : job));
       setDrafts((current) => current[id] ? current : { ...current, [id]: defaultDraft(next) });
     } catch (requestError) { showError(requestError); }
-  }, [showError, userId]);
+  }, [showError, showFallbackNotice, userId]);
 
   const generatingJobIds = useMemo(() => jobs.filter((job) => (
     job.stages?.crop?.status === "approved"

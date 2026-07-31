@@ -19,6 +19,7 @@ import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
 import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
 import { ModeledLookDialog } from "./ModeledLookDialog.jsx";
 import { modeledLookContextDetails } from "./modeled-look-context.js";
+import { imageFallbackToast, withoutFallbackNotice } from "./image-fallback-notice.js";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { OriginalPhotoGallery } from "./OriginalPhotoGallery.jsx";
 import { cropCenteredCoverPosition, originalPhotoPosition } from "./original-photo-position.js";
@@ -7053,13 +7054,20 @@ export function App() {
     return updated;
   };
 
+  const showCompletedImageFallback = (notice) => {
+    const nextToast = imageFallbackToast(notice, { completed: true });
+    if (nextToast) setAppToast(nextToast);
+  };
+
   const generateModeledLook = async (id, variantId = null, context = {}) => {
     const generated = await profileApi(`/api/import/wardrobe/${id}/modeled?user=${encodeURIComponent(currentUserId)}`, {
       method: "POST",
       body: JSON.stringify({ variantId, context }),
     });
-    setItems((current) => current.map((item) => item.id === generated.id ? { ...item, ...generated } : item));
-    return generated;
+    showCompletedImageFallback(generated.fallbackNotice);
+    const record = withoutFallbackNotice(generated);
+    setItems((current) => current.map((item) => item.id === record.id ? { ...item, ...record } : item));
+    return record;
   };
 
   const regenerateGarment = async (id, input) => {
@@ -7067,8 +7075,10 @@ export function App() {
       method: "POST",
       body: JSON.stringify(input),
     });
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
-    return updated;
+    showCompletedImageFallback(updated.fallbackNotice);
+    const record = withoutFallbackNotice(updated);
+    setItems((current) => current.map((item) => item.id === record.id ? { ...item, ...record } : item));
+    return record;
   };
 
   const acceptGarmentRegeneration = async (id) => {
@@ -7153,8 +7163,10 @@ export function App() {
         `/api/import/planner/${encodeURIComponent(planId)}/outfits/${outfitIndex}/modeled?user=${encodeURIComponent(currentUserId)}`,
         { method: "POST", body: JSON.stringify({ context }) },
       );
-      setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
-      return result;
+      showCompletedImageFallback(result.fallbackNotice);
+      const response = withoutFallbackNotice(result);
+      setUsers((current) => current.map((user) => user.id === response.user.id ? response.user : user));
+      return response;
     } catch (requestError) {
       setPlannerError(readableError(requestError));
       throw requestError;
@@ -7220,8 +7232,10 @@ export function App() {
       method: "POST",
       body: JSON.stringify({ context }),
     });
-    setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
-    return result;
+    showCompletedImageFallback(result.fallbackNotice);
+    const response = withoutFallbackNotice(result);
+    setUsers((current) => current.map((user) => user.id === response.user.id ? response.user : user));
+    return response;
   };
 
   const deleteWardrobeOutfitLook = async (outfitId, lookId) => {

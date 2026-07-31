@@ -7,6 +7,7 @@ import {
   buildOutfitStudioModeledPrompt,
   buildPlannedOutfitPrompt,
   editWithSafetyFallback,
+  imageFallbackReason,
   garmentNeedsContextReference,
   garmentSemanticMismatch,
   modeledModelForReferenceCount,
@@ -492,6 +493,7 @@ test("filters invalid and duplicate AI outfit candidates locally", () => {
 
 test("retries a fallback model when garment quality validation rejects the primary output", async () => {
   const calls = [];
+  const notices = [];
   const result = await editWithSafetyFallback({
     editImage: async ({ model }) => {
       calls.push(model);
@@ -510,11 +512,50 @@ test("retries a fallback model when garment quality validation rejects the prima
     prompt: "reconstruct a watch",
     images: [],
     operation: "garment",
+    onFallback: async (notice) => notices.push(notice),
   });
 
   assert.deepEqual(calls, ["primary-image-model", "fallback-image-model"]);
   assert.equal(result.model, "fallback-image-model");
   assert.equal(result.fallbackUsed, true);
+  assert.equal(result.fallbackNotice.fromModel, "primary-image-model");
+  assert.equal(result.fallbackNotice.toModel, "fallback-image-model");
+  assert.equal(result.fallbackNotice.reason, "it generated the wrong garment");
+  assert.equal(result.fallbackNotice.kind, "quality");
+  assert.deepEqual(notices, result.fallbackNotices);
+});
+
+test("turns an upstream explicit-content refusal into a human-readable safety fallback notice", async () => {
+  const result = await editWithSafetyFallback({
+    editImage: async ({ model }) => {
+      if (model === "strict-image-model") {
+        const error = new Error("The provider flagged explicit sexual content.");
+        error.code = "PROHIBITED_CONTENT";
+        throw error;
+      }
+      return Buffer.from(model);
+    },
+    provider: { label: "OpenRouter" },
+    model: "strict-image-model",
+    fallbackModels: ["alternate-image-model"],
+    prompt: "create a fashion image",
+    images: [],
+    operation: "modeled",
+  });
+
+  assert.equal(result.fallbackNotice.reason, "it flagged the request as explicit or sexual content");
+  assert.equal(result.fallbackNotice.kind, "safety");
+});
+
+test("keeps an unfamiliar provider refusal reason readable instead of hiding it", () => {
+  const error = new Error("safety refusal");
+  error.code = "IMAGE_SAFETY";
+  error.providerDetail = "This route does not allow photorealistic public-figure impersonation.";
+
+  assert.equal(
+    imageFallbackReason(error),
+    "the model reported “This route does not allow photorealistic public-figure impersonation.”",
+  );
 });
 
 test("uses Flash Lite for one identity reference and Flash for multiple references", () => {

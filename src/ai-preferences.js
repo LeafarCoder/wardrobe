@@ -90,6 +90,14 @@ export function normalizeAiPreferences(value = {}) {
   }));
 }
 
+export function aiModelLabel(model) {
+  const normalized = typeof model === "string" ? model.trim() : "";
+  if (!normalized) return "another image model";
+  return AI_TASKS
+    .flatMap((task) => task.options)
+    .find((option) => option.id === normalized)?.label || normalized;
+}
+
 export function operationGroup(operation) {
   const normalized = String(operation || "other");
   if (normalized === "modeled-outfit" || normalized.startsWith("outfit-")) return "outfit";

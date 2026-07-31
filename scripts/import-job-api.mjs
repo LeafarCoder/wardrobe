@@ -487,6 +487,44 @@ function apiError(message, status, code, cause) {
   return Object.assign(new Error(message, cause ? { cause } : undefined), { status, code });
 }
 
+const IMAGE_FALLBACK_REASONS = Object.freeze({
+  garment_output_too_small: "it returned an image below Wardrobe's minimum resolution",
+  garment_type_mismatch: "it generated the wrong garment",
+  garment_background_not_transparent: "it could not isolate the garment from its background",
+});
+
+export function imageFallbackReason(error) {
+  if (IMAGE_FALLBACK_REASONS[error?.code]) return IMAGE_FALLBACK_REASONS[error.code];
+  const detail = String(error?.providerDetail || error?.message || "").replace(/\s+/g, " ").trim();
+  if (/minor|child|underage/i.test(detail)) return "it flagged content involving a minor";
+  if (/explicit|sexual|nudity|nude|adult content/i.test(detail)) return "it flagged the request as explicit or sexual content";
+  if (/self[- ]?harm|suicide/i.test(detail)) return "it flagged self-harm content";
+  if (/graphic|violence|violent|gore/i.test(detail)) return "it flagged violent or graphic content";
+  if (/hate|harassment/i.test(detail)) return "it flagged hateful or harassing content";
+  if (error?.providerDetail && detail) {
+    const readableDetail = detail
+      .replace(/<[^>]*>/g, "")
+      .replace(/^error:\s*/i, "")
+      .slice(0, 220)
+      .trim();
+    if (readableDetail) return `the model reported “${readableDetail}${detail.length > 220 ? "…" : ""}”`;
+  }
+  if (isSafetyPolicyError(error)) return "it blocked the request under its content safety policy";
+  return "it could not accept this image";
+}
+
+export function imageFallbackNotice(error, fromModel, toModel) {
+  return {
+    id: randomUUID(),
+    fromModel,
+    toModel,
+    reason: imageFallbackReason(error),
+    reasonCode: error?.code || "image_model_rejected",
+    kind: isSafetyPolicyError(error) ? "safety" : "quality",
+    createdAt: new Date().toISOString(),
+  };
+}
+
 function safetyPolicySignal(value) {
   return /(?:content[_\s-]*policy(?:[_\s-]*violation)?|prohibited[_\s-]*content|image[_\s-]*safety|safety[_\s-]*(?:filter|violation|blocked)|moderation[_\s-]*(?:blocked|flagged)|\brefusal\b)/i.test(String(value || ""));
 }
@@ -732,7 +770,9 @@ export function providerResponseError(response, result, { provider, model, opera
         : outfitRefinement
           ? `${label} could not refine this outfit because its safety policy blocked the request.`
         : `${label} could not generate the requested image because its safety policy blocked the request.`;
-    return apiError(detail ? `${fallback} ${detail}` : fallback, 400, String(code || `${provider.id}_content_policy`));
+    const error = apiError(detail ? `${fallback} ${detail}` : fallback, 400, String(code || `${provider.id}_content_policy`));
+    error.providerDetail = detail || "";
+    return error;
   }
   if (response.status === 403) {
     return apiError(`${label} denied access to ${model}. Check the API key's model permissions or choose another model in .env.`, 403, `${provider.id}_model_forbidden`);
@@ -3114,10 +3154,12 @@ export async function editWithSafetyFallback({
   model,
   fallbackModels = [],
   validateImage,
+  onFallback,
   trace = {},
   ...request
 }) {
   const candidates = [model, ...fallbackModels].filter((candidate, index, values) => candidate && values.indexOf(candidate) === index);
+  const fallbackNotices = [];
   for (const [index, candidate] of candidates.entries()) {
     try {
       const bytes = await editImage({
@@ -3127,7 +3169,13 @@ export async function editWithSafetyFallback({
         trace: index ? { ...trace, fallbackFrom: model } : trace,
       });
       if (validateImage) await validateImage(bytes, { model: candidate, fallbackUsed: index > 0 });
-      return { bytes, model: candidate, fallbackUsed: index > 0 };
+      return {
+        bytes,
+        model: candidate,
+        fallbackUsed: index > 0,
+        fallbackNotice: fallbackNotices.at(-1) || null,
+        fallbackNotices,
+      };
     } catch (error) {
       const fallback = candidates[index + 1];
       const recoverableQualityError = [
@@ -3156,6 +3204,15 @@ export async function editWithSafetyFallback({
         error.code ? `reason=${cleanLogValue(error.code)}` : null,
       ].filter(Boolean);
       console.warn(`[wardrobe:ai] ${parts.join(" | ")}`);
+      const notice = imageFallbackNotice(error, candidate, fallback);
+      fallbackNotices.push(notice);
+      if (typeof onFallback === "function") {
+        try {
+          await onFallback(notice);
+        } catch (notificationError) {
+          console.warn(`[wardrobe:ai] Could not publish image fallback notice: ${cleanLogValue(notificationError?.message || notificationError)}`);
+        }
+      }
     }
   }
   throw apiError(`${provider.label} could not generate the requested image.`, 502, `${provider.id}_empty_fallback_chain`);
@@ -5652,7 +5709,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           { force: true },
         ))).catch(() => console.warn(`[wardrobe] Could not remove every superseded regeneration candidate for "${metadata.name}".`));
       }
-      return saved.record;
+      return { record: saved.record, fallbackNotice: generation.fallbackNotice };
     })().finally(() => running.delete(lock));
     running.set(lock, task);
     return task;
@@ -5851,7 +5908,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         "preview",
         `${record.name || record.id} modeled look ${lookId}`,
       );
-      return withLibrary(async () => {
+      const savedRecord = await withLibrary(async () => {
         const latest = await loadImported();
         const index = latest.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
         if (index < 0) {
@@ -5881,6 +5938,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         await saveImported(latest);
         return latest[index];
       });
+      return { record: savedRecord, fallbackNotice: generation.fallbackNotice };
     })().finally(() => running.delete(lock));
     running.set(lock, task);
     return task;
@@ -6040,6 +6098,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           preview: withUser(look.preview, user.id),
         })),
         user: publicProfile(saved.profile),
+        fallbackNotice: generation.fallbackNotice,
       };
     })().finally(() => running.delete(lock));
     running.set(lock, task);
@@ -6205,6 +6264,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         modeledLook: publicUser.wardrobeOutfits.find((candidate) => candidate.id === outfitId)?.modeledLooks.at(-1),
         outfit: publicUser.wardrobeOutfits.find((candidate) => candidate.id === outfitId),
         user: publicUser,
+        fallbackNotice: generation.fallbackNotice,
       };
     })().finally(() => running.delete(lock));
     running.set(lock, task);
@@ -6438,7 +6498,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       const current = await loadJob(job.id);
       if (!current) return;
       const stage = current.stages[stageName];
-      stage.status = "processing"; stage.decision = null; stage.error = null; stage.attempts += 1; stage.updatedAt = new Date().toISOString();
+      stage.status = "processing"; stage.decision = null; stage.error = null; stage.fallbackNotice = null; stage.attempts += 1; stage.updatedAt = new Date().toISOString();
       await saveJob(current);
       await updateImportHistoryItem(current, {
         outcome: stageName === "garment" ? "generating" : "modeling",
@@ -6447,6 +6507,11 @@ Interpret this correction semantically in whatever language it is written. It ov
       let chromaKeyUsed = null;
       let usedModel = null;
       let fallbackUsed = false;
+      const recordFallbackNotice = async (fallbackNotice) => {
+        current.stages[stageName].fallbackNotice = fallbackNotice;
+        current.stages[stageName].updatedAt = fallbackNotice.createdAt;
+        await saveJob(current);
+      };
       try {
         const dir = path.join(jobsDir, current.id);
         const output = path.join(dir, `${stageName}-${stage.attempts}.png`);
@@ -6576,6 +6641,7 @@ Interpret this correction semantically in whatever language it is written. It ov
             model: provider.garmentModel,
             fallbackModels: provider.imageFallbackModels,
             validateImage,
+            onFallback: recordFallbackNotice,
             quality: provider.imageQuality,
             size: "1024x1024",
             background: "transparent",
@@ -6619,6 +6685,7 @@ Interpret this correction semantically in whatever language it is written. It ov
             provider,
             model: modeledModel,
             fallbackModels: provider.imageFallbackModels,
+            onFallback: recordFallbackNotice,
             quality: provider.imageQuality,
             size: "1536x1024",
             images: [...models, garment],
@@ -7988,13 +8055,16 @@ Interpret this correction semantically in whatever language it is written. It ov
       const garmentRegenerationMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/regeneration(?:\/(accept))?$/i);
       if (garmentRegenerationMatch && !garmentRegenerationMatch[2] && req.method === "POST") {
         const input = await body(req, 64 * 1024);
-        const record = await generateImportedGarmentCandidate(
+        const result = await generateImportedGarmentCandidate(
           garmentRegenerationMatch[1],
           user,
           input,
           payerProfile,
         );
-        return json(res, 201, publicImportedRecord(record, user.id));
+        return json(res, 201, {
+          ...publicImportedRecord(result.record, user.id),
+          fallbackNotice: result.fallbackNotice,
+        });
       }
       if (garmentRegenerationMatch?.[2] === "accept" && req.method === "POST") {
         const record = await resolveImportedGarmentCandidate(garmentRegenerationMatch[1], user, "accept");
@@ -8036,14 +8106,17 @@ Interpret this correction semantically in whatever language it is written. It ov
       const wardrobeItemMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})(?:\/(modeled))?$/i);
       if (wardrobeItemMatch?.[2] === "modeled" && req.method === "POST") {
         const input = await body(req, 64 * 1024);
-        const record = await generateImportedModeledLook(
+        const result = await generateImportedModeledLook(
           wardrobeItemMatch[1],
           user,
           typeof input.variantId === "string" ? input.variantId : null,
           input.context,
           payerProfile,
         );
-        return json(res, 200, publicImportedRecord(record, user.id));
+        return json(res, 200, {
+          ...publicImportedRecord(result.record, user.id),
+          fallbackNotice: result.fallbackNotice,
+        });
       }
       const garmentVariantMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/variants$/i);
       const garmentVariantSelectionMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/variants\/selection$/i);
