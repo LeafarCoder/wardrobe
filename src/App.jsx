@@ -3166,13 +3166,22 @@ function ItemViewer({
                     </label>
                     <label className="garment-regeneration__field">
                       <span>{tr("Secondary color")} <small>{tr("optional")}</small></span>
-                      <input
-                        value={garmentRegenerationForm.secondaryColor}
-                        placeholder={tr("#hex or leave blank")}
-                        aria-invalid={!regenerationSecondaryValid}
-                        disabled={garmentRegenerationBusy}
-                        onChange={(event) => setGarmentRegenerationForm((current) => ({ ...current, secondaryColor: event.target.value }))}
-                      />
+                      <div className="garment-regeneration__color">
+                        <input
+                          type="color"
+                          value={normalizeHexColor(garmentRegenerationForm.secondaryColor) || "#ffffff"}
+                          aria-label={tr("Secondary color")}
+                          disabled={garmentRegenerationBusy}
+                          onChange={(event) => setGarmentRegenerationForm((current) => ({ ...current, secondaryColor: event.target.value }))}
+                        />
+                        <input
+                          value={garmentRegenerationForm.secondaryColor}
+                          placeholder={tr("#hex or leave blank")}
+                          aria-invalid={!regenerationSecondaryValid}
+                          disabled={garmentRegenerationBusy}
+                          onChange={(event) => setGarmentRegenerationForm((current) => ({ ...current, secondaryColor: event.target.value }))}
+                        />
+                      </div>
                     </label>
                     <label className="garment-regeneration__field is-wide">
                       <span>{tr("Characteristics")}</span>
