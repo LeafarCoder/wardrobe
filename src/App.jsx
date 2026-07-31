@@ -472,6 +472,7 @@ function GalleryItem({
   item,
   display,
   selected,
+  generating = false,
   mergeMode = false,
   mergeSource = false,
   onOpen,
@@ -507,7 +508,7 @@ function GalleryItem({
 
   return (
     <button
-      className={`gallery-item${detailsVisible ? " has-details" : ""}${hasTileBackground ? " has-tile-background" : ""}${selected ? " selected" : ""}${mergeMode ? " is-merge-option" : ""}${mergeSource ? " is-merge-source" : ""}${dragging ? " is-dragging" : ""}${dropTarget ? " is-drop-target" : ""}`}
+      className={`gallery-item${detailsVisible ? " has-details" : ""}${hasTileBackground ? " has-tile-background" : ""}${selected ? " selected" : ""}${generating ? " is-generating" : ""}${mergeMode ? " is-merge-option" : ""}${mergeSource ? " is-merge-source" : ""}${dragging ? " is-dragging" : ""}${dropTarget ? " is-drop-target" : ""}`}
       type="button"
       draggable={draggable}
       onClick={() => onOpen(item.id)}
@@ -544,6 +545,12 @@ function GalleryItem({
           fetchPriority={priority ? "high" : "auto"}
           reveal
         />
+        {generating && (
+          <span className="gallery-item__generation" role="status">
+            <SpinnerGap size={13} aria-hidden="true" />
+            {tr("Creating look…")}
+          </span>
+        )}
         {detailsVisible && (
           <span className="gallery-item__swatches" aria-hidden="true">
             {[item.color, item.secondaryColor].filter(Boolean).map((color) => (
@@ -1610,6 +1617,7 @@ function ItemViewer({
   onSave,
   onDelete,
   onGenerateModeled,
+  generatingModeled = false,
   onGenerateModeledVideo,
   onPollModeledVideo,
   preferredVideoModel,
@@ -1677,7 +1685,6 @@ function ItemViewer({
   const [modeledVariantPickerOpen, setModeledVariantPickerOpen] = useState(false);
   const [hoveredColorVersionIndex, setHoveredColorVersionIndex] = useState(null);
   const [sourcePhotoIndex, setSourcePhotoIndex] = useState(0);
-  const [generatingModeledFor, setGeneratingModeledFor] = useState(null);
   const [deletingModeled, setDeletingModeled] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState(null);
@@ -1719,7 +1726,6 @@ function ItemViewer({
     () => modeledLookContextDetails(activeModeledLook?.context),
     [activeModeledLook?.context],
   );
-  const generatingModeled = generatingModeledFor === item.id;
   const hasModeledImage = Boolean(activeModeledLook);
   const activeSourcePhoto = sourcePhotos[Math.min(sourcePhotoIndex, Math.max(0, sourcePhotos.length - 1))] || null;
   const activeHeroSource = activeMedia?.kind === GARMENT_MEDIA_GENERATED ? null : activeMedia?.data || null;
@@ -2131,7 +2137,7 @@ function ItemViewer({
     setSampling(null);
   };
 
-  const generateModeledLook = async (variantId = null, context = {}) => {
+  const generateModeledLook = (variantId = null, context = {}) => {
     if (deletingModeled) return;
     if (isDirty) {
       setViewerToast({
@@ -2142,24 +2148,18 @@ function ItemViewer({
       return;
     }
     const targetItemId = item.id;
-    setGeneratingModeledFor(targetItemId);
-    setViewerToast(null);
-    try {
-      const updated = await onGenerateModeled(targetItemId, variantId, context);
+    setModeledVariantPickerOpen(false);
+    setViewerToast({
+      title: tr("Look queued"),
+      message: tr("You can keep using Wardrobe while this photo is created."),
+    });
+    void onGenerateModeled(targetItemId, variantId, context).then((updated) => {
+      if (!updated) return;
       const generatedLook = itemModeledLooks(updated).at(-1);
-      if (generatedLook) setActiveMediaId(garmentMediaId(GARMENT_MEDIA_GENERATED, generatedLook.id));
-      setModeledVariantPickerOpen(false);
-    } catch (requestError) {
-      if (activeItemIdRef.current === targetItemId) {
-        setViewerToast({
-          title: tr("Could not create the style look"),
-          message: readableError(requestError),
-        });
+      if (generatedLook && activeItemIdRef.current === targetItemId) {
+        setActiveMediaId(garmentMediaId(GARMENT_MEDIA_GENERATED, generatedLook.id));
       }
-      throw new Error(readableError(requestError));
-    } finally {
-      setGeneratingModeledFor((current) => current === targetItemId ? null : current);
-    }
+    });
   };
 
   const requestGenerateModeledLook = () => {
@@ -6700,11 +6700,13 @@ function WardrobePlanner({
 
 export function App() {
   const locale = useLocale();
+  const currentUserIdRef = useRef(null);
   const [auth, setAuth] = useState(null);
   const [authError, setAuthError] = useState("");
   const [users, setUsers] = useState([]);
   const [isOwner, setIsOwner] = useState(false);
   const [currentUserId, setCurrentUserId] = useState(null);
+  currentUserIdRef.current = currentUserId;
   const [profileEditor, setProfileEditor] = useState(null);
   const [profileInitialTab, setProfileInitialTab] = useState("basics");
   const [profileBusy, setProfileBusy] = useState(false);
@@ -6720,6 +6722,7 @@ export function App() {
   const [openRouterKeyError, setOpenRouterKeyError] = useState("");
   const [openRouterKeySaved, setOpenRouterKeySaved] = useState(false);
   const [items, setItems] = useState([]);
+  const [modeledGenerationKeys, setModeledGenerationKeys] = useState(() => new Set());
   const [activeType, setActiveType] = useState("all");
   const [filters, setFilters] = useState(() => normalizeWardrobeFilters(DEFAULT_WARDROBE_FILTERS));
   const [filterRailOpen, setFilterRailOpen] = useState(false);
@@ -7743,17 +7746,45 @@ export function App() {
   const showCompletedImageFallback = (notice) => {
     const nextToast = imageFallbackToast(notice, { completed: true });
     if (nextToast) setAppToast(nextToast);
+    return Boolean(nextToast);
   };
 
   const generateModeledLook = async (id, variantId = null, context = {}) => {
-    const generated = await profileApi(`/api/import/wardrobe/${id}/modeled?user=${encodeURIComponent(currentUserId)}`, {
-      method: "POST",
-      body: JSON.stringify({ variantId, context }),
-    });
-    showCompletedImageFallback(generated.fallbackNotice);
-    const record = withoutFallbackNotice(generated);
-    updateGarmentCollections(record);
-    return record;
+    const requestUserId = currentUserId;
+    const generationKey = `${requestUserId}:${id}`;
+    if (modeledGenerationKeys.has(generationKey)) return null;
+    const itemName = items.find((item) => item.id === id)?.name || tr("Wardrobe item");
+    setModeledGenerationKeys((current) => new Set(current).add(generationKey));
+    try {
+      const generated = await profileApi(`/api/import/wardrobe/${id}/modeled?user=${encodeURIComponent(requestUserId)}`, {
+        method: "POST",
+        body: JSON.stringify({ variantId, context }),
+      });
+      if (currentUserIdRef.current !== requestUserId) return null;
+      const fallbackNoticeShown = showCompletedImageFallback(generated.fallbackNotice);
+      const record = withoutFallbackNotice(generated);
+      updateGarmentCollections(record);
+      if (!fallbackNoticeShown) {
+        setAppToast({
+          title: tr("Look ready"),
+          message: tr("{name} has a new modeled look.", { name: itemName }),
+        });
+      }
+      return record;
+    } catch (requestError) {
+      if (currentUserIdRef.current !== requestUserId) return null;
+      setAppToast({
+        title: tr("Could not create the style look"),
+        message: readableError(requestError),
+      });
+      return null;
+    } finally {
+      setModeledGenerationKeys((current) => {
+        const next = new Set(current);
+        next.delete(generationKey);
+        return next;
+      });
+    }
   };
 
   const generateModeledVideo = async (id, lookId, settings) => {
@@ -8059,6 +8090,7 @@ export function App() {
       setOpenRouterKeyBusy(false);
       setOpenRouterKeyError("");
       setOpenRouterKeySaved(false);
+      setModeledGenerationKeys(new Set());
       closeViewer();
     }
   };
@@ -8233,6 +8265,7 @@ export function App() {
                             item={item}
                             display={wardrobeDisplay}
                             selected={selectedId === item.id}
+                            generating={modeledGenerationKeys.has(`${currentUserId}:${item.id}`)}
                             onOpen={openItem}
                             priority={(visibleItemIndex.get(item.id) ?? Infinity) < 8}
                           />
@@ -8244,6 +8277,7 @@ export function App() {
                           item={item}
                           display={wardrobeDisplay}
                           selected={selectedId === item.id}
+                          generating={modeledGenerationKeys.has(`${currentUserId}:${item.id}`)}
                           mergeMode={Boolean(mergeSourceItem)}
                           mergeSource={mergeSourceItem?.id === item.id}
                           onOpen={openItem}
@@ -8287,6 +8321,7 @@ export function App() {
           onSave={saveItem}
           onDelete={deleteItem}
           onGenerateModeled={generateModeledLook}
+          generatingModeled={modeledGenerationKeys.has(`${currentUserId}:${selectedItem.id}`)}
           onGenerateModeledVideo={generateModeledVideo}
           onPollModeledVideo={pollModeledVideo}
           preferredVideoModel={normalizeAiPreferences(currentUser?.aiPreferences).videoModel}

@@ -2265,6 +2265,28 @@ button { font: inherit; }
   place-items: center;
 }
 
+.gallery-item__generation {
+  position: absolute;
+  z-index: 3;
+  left: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(25, 25, 25, .18);
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: rgba(250, 247, 241, .94);
+  color: var(--ink);
+  font-size: 8px;
+  font-weight: 600;
+  box-shadow: 0 3px 12px rgba(25, 25, 25, .08);
+}
+
+.gallery-item__generation svg { animation: modeled-generation-spin .9s linear infinite; }
+
+@keyframes modeled-generation-spin { to { transform: rotate(360deg); } }
+
 .gallery-item.has-details {
   aspect-ratio: auto;
   display: flex;
