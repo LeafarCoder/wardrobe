@@ -23,6 +23,7 @@ import {
   normalizePurchaseMonth,
   normalizePurchasePrice,
   normalizeSizeProfile,
+  profileHeightSummary,
   sizeProfileSummary,
 } from "../src/wardrobe-metadata.js";
 import {
@@ -2209,6 +2210,33 @@ function modeledReferenceRoleRules() {
   return `Reference roles — mandatory: Images assigned under Subjects are identity evidence only. Use them together primarily for facial geometry and distinctive facial characteristics, including eyes, eyebrows, nose, lips, cheekbones, jawline, face and chin contour, ears, skin tone and real skin texture, and apparent age. Use visible full-body information only to preserve natural body shape, height impression, and proportions. Ignore and do not copy the identity references' clothes, jewelry, accessories, pose, gesture, expression, lighting, location, framing, or background. Hairstyle may change naturally for the requested scene, but preserve the person's stable hairline and identity-defining hair color and texture unless the user explicitly requests a hair change. Images assigned under Garments control only the named clothing products: never use a garment image's person, mannequin, hanger, styling, or background as identity evidence.`;
 }
 
+function modeledHeightDirection(profiles = []) {
+  const measured = profiles.map((profile, index) => ({
+    profile,
+    label: profile?.name || `Character ${index + 1}`,
+    heightCm: normalizeSizeProfile(profile?.sizeProfile).heightCm,
+    summary: profileHeightSummary(profile?.sizeProfile),
+  })).filter((entry) => entry.heightCm !== null);
+  if (!measured.length) return "";
+  const measurements = measured.map((entry) => `${entry.label}'s recorded real-world height is ${entry.summary}.`).join(" ");
+  const comparisons = [];
+  for (let firstIndex = 0; firstIndex < measured.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < measured.length; secondIndex += 1) {
+      const first = measured[firstIndex];
+      const second = measured[secondIndex];
+      const difference = Math.round(Math.abs(first.heightCm - second.heightCm) * 10) / 10;
+      if (difference < 0.5) {
+        comparisons.push(`${first.label} and ${second.label} have the same recorded height.`);
+      } else {
+        const taller = first.heightCm > second.heightCm ? first : second;
+        const shorter = taller === first ? second : first;
+        comparisons.push(`${taller.label} is ${difference.toLocaleString("en-US", { maximumFractionDigits: 1 })} cm taller than ${shorter.label}.`);
+      }
+    }
+  }
+  return `Height fidelity — mandatory: ${measurements} Treat these explicit measurements as authoritative for each person's underlying body stature; do not estimate height from reference framing, camera distance, footwear, or pose. ${comparisons.join(" ")} When people share a scene, preserve those relative differences naturally on the same ground plane through believable head, shoulder, hip, and limb levels, while still respecting perspective and the requested pose.`;
+}
+
 export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metadata = {}, context = {}) {
   const count = Math.max(1, Math.min(3, Math.round(personReferenceCount)));
   const subject = profile.name || "Wardrobe owner";
@@ -2228,6 +2256,7 @@ export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metad
     profile.favoriteColors?.length ? `Favorite colors: ${profile.favoriteColors.join(", ")}.` : null,
     profile.preferences ? `Personal styling preferences and constraints: ${profile.preferences}.` : null,
   ].filter(Boolean).join(" ");
+  const heightDirection = modeledHeightDirection([profile]);
   const identityLock = modeledIdentityLock(profile.name || "the referenced person");
   const modeledContext = normalizeModeledLookContext(context);
   const creativeDirection = modeledLookContextPrompt(modeledContext);
@@ -2243,7 +2272,7 @@ Garments: Image ${garmentImage} is the exact garment reference for "${metadata.n
 ${sceneReference}
 ${modeledReferenceRoleRules()}
 
-Show ${subject} wearing the garment from Image ${garmentImage}. ${categoryDirection} ${profileDetails} ${identityLock} Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.${creativeDirection}`;
+Show ${subject} wearing the garment from Image ${garmentImage}. ${categoryDirection} ${profileDetails} ${identityLock} ${heightDirection} Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.${creativeDirection}`;
 }
 
 function modeledIdentityLock(subject = "the referenced person") {
@@ -2288,6 +2317,7 @@ export function buildPlannedOutfitPrompt(personReferenceCount = 1, profile = {},
     profile.preferences ? `Personal styling preferences and constraints: ${profile.preferences}.` : null,
   ].filter(Boolean).join(" ");
   const identityLock = modeledIdentityLock(profile.name || "the wardrobe owner");
+  const heightDirection = modeledHeightDirection([profile]);
   const modeledContext = normalizeModeledLookContext(context);
   const sceneReference = modeledContext.backgroundReferenceId
     ? `Scene reference: Image ${count + garments.length} is the user's exact saved background. Preserve its recognizable architecture, layout, materials, vegetation, and atmosphere while composing the person naturally into that place. Do not copy people, animals, text, or transient objects from it.`
@@ -2309,7 +2339,7 @@ Outfit: "${outfit.name || "Planned outfit"}". Styling occasion and mood: ${outfi
 
 Mandatory garments: Dress the referenced person in EVERY supplied garment reference together in the same look. Preserve each garment's exact identity, silhouette, color, material, pattern, fit, construction, logo, and distinctive detail. Do not omit, replace, merge, redesign, recolor, or invent any of them. Garment details: ${garmentRequirements}.
 
-Person: ${profileDetails} ${identityLock} Show exactly one person with realistic anatomy.
+Person: ${profileDetails} ${identityLock} ${heightDirection} Show exactly one person with realistic anatomy.
 
 Setting and season: ${settingDirection} ${season} Make the environment, natural light, pose, layering, and overall mood appropriate to the stated place, time of year, weather expectations, dress code, and outfit note. For walking or casual plans, use a natural active street or neighborhood moment. For formal plans, use a refined setting and composed posture. Avoid an artificial studio unless the plan explicitly calls for one.
 
@@ -2357,6 +2387,7 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
     person.profile?.fashionStyle ? `Their preferred style is ${person.profile.fashionStyle}.` : null,
     person.profile?.preferences ? `Their personal constraints are ${person.profile.preferences}.` : null,
   ].filter(Boolean).join(" ")).join(" ");
+  const heightDirection = modeledHeightDirection(people.map((person) => person.profile));
   const personDirections = people.map((person, index) => {
     const label = person.profile?.name || `Person ${index + 1}`;
     const personal = modeledContext.people.find((entry) => entry.personId === person.profile?.id)
@@ -2403,7 +2434,7 @@ ${modeledReferenceRoleRules()}
 
 Mandatory outfit: Dress the referenced ${people.length === 1 ? "person" : "people"} in EVERY supplied garment assigned to them. Preserve the exact product identity, silhouette, color version shown in its reference, material, pattern, fit, construction, logo, and distinctive detail. Do not omit, replace, merge, redesign, recolor, swap between people, or invent any supplied garment. Garment details: ${requirements}.
 
-People: ${profileDetails} ${identityLock} Show exactly ${people.length} ${people.length === 1 ? "person" : "people"} with realistic anatomy. Keep the identities distinct; never blend faces, bodies, ages, or features between people. Place them together naturally in the requested scene.
+People: ${profileDetails} ${identityLock} ${heightDirection} Show exactly ${people.length} ${people.length === 1 ? "person" : "people"} with realistic anatomy. Keep the identities distinct; never blend faces, bodies, ages, or features between people. Place them together naturally in the requested scene.
 
 Context: Occasion ${context.occasion || "not specified"}; weather ${context.weather.join(", ") || "not specified"}; season ${context.season || "not specified"}. Make the styling, layering, light, and setting believable for that context.
 
@@ -5986,11 +6017,19 @@ Interpret this correction semantically in whatever language it is written. It ov
       }
       const peopleWithReferences = await Promise.all(people.map(async (person) => {
         const references = (await loadProfileReferenceImages(person)).slice(0, 2);
+        const heightProfile = normalizeSizeProfile(person.sizeProfile);
         return {
           // A reference-photo grant is not permission to disclose the companion's
-          // private profile preferences. Only the requesting person's own styling
-          // context is included beyond the visual references.
-          profile: person.id === profile.id ? person : { id: person.id, name: person.name },
+          // private styling preferences. A recorded height is included only as
+          // body-fidelity direction for the explicitly authorized shared image.
+          profile: person.id === profile.id ? person : {
+            id: person.id,
+            name: person.name,
+            sizeProfile: {
+              heightCm: heightProfile.heightCm,
+              heightUnit: heightProfile.heightUnit,
+            },
+          },
           references,
           referenceCount: references.length,
         };

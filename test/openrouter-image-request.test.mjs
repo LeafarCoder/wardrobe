@@ -316,18 +316,18 @@ test("grounds a planned modeled outfit in every garment, place, date, and occasi
 });
 
 test("locks facial and anatomical identity in every modeled-look workflow", () => {
-  const garmentPrompt = buildModeledPrompt(2, { name: "Rafael", age: 34 }, { name: "Navy jacket" });
+  const garmentPrompt = buildModeledPrompt(2, { name: "Rafael", age: 34, sizeProfile: { heightCm: 180 } }, { name: "Navy jacket" });
   const plannedPrompt = buildPlannedOutfitPrompt(
     2,
-    { name: "Rafael", age: 34 },
+    { name: "Rafael", age: 34, sizeProfile: { heightCm: 180 } },
     {},
     { name: "Dinner" },
     [{ name: "Navy jacket", part: "wholebody_up" }],
   );
   const studioPrompt = buildOutfitStudioModeledPrompt(
     [
-      { profile: { name: "Rafael", age: 34 }, referenceCount: 2 },
-      { profile: { name: "Sara", age: 31 }, referenceCount: 1 },
+      { profile: { name: "Rafael", age: 34, sizeProfile: { heightCm: 180 } }, referenceCount: 2 },
+      { profile: { name: "Sara", age: 31, sizeProfile: { heightCm: 165 } }, referenceCount: 1 },
     ],
     { name: "Rafael" },
     {},
@@ -352,6 +352,8 @@ test("locks facial and anatomical identity in every modeled-look workflow", () =
     assert.match(prompt, /skin tone and visible skin texture/i);
     assert.match(prompt, /apparent age/i);
     assert.match(prompt, /body shape/i);
+    assert.match(prompt, /Height fidelity — mandatory/i);
+    assert.match(prompt, /recorded real-world height/i);
     assert.match(prompt, /Do not beautify, idealize/i);
     assert.match(prompt, /generic fashion-model face/i);
   }
@@ -392,8 +394,8 @@ test("grounds an Outfit Studio image in every chosen garment and presentation co
 test("keeps connected people and their assigned garments distinct in Outfit Studio", () => {
   const prompt = buildOutfitStudioModeledPrompt(
     [
-      { profile: { id: "rafael", name: "Rafael", age: 34 }, referenceCount: 2 },
-      { profile: { id: "sara", name: "Sara", age: 31 }, referenceCount: 1 },
+      { profile: { id: "rafael", name: "Rafael", age: 34, sizeProfile: { heightCm: 182, heightUnit: "cm" } }, referenceCount: 2 },
+      { profile: { id: "sara", name: "Sara", age: 31, sizeProfile: { heightCm: 164, heightUnit: "imperial" } }, referenceCount: 1 },
     ],
     { name: "Rafael" },
     {
@@ -427,6 +429,10 @@ test("keeps connected people and their assigned garments distinct in Outfit Stud
   assert.match(prompt, /Image 4 is the exact reference for "Cream dress".*worn by Sara/);
   assert.match(prompt, /Show exactly 2 people/);
   assert.match(prompt, /never blend faces, bodies, ages, or features/i);
+  assert.match(prompt, /Rafael's recorded real-world height is 182 cm \(6 ft 0 in\)/i);
+  assert.match(prompt, /Sara's recorded real-world height is 5 ft 5 in \(164 cm\)/i);
+  assert.match(prompt, /Rafael is 18 cm taller than Sara/i);
+  assert.match(prompt, /same ground plane through believable head, shoulder, hip, and limb levels/i);
   assert.match(prompt, /Rafael: Pose: walking with a natural mid-step stride; arm and hand gesture: arms crossed in a relaxed, natural way/i);
   assert.match(prompt, /Sara: Pose: standing naturally; arm and hand gesture: one hand naturally tucking hair behind one ear/i);
   assert.match(prompt, /summer, with seasonally appropriate light/);

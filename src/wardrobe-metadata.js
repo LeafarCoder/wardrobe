@@ -49,6 +49,37 @@ export const FIT_OPTIONS = [
   { id: "oversized", label: "Oversized" },
 ];
 
+export const HEIGHT_UNIT_OPTIONS = [
+  { id: "cm", label: "Centimetres" },
+  { id: "imperial", label: "Feet & inches" },
+];
+
+export const HEIGHT_UNIT_IDS = new Set(HEIGHT_UNIT_OPTIONS.map((option) => option.id));
+
+export function suggestedHeightUnit(sizeSystem = "") {
+  return ["us", "uk"].includes(sizeSystem) ? "imperial" : "cm";
+}
+
+export function normalizeHeightCm(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const height = Number(value);
+  if (!Number.isFinite(height) || height < 30 || height > 260) return null;
+  return Math.round(height * 10) / 10;
+}
+
+export function profileHeightSummary(value = {}) {
+  const heightCm = normalizeHeightCm(value?.heightCm);
+  if (heightCm === null) return "";
+  const totalInches = Math.round(heightCm / 2.54);
+  const feet = Math.floor(totalInches / 12);
+  const inches = totalInches % 12;
+  const metric = `${heightCm.toLocaleString("en-US", { maximumFractionDigits: 1 })} cm`;
+  const imperial = `${feet} ft ${inches} in`;
+  return value?.heightUnit === "imperial"
+    ? `${imperial} (${metric})`
+    : `${metric} (${imperial})`;
+}
+
 export const SIZE_SYSTEMS = [
   {
     id: "",
@@ -206,9 +237,14 @@ export function normalizeSizeProfile(value = {}, existing = {}) {
   const previous = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
   const requestedSystem = input.system ?? previous.system;
   const requestedFit = input.fit ?? previous.fit;
+  const requestedHeightUnit = input.heightUnit ?? previous.heightUnit;
   const normalized = {
     system: SIZE_SYSTEM_IDS.has(requestedSystem) ? requestedSystem : "",
     fit: FIT_OPTION_IDS.has(requestedFit) ? requestedFit : "",
+    heightCm: normalizeHeightCm(input.heightCm ?? previous.heightCm),
+    heightUnit: HEIGHT_UNIT_IDS.has(requestedHeightUnit)
+      ? requestedHeightUnit
+      : suggestedHeightUnit(requestedSystem),
   };
   for (const field of SIZE_FIELDS) {
     normalized[field.id] = normalizePreferenceList(input[field.id] ?? previous[field.id], 8);
@@ -224,6 +260,7 @@ export function sizeProfileSummary(value = {}) {
     .map((field) => `${field.label.toLowerCase()}: ${profile[field.id].join(" / ")}`);
   const fit = FIT_OPTIONS.find((option) => option.id === profile.fit)?.label;
   return [
+    profile.heightCm !== null ? `height: ${profileHeightSummary(profile)}` : null,
     profile.system && system ? `sizing system: ${system.label}` : null,
     ...sizes,
     profile.fit ? `preferred fit: ${fit}` : null,

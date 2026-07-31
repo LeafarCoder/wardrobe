@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   normalizeBrand,
   normalizePreferenceList,
+  profileHeightSummary,
   normalizePurchaseCurrency,
   normalizePurchaseMonth,
   normalizePurchasePrice,
@@ -42,6 +43,8 @@ test("keeps region-specific size fields structured and rejects unsupported value
   assert.deepEqual(normalizeSizeProfile({
     system: "uk",
     fit: "relaxed",
+    heightCm: 178.26,
+    heightUnit: "imperial",
     tops: ["UK 10", "UK 12"],
     bottoms: ["UK 12", "W30"],
     shoes: "UK 7",
@@ -50,6 +53,8 @@ test("keeps region-specific size fields structured and rejects unsupported value
   }), {
     system: "uk",
     fit: "relaxed",
+    heightCm: 178.3,
+    heightUnit: "imperial",
     tops: ["UK 10", "UK 12"],
     bottoms: ["UK 12", "W30"],
     outerwear: [],
@@ -59,6 +64,9 @@ test("keeps region-specific size fields structured and rejects unsupported value
 
   assert.equal(normalizeSizeProfile({ system: "unsupported", fit: "unsupported" }).system, "");
   assert.equal(normalizeSizeProfile({ system: "unsupported", fit: "unsupported" }).fit, "");
+  assert.equal(normalizeSizeProfile({ system: "us" }).heightUnit, "imperial");
+  assert.equal(normalizeSizeProfile({ system: "eu" }).heightUnit, "cm");
+  assert.equal(normalizeSizeProfile({ heightCm: 10 }).heightCm, null);
 });
 
 test("does not invent a sizing region for a legacy profile", () => {
@@ -66,6 +74,16 @@ test("does not invent a sizing region for a legacy profile", () => {
   assert.equal(
     sizeProfileSummary({ system: "eu", tops: ["S", "M"], bottoms: ["EU 42", "W32"], shoes: "EU 42", fit: "regular" }),
     "sizing system: EU / International; tops: S / M; trousers & bottoms: EU 42 / W32; shoes: EU 42; preferred fit: Regular",
+  );
+});
+
+test("keeps height canonical in centimetres and formats the preferred unit first", () => {
+  assert.equal(profileHeightSummary({ heightCm: 180, heightUnit: "cm" }), "180 cm (5 ft 11 in)");
+  assert.equal(profileHeightSummary({ heightCm: 180, heightUnit: "imperial" }), "5 ft 11 in (180 cm)");
+  assert.equal(profileHeightSummary({}), "");
+  assert.equal(
+    sizeProfileSummary({ heightCm: 165.1, heightUnit: "cm", system: "eu" }),
+    "height: 165.1 cm (5 ft 5 in); sizing system: EU / International",
   );
 });
 
@@ -80,11 +98,13 @@ test("normalizes favorite colors and materials as concise unique lists", () => {
 test("includes structured sizing context in modeled-look prompts", () => {
   const prompt = buildModeledPrompt(1, {
     name: "Rafael",
-    sizeProfile: { system: "eu", tops: ["S", "M"], bottoms: ["EU 42", "W32"], shoes: ["EU 42"], fit: "regular" },
+    sizeProfile: { heightCm: 180, heightUnit: "cm", system: "eu", tops: ["S", "M"], bottoms: ["EU 42", "W32"], shoes: ["EU 42"], fit: "regular" },
     preferredMaterials: ["linen", "cotton"],
     favoriteColors: ["olive", "navy"],
   }, { part: "upperbody" });
   assert.match(prompt, /sizing system: EU \/ International/);
+  assert.match(prompt, /recorded real-world height is 180 cm \(5 ft 11 in\)/);
+  assert.match(prompt, /explicit measurements as authoritative/);
   assert.match(prompt, /tops: S \/ M/);
   assert.match(prompt, /trousers & bottoms: EU 42 \/ W32/);
   assert.match(prompt, /shoes: EU 42/);

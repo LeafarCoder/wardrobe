@@ -61,6 +61,7 @@ import {
   BRAND_OPTIONS,
   CURRENCY_OPTIONS,
   FIT_OPTIONS,
+  HEIGHT_UNIT_OPTIONS,
   normalizePreferenceList,
   normalizePurchaseCurrency,
   normalizePurchaseMonth,
@@ -69,6 +70,7 @@ import {
   purchaseMonthValue,
   SIZE_FIELDS,
   SIZE_SYSTEMS,
+  suggestedHeightUnit,
 } from "./wardrobe-metadata.js";
 import {
   activeFilterCount,
@@ -3794,6 +3796,130 @@ function ProfileMenu({ users, currentUser, canCreate, connectionCount, originalP
   );
 }
 
+function ProfileHeightEditor({ value, onChange }) {
+  const [centimetres, setCentimetres] = useState(value.heightCm === null ? "" : String(value.heightCm));
+  const initialTotalInches = value.heightCm === null ? null : Math.round(value.heightCm / 2.54);
+  const [feet, setFeet] = useState(initialTotalInches === null ? "" : String(Math.floor(initialTotalInches / 12)));
+  const [inches, setInches] = useState(initialTotalInches === null ? "" : String(initialTotalInches % 12));
+
+  useEffect(() => {
+    setCentimetres(value.heightCm === null ? "" : String(value.heightCm));
+    const totalInches = value.heightCm === null ? null : Math.round(value.heightCm / 2.54);
+    setFeet(totalInches === null ? "" : String(Math.floor(totalInches / 12)));
+    setInches(totalInches === null ? "" : String(totalInches % 12));
+  }, [value.heightCm, value.heightUnit]);
+
+  const resetDrafts = () => {
+    setCentimetres(value.heightCm === null ? "" : String(value.heightCm));
+    const totalInches = value.heightCm === null ? null : Math.round(value.heightCm / 2.54);
+    setFeet(totalInches === null ? "" : String(Math.floor(totalInches / 12)));
+    setInches(totalInches === null ? "" : String(totalInches % 12));
+  };
+  const updateCentimetres = (rawValue) => {
+    setCentimetres(rawValue);
+    if (rawValue === "") onChange({ ...value, heightCm: null });
+    const number = Number(rawValue);
+    if (Number.isFinite(number) && number >= 30 && number <= 260) {
+      onChange({ ...value, heightCm: number });
+    }
+  };
+  const updateImperial = (nextFeet, nextInches) => {
+    const feetNumber = Number(nextFeet);
+    const inchesNumber = Number(nextInches);
+    if (nextFeet === "") {
+      onChange({ ...value, heightCm: null });
+      return;
+    }
+    if (
+      Number.isInteger(feetNumber)
+      && Number.isInteger(inchesNumber)
+      && feetNumber >= 1
+      && feetNumber <= 8
+      && inchesNumber >= 0
+      && inchesNumber <= 11
+    ) {
+      const heightCm = ((feetNumber * 12) + inchesNumber) * 2.54;
+      if (heightCm >= 30 && heightCm <= 260) onChange({ ...value, heightCm });
+    }
+  };
+
+  return (
+    <section className="profile-height-editor">
+      <div>
+        <strong>{tr("Height")}</strong>
+        <small>{tr("Used to preserve stature and relative height when generating modeled looks.")}</small>
+      </div>
+      <label>
+        <span>{tr("Height unit")}</span>
+        <LightSelect
+          value={value.heightUnit}
+          onChange={(heightUnit) => onChange({ ...value, heightUnit })}
+          options={HEIGHT_UNIT_OPTIONS.map((option) => ({ value: option.id, label: tr(option.label) }))}
+          ariaLabel={tr("Height unit")}
+        />
+      </label>
+      {value.heightUnit === "imperial" ? (
+        <div className="profile-height-editor__imperial">
+          <label>
+            <span>{tr("Feet")}</span>
+            <input
+              type="number"
+              min="1"
+              max="8"
+              step="1"
+              inputMode="numeric"
+              value={feet}
+              placeholder="5"
+              aria-label={tr("Height in feet")}
+              onBlur={resetDrafts}
+              onChange={(event) => {
+                const nextFeet = event.target.value;
+                setFeet(nextFeet);
+                updateImperial(nextFeet, inches);
+              }}
+            />
+          </label>
+          <label>
+            <span>{tr("Inches")}</span>
+            <input
+              type="number"
+              min="0"
+              max="11"
+              step="1"
+              inputMode="numeric"
+              value={inches}
+              placeholder="10"
+              aria-label={tr("Height in inches")}
+              onBlur={resetDrafts}
+              onChange={(event) => {
+                const nextInches = event.target.value;
+                setInches(nextInches);
+                updateImperial(feet, nextInches);
+              }}
+            />
+          </label>
+        </div>
+      ) : (
+        <label className="profile-height-editor__metric">
+          <span>{tr("Centimetres")}</span>
+          <input
+            type="number"
+            min="30"
+            max="260"
+            step="0.1"
+            inputMode="decimal"
+            value={centimetres}
+            placeholder="175"
+            aria-label={tr("Height in centimetres")}
+            onBlur={resetDrafts}
+            onChange={(event) => updateCentimetres(event.target.value)}
+          />
+        </label>
+      )}
+    </section>
+  );
+}
+
 function ProfileSizeEditor({ value, notes, onChange, onNotesChange }) {
   const normalized = normalizeSizeProfile(value);
   const system = SIZE_SYSTEMS.find((candidate) => candidate.id === normalized.system) || SIZE_SYSTEMS[0];
@@ -3801,12 +3927,17 @@ function ProfileSizeEditor({ value, notes, onChange, onNotesChange }) {
 
   return (
     <div className="profile-size-editor profile-field-wide">
+      <ProfileHeightEditor value={normalized} onChange={onChange} />
       <div className="profile-size-controls">
         <label>
           <span>{tr("Sizing system")}</span>
           <LightSelect
             value={normalized.system}
-            onChange={(systemId) => update("system", systemId)}
+            onChange={(systemId) => onChange({
+              ...normalized,
+              system: systemId,
+              heightUnit: suggestedHeightUnit(systemId),
+            })}
             options={SIZE_SYSTEMS.map((candidate) => ({ value: candidate.id, label: tr(candidate.label) }))}
             ariaLabel={tr("Sizing system")}
           />
