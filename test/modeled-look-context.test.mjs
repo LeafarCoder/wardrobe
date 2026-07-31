@@ -22,6 +22,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
     additionalDirection: "  Carry a small bouquet.  ",
     ignored: "not persisted",
   }), {
+    imageRatio: "",
     photographicStyle: "",
     pose: "walking",
     gesture: "arms-crossed",
@@ -42,6 +43,8 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
   assert.equal(normalizeModeledLookContext({ environmentType: "outside", setting: "bedroom" }).setting, "");
   assert.equal(normalizeModeledLookContext({ environmentType: "invalid", setting: "forest" }).environmentType, "");
   assert.equal(normalizeModeledLookContext({ season: "monsoon" }).season, "");
+  assert.equal(normalizeModeledLookContext({ imageRatio: "landscape" }).imageRatio, "landscape");
+  assert.equal(normalizeModeledLookContext({ imageRatio: "wide-ish" }).imageRatio, "");
   assert.deepEqual(normalizeModeledLookContext(null), normalizeModeledLookContext());
 });
 
@@ -113,6 +116,7 @@ test("normalizes shared style, saved backgrounds, stair poses, and per-person di
 
 test("describes every selected modeled-look setting without translating free text", () => {
   assert.deepEqual(modeledLookContextDetails({
+    imageRatio: "square",
     pose: "walking",
     gesture: "hands-pockets",
     hairstyle: "ponytail",
@@ -125,6 +129,7 @@ test("describes every selected modeled-look setting without translating free tex
     expression: "smiling",
     additionalDirection: "Carry the red book.",
   }), [
+    { id: "imageRatio", label: "Image ratio", values: ["Square"], translateValues: true },
     { id: "pose", label: "Body pose", values: ["Walking"], translateValues: true },
     { id: "gesture", label: "Gesture", values: ["Hands in pockets"], translateValues: true },
     { id: "hairstyle", label: "Hairstyle", values: ["Ponytail"], translateValues: true },

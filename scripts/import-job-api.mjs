@@ -77,7 +77,16 @@ import {
   summarizeAiUsage,
 } from "../src/ai-preferences.js";
 import { normalizeTutorialState, updateTutorialState } from "../src/tutorial.js";
-import { modeledLookContextPrompt, modeledLookOptionPrompt, normalizeModeledLookContext } from "../src/modeled-look-context.js";
+import {
+  modeledLookContextPrompt,
+  modeledLookImageRatioPrompt,
+  modeledLookOptionPrompt,
+  normalizeModeledLookContext,
+} from "../src/modeled-look-context.js";
+import {
+  generatedPhotoGarmentSnapshots,
+  normalizeGeneratedPhotoProvenance,
+} from "../src/generated-photo-library.js";
 import {
   isCompleteGarmentMediaOrder,
   normalizeGarmentMediaOrder,
@@ -1164,6 +1173,7 @@ export function modeledLooksForRecord(record = {}) {
     const preview = typeof look.preview === "string" && look.preview.trim()
       ? look.preview
       : null;
+    const provenance = normalizeGeneratedPhotoProvenance(look.provenance);
     return [{
       id,
       image: look.image,
@@ -1174,6 +1184,7 @@ export function modeledLooksForRecord(record = {}) {
       ...(look.context && typeof look.context === "object" && !Array.isArray(look.context)
         ? { context: normalizeModeledLookContext(look.context) }
         : {}),
+      ...(provenance ? { provenance } : {}),
       ...(vaultedAt(look.vaultedAt) ? { vaultedAt: vaultedAt(look.vaultedAt) } : {}),
       generatedAt: typeof look.generatedAt === "string" && look.generatedAt ? look.generatedAt : null,
     }];
@@ -2485,7 +2496,7 @@ export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metad
     ? `Scene reference: Image ${garmentImage + 1} is the user's exact saved background. Preserve its recognizable architecture, layout, materials, vegetation, and atmosphere while placing the person naturally and photorealistically into that location. Do not copy any people, animals, text, or transient objects from it.`
     : "";
 
-  return `Create a professional horizontal 3:2 editorial fashion photograph.
+  return `Create a professional ${modeledLookImageRatioPrompt(modeledContext.imageRatio)} editorial fashion photograph. Compose specifically for this final aspect ratio and keep the complete outfit inside its safe central frame.
 
 Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
 Subjects: ${subjectBinding}
@@ -2548,7 +2559,7 @@ export function buildPlannedOutfitPrompt(personReferenceCount = 1, profile = {},
     ? "Use the saved scene reference as the actual location even when it differs from the plan destination; keep the plan's season, weather, and occasion cues believable within that place."
     : setting;
 
-  return `Create one professional horizontal 3:2 editorial fashion photograph for the saved wardrobe plan.
+  return `Create one professional ${modeledLookImageRatioPrompt(modeledContext.imageRatio)} editorial fashion photograph for the saved wardrobe plan. Compose specifically for this final aspect ratio and keep the complete outfit inside its safe central frame.
 
 Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
 Subjects: ${identityReferences}
@@ -2645,7 +2656,7 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
     }),
   ].filter(Boolean).join(" ");
 
-  return `Create one professional horizontal 3:2 modeled fashion photograph for Outfit Studio.
+  return `Create one professional ${modeledLookImageRatioPrompt(modeledContext.imageRatio)} modeled fashion photograph for Outfit Studio. Compose specifically for this final aspect ratio and keep every person and complete outfit inside its safe central frame.
 
 Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
 Subjects: ${identityReferences}
@@ -2664,6 +2675,38 @@ Presentation: ${presentationDirection}
 Composition: Keep the entire outfit readable. Use a head-to-toe view whenever bottoms, dresses, or footwear are supplied. Do not obscure one supplied garment with another unnecessarily.
 
 No text, captions, watermark, collage, split screen, product mockup, extra people, duplicate person, or synthetic appearance.`;
+}
+
+const MODELED_IMAGE_RATIO_REQUESTS = Object.freeze({
+  square: Object.freeze({ size: "1024x1024", aspectRatio: "1:1", width: 1, height: 1 }),
+  portrait: Object.freeze({ size: "1024x1536", aspectRatio: "9:16", width: 9, height: 16 }),
+  landscape: Object.freeze({ size: "1536x1024", aspectRatio: "16:9", width: 16, height: 9 }),
+});
+
+export function modeledImageRequest(context = {}) {
+  const normalized = normalizeModeledLookContext(context);
+  return MODELED_IMAGE_RATIO_REQUESTS[normalized.imageRatio] || MODELED_IMAGE_RATIO_REQUESTS.portrait;
+}
+
+export async function cropModeledImageToRatio(bytes, context = {}) {
+  const request = modeledImageRequest(context);
+  const metadata = await sharp(bytes).metadata();
+  const sourceWidth = metadata.width || 0;
+  const sourceHeight = metadata.height || 0;
+  if (!sourceWidth || !sourceHeight) return bytes;
+  const unit = Math.floor(Math.min(sourceWidth / request.width, sourceHeight / request.height));
+  const width = unit * request.width;
+  const height = unit * request.height;
+  if (!width || !height || (width === sourceWidth && height === sourceHeight)) return bytes;
+  return sharp(bytes)
+    .extract({
+      left: Math.floor((sourceWidth - width) / 2),
+      top: Math.floor((sourceHeight - height) / 2),
+      width,
+      height,
+    })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
 }
 
 function cleanupTolerance(value) {
@@ -3257,7 +3300,7 @@ export function openRouterImageResolution(model, size, configuredResolution, fal
   // (2048x1366) because it falls below the route's 3,686,400-pixel minimum.
   // Starting at 4K avoids a known failed request; square 2K output is large
   // enough and can keep the cheaper configured resolution semantics.
-  if (model === "bytedance-seed/seedream-4.5" && size === "1536x1024") {
+  if (model === "bytedance-seed/seedream-4.5" && size !== "1024x1024") {
     const index = OPENROUTER_RESOLUTION_TIERS.indexOf(normalized);
     return index < OPENROUTER_RESOLUTION_TIERS.indexOf("4K") ? "4K" : normalized;
   }
@@ -3276,6 +3319,7 @@ export function openRouterImageRequest({
   prompt,
   inputReferences,
   size,
+  aspectRatio,
   resolution,
   quality,
   background,
@@ -3289,7 +3333,7 @@ export function openRouterImageRequest({
   };
   if (!OPENROUTER_MODELS_WITHOUT_NORMALIZED_DIMENSIONS.has(model)) {
     request.resolution = resolution;
-    request.aspect_ratio = size === "1536x1024" ? "3:2" : "1:1";
+    request.aspect_ratio = aspectRatio || (size === "1536x1024" ? "3:2" : size === "1024x1536" ? "2:3" : "1:1");
     if (quality && quality !== "auto") request.quality = quality;
     if (background) request.background = background;
   } else {
@@ -3299,7 +3343,7 @@ export function openRouterImageRequest({
   return request;
 }
 
-export async function openRouterEdit({ provider, model, prompt, images, size, background, quality, operation = "generation", trace }) {
+export async function openRouterEdit({ provider, model, prompt, images, size, aspectRatio, background, quality, operation = "generation", trace }) {
   const inputReferences = await Promise.all(images.map(async (image) => {
     const prepared = await prepareProviderImage(image.data);
     return {
@@ -3328,6 +3372,7 @@ export async function openRouterEdit({ provider, model, prompt, images, size, ba
       prompt,
       resolution,
       size,
+      aspectRatio,
       inputReferences,
       quality,
       background,
@@ -6217,6 +6262,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (background) modeledContext.backgroundReferenceName = background.reference.name;
       const prompt = options.modeledPrompt || buildModeledPrompt(models.length, profile, modeledRecord, modeledContext);
       const modeledModel = modeledModelForReferenceCount(provider, models.length);
+      const imageRequest = modeledImageRequest(modeledContext);
       console.info(`[wardrobe] Generating requested modeled look with ${provider.label} / ${modeledModel} for "${record.name}" using ${models.length} identity reference${models.length === 1 ? "" : "s"}...`);
       const generation = await withGenerationSlot(() => editWithSafetyFallback({
         editImage,
@@ -6224,7 +6270,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         model: modeledModel,
         fallbackModels: provider.imageFallbackModels,
         quality: provider.imageQuality,
-        size: "1536x1024",
+        ...imageRequest,
         images: [...models, garment, ...(background ? [background.image] : [])],
         prompt,
         operation: "modeled-on-demand",
@@ -6242,7 +6288,7 @@ Interpret this correction semantically in whatever language it is written. It ov
 
       const lookId = randomUUID();
       const modeledName = `${itemId}-modeled-${lookId}.png`;
-      await atomicFile(path.join(libraryAssetDir, modeledName), generation.bytes);
+      await atomicFile(path.join(libraryAssetDir, modeledName), await cropModeledImageToRatio(generation.bytes, modeledContext));
       const modeledImage = libraryAssetUrl(modeledName);
       const modeledPreview = await safeLibraryVariant(
         modeledImage,
@@ -6270,6 +6316,14 @@ Interpret this correction semantically in whatever language it is written. It ov
           fallbackUsed: generation.fallbackUsed,
           variantId: selectedVariant?.id || null,
           context: modeledContext,
+          provenance: {
+            source: "garment",
+            garments: generatedPhotoGarmentSnapshots(
+              [{ itemId, variantId: selectedVariant?.id || null }],
+              [record],
+              [profile],
+            ),
+          },
           generatedAt,
         };
         latest[index] = recordWithModeledLooks({
@@ -6369,6 +6423,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         garmentSelections.map((selection) => selection.promptRecord),
         modeledContext,
       );
+      const imageRequest = modeledImageRequest(modeledContext);
       console.info(`[wardrobe] Generating planned outfit "${outfit.name}" with ${provider.label} / ${modeledModel} using ${garments.length} garment reference${garments.length === 1 ? "" : "s"}...`);
       const generation = await withGenerationSlot(() => editWithSafetyFallback({
         editImage,
@@ -6376,7 +6431,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         model: modeledModel,
         fallbackModels: provider.imageFallbackModels,
         quality: provider.imageQuality,
-        size: "1536x1024",
+        ...imageRequest,
         images: [...personReferences, ...garmentReferences, ...(background ? [background.image] : [])],
         prompt,
         operation: "modeled-plan",
@@ -6392,7 +6447,7 @@ Interpret this correction semantically in whatever language it is written. It ov
 
       const lookId = randomUUID();
       const modeledName = `plan-${planId}-outfit-${normalizedOutfitIndex}-${lookId}.png`;
-      await atomicFile(path.join(libraryAssetDir, modeledName), generation.bytes);
+      await atomicFile(path.join(libraryAssetDir, modeledName), await cropModeledImageToRatio(generation.bytes, modeledContext));
       const modeledImage = libraryAssetUrl(modeledName);
       const modeledPreview = await safeLibraryVariant(
         modeledImage,
@@ -6408,6 +6463,17 @@ Interpret this correction semantically in whatever language it is written. It ov
         fallbackUsed: generation.fallbackUsed,
         garmentVariants: Object.fromEntries(garmentSelections.map(({ record, variant }) => [record.id, variant?.id || null])),
         context: modeledContext,
+        provenance: {
+          source: "planner",
+          garments: generatedPhotoGarmentSnapshots(outfit.itemIds, garments, [profile]),
+          plan: {
+            id: plan.id,
+            input: plan.input,
+            expectedWeather: plan.result.expectedWeather,
+            outfitName: outfit.name,
+            outfitNote: outfit.note,
+          },
+        },
         generatedAt,
       };
 
@@ -6556,6 +6622,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         })),
         modeledContext,
       );
+      const imageRequest = modeledImageRequest(modeledContext);
       console.info(`[wardrobe] Generating Outfit Studio look "${outfit.name}" with ${provider.label} / ${modeledModel} using ${selections.length} garment reference${selections.length === 1 ? "" : "s"}...`);
       const generation = await withGenerationSlot(() => editWithSafetyFallback({
         editImage,
@@ -6563,7 +6630,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         model: modeledModel,
         fallbackModels: provider.imageFallbackModels,
         quality: provider.imageQuality,
-        size: "1536x1024",
+        ...imageRequest,
         images: [...personReferences, ...garmentReferences, ...(background ? [background.image] : [])],
         prompt,
         operation: "modeled-outfit",
@@ -6580,7 +6647,7 @@ Interpret this correction semantically in whatever language it is written. It ov
 
       const lookId = randomUUID();
       const modeledName = `outfit-${outfitId}-${lookId}.png`;
-      await atomicFile(path.join(libraryAssetDir, modeledName), generation.bytes);
+      await atomicFile(path.join(libraryAssetDir, modeledName), await cropModeledImageToRatio(generation.bytes, modeledContext));
       const modeledImage = libraryAssetUrl(modeledName);
       const modeledPreview = await safeLibraryVariant(modeledImage, "preview", `${outfit.name} Outfit Studio look`);
       const generatedAt = new Date().toISOString();
@@ -6592,6 +6659,24 @@ Interpret this correction semantically in whatever language it is written. It ov
         fallbackUsed: generation.fallbackUsed,
         generatedAt,
         context: modeledContext,
+        provenance: {
+          source: "outfit-studio",
+          garments: generatedPhotoGarmentSnapshots(
+            selections.map(({ record, variant, wearerId }) => ({
+              itemId: record.id,
+              variantId: variant?.id || null,
+              wearerId,
+            })),
+            selections.map(({ record }) => record),
+            people,
+          ),
+          outfit: {
+            id: outfit.id,
+            name: outfit.name,
+            context: outfit.context,
+            presentation: outfit.presentation,
+          },
+        },
       };
 
       const saved = await withUsers(async () => {
@@ -7079,8 +7164,10 @@ Interpret this correction semantically in whatever language it is written. It ov
           const garmentFile = path.join(dir, garmentName);
           const garment = { data: await readFile(garmentFile), mime: "image/png", name: "garment.png" };
           const models = await loadProfileReferenceImages(profile);
-          const basePrompt = options.modeledPrompt || buildModeledPrompt(models.length, profile, current.metadata);
+          const modeledContext = normalizeModeledLookContext();
+          const basePrompt = options.modeledPrompt || buildModeledPrompt(models.length, profile, current.metadata, modeledContext);
           const modeledModel = modeledModelForReferenceCount(provider, models.length);
+          const imageRequest = modeledImageRequest(modeledContext);
           console.info(`[wardrobe] Generating modeled image with ${provider.label} / ${modeledModel} using ${models.length} identity reference${models.length === 1 ? "" : "s"}...`);
           const generation = await withGenerationSlot(() => editWithSafetyFallback({
             editImage,
@@ -7089,7 +7176,7 @@ Interpret this correction semantically in whatever language it is written. It ov
             fallbackModels: provider.imageFallbackModels,
             onFallback: recordFallbackNotice,
             quality: provider.imageQuality,
-            size: "1536x1024",
+            ...imageRequest,
             images: [...models, garment],
             prompt: current.stages.modeled.prompt ? `${basePrompt}\nUser regeneration direction: ${current.stages.modeled.prompt}` : basePrompt,
             operation: "modeled",
@@ -7102,7 +7189,7 @@ Interpret this correction semantically in whatever language it is written. It ov
               personReferenceCount: models.length,
             },
           }));
-          bytes = generation.bytes;
+          bytes = await cropModeledImageToRatio(generation.bytes, modeledContext);
           usedModel = generation.model;
           fallbackUsed = generation.fallbackUsed;
         }

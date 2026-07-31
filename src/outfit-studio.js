@@ -1,4 +1,5 @@
 import { garmentColorVariants } from "./garment-variants.js";
+import { normalizeGeneratedPhotoProvenance } from "./generated-photo-library.js";
 import { MODELED_LOOK_CONTEXT_OPTIONS, normalizeModeledLookContext } from "./modeled-look-context.js";
 
 export const OUTFIT_OCCASIONS = [
@@ -194,6 +195,7 @@ function normalizeModeledLooks(value) {
     const image = cleanText(look.image, 500);
     if (!id || !image || seen.has(id)) return [];
     seen.add(id);
+    const provenance = normalizeGeneratedPhotoProvenance(look.provenance);
     return [{
       id,
       image,
@@ -204,6 +206,7 @@ function normalizeModeledLooks(value) {
       ...(cleanText(look.vaultedAt, 40) ? { vaultedAt: cleanText(look.vaultedAt, 40) } : {}),
       presentation: normalizeOutfitPresentation(look.presentation),
       context: normalizeModeledLookContext(look.context),
+      ...(provenance ? { provenance } : {}),
     }];
   }).slice(0, 12);
 }

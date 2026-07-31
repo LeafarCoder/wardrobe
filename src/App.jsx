@@ -95,6 +95,7 @@ import {
 } from "./wardrobe-discovery.js";
 import { withWardrobeUser } from "./user-scope.js";
 import { collectOriginalPhotoLibrary } from "./original-photo-library.js";
+import { collectGeneratedPhotoLibrary } from "./generated-photo-library.js";
 import {
   GARMENT_MEDIA_GENERATED,
   GARMENT_MEDIA_ORIGINAL,
@@ -4028,7 +4029,7 @@ function ProfileMenu({ users, currentUser, canCreate, connectionCount, originalP
             <Link size={14} /> {tr("Connections")}{connectionCount > 0 && <span className="profile-menu__notification">{connectionCount}</span>}
           </button>
           <button className="profile-menu__export" type="button" onClick={() => { onOriginalPhotos(); closeMenu(); }}>
-            <ImageSquare size={14} /> {tr("Original photos")}<span className="profile-menu__notification is-neutral">{originalPhotoCount}</span>
+            <ImageSquare size={14} /> {tr("Images")}<span className="profile-menu__notification is-neutral">{originalPhotoCount}</span>
           </button>
           <button className="profile-menu__export" type="button" onClick={() => { onVault(); closeMenu(); }}>
             <LockKey size={14} /> {tr("Vault")}
@@ -6811,6 +6812,10 @@ export function App() {
   const wardrobeDisplay = normalizeWardrobeDisplayPreferences(currentUser?.wardrobeDisplay);
   const gridDensity = wardrobeDisplay.density;
   const originalPhotoLibrary = useMemo(() => collectOriginalPhotoLibrary(items), [items]);
+  const generatedPhotoLibrary = useMemo(
+    () => collectGeneratedPhotoLibrary(items, currentUser || {}),
+    [currentUser, items],
+  );
 
   useEffect(() => {
     const legacyColorGrouping = currentUser?.wardrobeSortMode === "color";
@@ -8083,6 +8088,7 @@ export function App() {
       {originalPhotosOpen && (
         <OriginalPhotoGallery
           photos={originalPhotoLibrary}
+          generatedPhotos={generatedPhotoLibrary}
           selectedId={selectedOriginalPhotoId}
           onSelect={setSelectedOriginalPhotoId}
           onClose={closeOriginalPhotos}
@@ -8140,7 +8146,7 @@ export function App() {
           currentUser={currentUser}
           canCreate={isOwner}
           connectionCount={connectionsData.notificationCount || 0}
-          originalPhotoCount={originalPhotoLibrary.length}
+          originalPhotoCount={originalPhotoLibrary.length + generatedPhotoLibrary.length}
           onConnections={() => { setConnectionsError(""); setConnectionsOpen(true); }}
           onOriginalPhotos={() => {
             setSelectedOriginalPhotoId(null);

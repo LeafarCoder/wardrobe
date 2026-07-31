@@ -1,5 +1,6 @@
 import { colorGroup } from "./color-organization.js";
 import { normalizeModeledLookContext } from "./modeled-look-context.js";
+import { normalizeGeneratedPhotoProvenance } from "./generated-photo-library.js";
 
 export const WARDROBE_ITEM_TYPES = new Set([
   "all",
@@ -311,16 +312,20 @@ export function normalizeWardrobePlans(value = {}) {
       const candidates = Array.isArray(outfit.modeledLooks) && outfit.modeledLooks.length
         ? outfit.modeledLooks
         : outfit.modeledLook ? [outfit.modeledLook] : [];
-      const looks = normalizeItems(candidates, (look) => ({
-        id: cleanText(look.id, 80),
-        image: cleanText(look.image, 500),
-        preview: cleanText(look.preview, 500) || null,
-        model: cleanText(look.model, 180) || null,
-        fallbackUsed: Boolean(look.fallbackUsed),
-        garmentVariants: normalizePlannerGarmentVariants(look.garmentVariants),
-        context: normalizeModeledLookContext(look.context),
-        generatedAt: cleanText(look.generatedAt, 40) || null,
-      }), 12).filter((look) => look.id && look.image);
+      const looks = normalizeItems(candidates, (look) => {
+        const provenance = normalizeGeneratedPhotoProvenance(look.provenance);
+        return {
+          id: cleanText(look.id, 80),
+          image: cleanText(look.image, 500),
+          preview: cleanText(look.preview, 500) || null,
+          model: cleanText(look.model, 180) || null,
+          fallbackUsed: Boolean(look.fallbackUsed),
+          garmentVariants: normalizePlannerGarmentVariants(look.garmentVariants),
+          context: normalizeModeledLookContext(look.context),
+          generatedAt: cleanText(look.generatedAt, 40) || null,
+          ...(provenance ? { provenance } : {}),
+        };
+      }, 12).filter((look) => look.id && look.image);
       return looks;
     };
     return [{

@@ -117,13 +117,21 @@ export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
   ]),
 });
 
+export const MODELED_LOOK_IMAGE_RATIO_OPTIONS = Object.freeze([
+  { id: "square", label: "Square", description: "1:1", prompt: "square 1:1" },
+  { id: "portrait", label: "Portrait", description: "9:16 vertical", prompt: "vertical portrait 9:16" },
+  { id: "landscape", label: "Landscape", description: "16:9 horizontal", prompt: "horizontal landscape 16:9" },
+]);
+
 export const MODELED_LOOK_CONTEXT_TRANSLATION_KEYS = Object.freeze(
-  Object.values(MODELED_LOOK_CONTEXT_OPTIONS).flatMap((options) => (
-    options.flatMap((option) => [option.label, option.description].filter(Boolean))
-  )),
+  [
+    ...Object.values(MODELED_LOOK_CONTEXT_OPTIONS),
+    MODELED_LOOK_IMAGE_RATIO_OPTIONS,
+  ].flatMap((options) => options.flatMap((option) => [option.label, option.description].filter(Boolean))),
 );
 
 export const EMPTY_MODELED_LOOK_CONTEXT = Object.freeze({
+  imageRatio: "portrait",
   photographicStyle: "",
   pose: "",
   gesture: "",
@@ -152,6 +160,15 @@ const PERSON_DIRECTION_FIELDS = Object.freeze([
 
 function validOption(group, value) {
   return MODELED_LOOK_CONTEXT_OPTIONS[group].some((option) => option.id === value) ? value : "";
+}
+
+export function normalizeModeledLookImageRatio(value) {
+  return MODELED_LOOK_IMAGE_RATIO_OPTIONS.some((option) => option.id === value) ? value : "";
+}
+
+export function modeledLookImageRatioPrompt(value) {
+  const ratio = normalizeModeledLookImageRatio(value) || "portrait";
+  return MODELED_LOOK_IMAGE_RATIO_OPTIONS.find((option) => option.id === ratio)?.prompt || "vertical portrait 9:16";
 }
 
 function optionPrompt(group, value) {
@@ -185,6 +202,7 @@ export function normalizeModeledLookContext(input = {}) {
     }];
   }).slice(0, 4);
   return {
+    imageRatio: normalizeModeledLookImageRatio(source.imageRatio),
     photographicStyle: validOption("photographicStyle", source.photographicStyle),
     pose: validOption("pose", source.pose),
     gesture: validOption("gesture", source.gesture),
@@ -247,6 +265,7 @@ export function modeledLookContextDetails(input = {}) {
     ? { id, label, values: values.filter(Boolean), translateValues: true }
     : null;
   return [
+    translated("imageRatio", "Image ratio", [MODELED_LOOK_IMAGE_RATIO_OPTIONS.find((option) => option.id === context.imageRatio)?.label]),
     translated("photographicStyle", "Style", [optionLabel("photographicStyle", context.photographicStyle)]),
     translated("pose", "Body pose", [optionLabel("pose", context.pose)]),
     translated("gesture", "Gesture", [optionLabel("gesture", context.gesture)]),

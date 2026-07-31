@@ -22,6 +22,7 @@ import { tr } from "./i18n.js";
 import {
   EMPTY_MODELED_LOOK_CONTEXT,
   MODELED_LOOK_CONTEXT_OPTIONS,
+  MODELED_LOOK_IMAGE_RATIO_OPTIONS,
 } from "./modeled-look-context.js";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import "./modeled-look-dialog.css";
@@ -60,6 +61,29 @@ function ChoiceGroup({ label, options, value, onChange, visual = false, wide = f
           >
             {value === option.id && <Check className="modeled-context__selected-check" size={12} weight="bold" aria-hidden="true" />}
             <span>{tr(option.label)}{visual && option.description && <small>{tr(option.description)}</small>}</span>
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function ImageRatioGroup({ value, onChange }) {
+  return (
+    <fieldset className="modeled-context__group modeled-context__ratios">
+      <legend><ImageSquare size={14} weight="light" aria-hidden="true" /><span>{tr("Image ratio")}</span></legend>
+      <div>
+        {MODELED_LOOK_IMAGE_RATIO_OPTIONS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className={value === option.id ? "is-selected" : ""}
+            aria-pressed={value === option.id}
+            onClick={() => onChange(option.id)}
+          >
+            <span className={`modeled-context__ratio-frame is-${option.id}`} aria-hidden="true" />
+            <span><strong>{tr(option.label)}</strong><small>{tr(option.description)}</small></span>
+            {value === option.id && <Check size={12} weight="bold" aria-hidden="true" />}
           </button>
         ))}
       </div>
@@ -277,6 +301,7 @@ export function ModeledLookDialog({
           <details className="modeled-context__section" open>
             <summary><span>{tr("Photography & composition")}</span><small>{tr("Visual style and any final direction")}</small></summary>
             <div className="modeled-context__section-body">
+              <ImageRatioGroup value={context.imageRatio} onChange={(value) => update("imageRatio", value)} />
               <ChoiceGroup visual label="Style" options={MODELED_LOOK_CONTEXT_OPTIONS.photographicStyle} value={context.photographicStyle} onChange={(value) => update("photographicStyle", value)} />
               <label className="modeled-context__additional">
                 <span>{tr("More direction")}</span>

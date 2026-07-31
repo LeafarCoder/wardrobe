@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import sharp from "sharp";
 import {
   analysisPrompt,
   buildGarmentPrompt,
@@ -11,6 +12,8 @@ import {
   garmentNeedsContextReference,
   garmentSemanticMismatch,
   modeledModelForReferenceCount,
+  modeledImageRequest,
+  cropModeledImageToRatio,
   openRouterHeaders,
   openRouterImageRequest,
   openRouterImageResolution,
@@ -671,6 +674,38 @@ test("keeps normalized dimensions for models that advertise them", () => {
   assert.equal(request.resolution, "1K");
   assert.equal(request.aspect_ratio, "3:2");
   assert.equal("output_format" in request, false);
+});
+
+test("requests each modeled-photo ratio and sends exact OpenRouter aspect ratios", () => {
+  assert.deepEqual(modeledImageRequest({ imageRatio: "square" }), {
+    size: "1024x1024", aspectRatio: "1:1", width: 1, height: 1,
+  });
+  assert.deepEqual(modeledImageRequest({ imageRatio: "portrait" }), {
+    size: "1024x1536", aspectRatio: "9:16", width: 9, height: 16,
+  });
+  assert.deepEqual(modeledImageRequest({ imageRatio: "landscape" }), {
+    size: "1536x1024", aspectRatio: "16:9", width: 16, height: 9,
+  });
+
+  const request = openRouterImageRequest({
+    model: "google/gemini-3.1-flash-lite-image",
+    prompt: "portrait look",
+    inputReferences: [],
+    size: "1024x1536",
+    aspectRatio: "9:16",
+    resolution: "1K",
+  });
+  assert.equal(request.aspect_ratio, "9:16");
+});
+
+test("crops provider output to the selected exact final ratio", async () => {
+  const source = await sharp({
+    create: { width: 160, height: 160, channels: 3, background: "#d8d0c2" },
+  }).png().toBuffer();
+  const portrait = await sharp(await cropModeledImageToRatio(source, { imageRatio: "portrait" })).metadata();
+  const landscape = await sharp(await cropModeledImageToRatio(source, { imageRatio: "landscape" })).metadata();
+  assert.deepEqual([portrait.width, portrait.height], [90, 160]);
+  assert.deepEqual([landscape.width, landscape.height], [160, 90]);
 });
 
 test("starts Seedream landscape fallbacks at a route-compatible pixel count", () => {

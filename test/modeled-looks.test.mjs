@@ -60,6 +60,7 @@ test("preserves normalized generation settings on modeled looks", () => {
   });
 
   assert.deepEqual(look.context, {
+    imageRatio: "",
     photographicStyle: "",
     pose: "walking",
     gesture: "one-hand-hip",

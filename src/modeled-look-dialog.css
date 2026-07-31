@@ -173,6 +173,57 @@
   border-bottom: 1px solid var(--line);
 }
 
+.modeled-context__ratios > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.modeled-context .modeled-context__ratios button {
+  position: relative;
+  min-height: 78px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px;
+  background: rgba(255, 255, 255, .42);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.modeled-context .modeled-context__ratios button:hover,
+.modeled-context .modeled-context__ratios button:focus-visible,
+.modeled-context .modeled-context__ratios button.is-selected {
+  border-color: var(--ink);
+  outline: none;
+}
+
+.modeled-context .modeled-context__ratios button.is-selected {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.modeled-context__ratios button > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
+.modeled-context__ratios strong { font-size: 10px; font-weight: 570; }
+.modeled-context__ratios small { color: var(--muted); font-size: 8px; }
+.modeled-context__ratios button.is-selected small { color: rgba(248, 245, 239, .7); }
+
+.modeled-context__ratio-frame {
+  justify-self: center;
+  display: block;
+  border: 1px solid currentColor;
+  background: linear-gradient(155deg, rgba(255, 255, 255, .62), rgba(219, 210, 196, .55));
+}
+
+.modeled-context__ratio-frame.is-square { width: 32px; height: 32px; }
+.modeled-context__ratio-frame.is-portrait { width: 23px; height: 41px; }
+.modeled-context__ratio-frame.is-landscape { width: 41px; height: 23px; }
+
 .modeled-context__version-list {
   display: flex;
   gap: 8px;
@@ -289,6 +340,8 @@
   .modeled-context__scene-grid { grid-template-columns: 1fr; }
   .modeled-context__model-grid > .is-wide { grid-column: auto; }
   .modeled-context__choices.is-visual { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .modeled-context__ratios > div { grid-template-columns: 1fr; }
+  .modeled-context .modeled-context__ratios button { min-height: 62px; }
 }
 
 @media (max-width: 520px) {
