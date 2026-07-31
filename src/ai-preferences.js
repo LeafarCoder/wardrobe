@@ -1,3 +1,5 @@
+import { RECOMMENDED_VIDEO_MODEL, VIDEO_GENERATION_MODELS } from "./video-generation.js";
+
 export const AI_TASKS = [
   {
     id: "analysisModel",
@@ -60,6 +62,19 @@ export const AI_TASKS = [
     ],
   },
   {
+    id: "videoModel",
+    operation: "modeled-video",
+    label: "Modeled look video",
+    description: "Animates a saved modeled look into a short identity- and outfit-preserving video clip.",
+    options: VIDEO_GENERATION_MODELS.map((model) => ({
+      id: model.id,
+      label: model.label,
+      badge: model.id === RECOMMENDED_VIDEO_MODEL ? "Recommended" : model.badge,
+      pricing: model.pricing,
+      note: model.note,
+    })),
+  },
+  {
     id: "plannerModel",
     fallbackId: "plannerFallbackModel",
     operation: "planner",
@@ -109,6 +124,10 @@ export function aiModelLabel(model) {
     .find((option) => option.id === normalized)?.label || normalized;
 }
 
+export function recommendedAiOption(task) {
+  return task?.options?.find((option) => option.badge === "Recommended") || task?.options?.[0] || null;
+}
+
 export function operationGroup(operation) {
   const normalized = String(operation || "other");
   if (normalized === "modeled-outfit" || normalized.startsWith("outfit-")) return "outfit";
@@ -130,6 +149,7 @@ export const AI_OPERATION_LABELS = {
   analysis: "Photo analysis",
   garment: "Clean garments",
   modeled: "Modeled looks",
+  "modeled-video": "Modeled look videos",
   outfit: "Outfit Studio",
   planner: "Trip and event plans",
   other: "Other AI",
@@ -138,6 +158,7 @@ export const AI_OPERATION_LABELS = {
 export const AI_ACTIVITY_LABELS = {
   import: "Imported photo",
   modeled: "Modeled look",
+  "modeled-video": "Modeled look video",
   outfit: "Outfit Studio look",
   planner: "Trip and event plan",
   other: "Other AI activity",

@@ -16,6 +16,7 @@ const contentTypes = new Map([
   [".js", "text/javascript; charset=utf-8"],
   [".json", "application/json; charset=utf-8"],
   [".map", "application/json; charset=utf-8"],
+  [".mp4", "video/mp4"],
   [".png", "image/png"],
   [".svg", "image/svg+xml; charset=utf-8"],
   [".webmanifest", "application/manifest+json; charset=utf-8"],
@@ -106,4 +107,3 @@ const port = Number.parseInt(process.env.PORT || "3000", 10);
 server.listen(port, "0.0.0.0", () => {
   console.info(`[wardrobe] Listening on http://0.0.0.0:${port}`);
 });
-

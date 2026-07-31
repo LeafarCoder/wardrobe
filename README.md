@@ -52,6 +52,7 @@ If you are setting up Wardrobe for a user, ask how they want to import their clo
 - Detects every garment in a photo with structured multimodal analysis
 - Extracts clean product cutouts with reference-image editing
 - Generates and saves multiple modeled editorial looks only when requested from an item's detail panel
+- Animates any saved modeled look into a persistent 4–10 second vertical clip, with movement, frame anchoring, resolution, optional synchronized sound, and a live price estimate
 - Supports multiple local users with separate clothes, references, active imports, sizing, style, and preferences
 - Searches names, brands, and tags with color, size, fit, material, and season facets
 - Saves reusable filter, sorting, and grid-density combinations per profile
@@ -76,7 +77,7 @@ Use the wardrobe switcher in the top-right corner to add a person, edit the curr
 - a preferred currency shared by every garment price
 - preferred materials and favorite colors for styling context
 - a saved interface and AI-response language: US English or European Portuguese
-- separate preferred AI models for analysis, garment reconstruction, one-reference and multi-reference modeled looks, and trip planning
+- separate preferred AI models for analysis, garment reconstruction, one-reference and multi-reference modeled looks, modeled-look video, and trip planning
 - a private per-person AI cost summary recorded from provider responses
 - saved wardrobe views and weather-aware trip/event plans
 - its own visible clothes and in-progress imports
@@ -98,6 +99,7 @@ The checked-in `.env.example` uses a low-cost OpenRouter mix:
 | Clean garment reconstruction | `black-forest-labs/flux.2-klein-4b` |
 | Modeled editorial image, one identity reference | `google/gemini-3.1-flash-lite-image` |
 | Modeled editorial image, two or three identity references | `google/gemini-3.1-flash-image` |
+| Modeled-look video | `bytedance/seedance-1-5-pro` |
 
 Add your key and start the app:
 
@@ -123,7 +125,7 @@ custom domain to be the canonical identifier, and optionally change
 | Private | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-image` |
 | Highest fidelity | `google/gemini-3.1-flash-image` | `google/gemini-3.1-flash-image` | `google/gemini-3-pro-image` |
 
-The garment and modeled stages can use different image models because a clean single-product reconstruction is simpler than preserving both a person's identity and a garment in one scene. Wardrobe also selects the modeled-look model by profile: one identity reference uses `OPENROUTER_MODELED_MODEL`, while two or three references use `OPENROUTER_MODELED_MULTI_REFERENCE_MODEL`. The values below remain the server defaults; each person can override the five AI tasks from **Edit profile → AI & costs**.
+The garment and modeled stages can use different image models because a clean single-product reconstruction is simpler than preserving both a person's identity and a garment in one scene. Wardrobe also selects the modeled-look model by profile: one identity reference uses `OPENROUTER_MODELED_MODEL`, while two or three references use `OPENROUTER_MODELED_MULTI_REFERENCE_MODEL`. Video uses `OPENROUTER_VIDEO_MODEL`; the default Seedance 1.5 Pro route is the lowest-cost listed model that supports all four UI durations, 480p–1080p, optional audio, and first- or last-frame control. The values below remain the server defaults; each person can override the six AI tasks from **Edit profile → AI & costs**.
 
 The profile selector lists only models compatible with each task: multimodal text-output models for photo analysis, text models for planning, and image-output models for garment reconstruction and modeled looks. Each task has a preferred model and an optional, distinct backup model. Each choice shows the current OpenRouter list price recorded when this release was built. OpenRouter may change prices later, and the exact returned request cost remains authoritative. The retired invalid ID `google/gemini-3.1-flash` is automatically migrated to `google/gemini-3.6-flash` in saved profiles and server environment values.
 
@@ -147,6 +149,7 @@ The planner asks OpenRouter for a JSON object and validates the returned structu
 | `OPENROUTER_GARMENT_MODEL` | `bytedance-seed/seedream-4.5` in `.env.example` |
 | `OPENROUTER_MODELED_MODEL` | `google/gemini-3.1-flash-lite-image` |
 | `OPENROUTER_MODELED_MULTI_REFERENCE_MODEL` | `google/gemini-3.1-flash-image` |
+| `OPENROUTER_VIDEO_MODEL` | `bytedance/seedance-1-5-pro` |
 | `OPENROUTER_IMAGE_FALLBACK_MODELS` | `bytedance-seed/seedream-4.5` |
 | `OPENROUTER_ALLOW_NON_ZDR_GARMENT` | `false` in `.env.example` |
 | `OPENROUTER_GARMENT_PROVIDER` | Automatic |
@@ -180,7 +183,7 @@ Existing OpenAI configuration remains supported:
 
 ### Local-first boundary
 
-Your database, user profiles, import jobs, originals, and generated assets stay in the local `data/` directory. AI processing is not fully local: the imported photo and garment crop are sent to OpenRouter or OpenAI. The current user's reference photos are sent only when that user explicitly requests a modeled look. Requesting a trip/event plan sends the destination, dates, trip notes, relevant profile preferences, and clothing metadata—but no wardrobe or reference images—to the configured provider. API keys stay on the local Vite server and are never exposed to the browser bundle.
+Your database, user profiles, import jobs, originals, and generated assets stay in the local `data/` directory. AI processing is not fully local: the imported photo and garment crop are sent to OpenRouter or OpenAI. The current user's reference photos are sent only when that user explicitly requests a modeled look. A video request sends the selected modeled image plus its movement and sound direction to OpenRouter, then temporarily polls the provider until the clip can be downloaded into Wardrobe storage. OpenRouter video generation is asynchronous and is not eligible for Zero Data Retention. Requesting a trip/event plan sends the destination, dates, trip notes, relevant profile preferences, and clothing metadata—but no wardrobe or reference images—to the configured provider. API keys stay on the local server and are never exposed to the browser bundle.
 
 Wardrobe keeps every original garment and modeled image intact and automatically creates lightweight WebP derivatives beside it: 320-pixel garment thumbnails for the gallery, 1040-pixel previews for the item panel, and 192-pixel profile avatars. Existing libraries and profile references are backfilled once at startup, while new garments, modeled looks, and avatars are optimized as they are saved. Only the derivatives receive long-lived private browser caching; originals remain uncached and are still included in personal-data exports.
 
@@ -216,7 +219,7 @@ Each profile also stores its wardrobe showcase preference. Use the top **Garment
 
 The trip/event planner uses the configured planner model as a low-cost structured text model. It combines the destination, dates, plans, profile preferences, sizing, and wardrobe metadata; it does not upload clothing or reference images. Weather guidance is based on expected seasonal climate rather than a live forecast, and every plan says to check a current forecast near departure. Generated plans and missing-item suggestions are saved with the current profile and included in exports.
 
-OpenRouter includes exact cost and token usage in each non-streaming response. Wardrobe records those values in `data/ai-usage.json`, attributed to the active person, task, and model. The **AI & costs** profile tab summarizes them without exposing the API key or calling an account-wide billing endpoint. Tracking starts after this feature is installed, so older calls are not reconstructed; failed calls and direct-provider responses without a reported price are counted as unpriced requests.
+OpenRouter includes exact cost and token usage in generation responses. Wardrobe records those values—including the final cost returned when a video job completes—in `data/ai-usage.json`, attributed to the active person, task, and model. The **AI & costs** profile tab summarizes them without exposing the API key or calling an account-wide billing endpoint. Tracking starts after this feature is installed, so older calls are not reconstructed; failed calls and direct-provider responses without a reported price are counted as unpriced requests.
 
 Color previews are browser-only canvas transformations. They preserve the cutout's lightness, shadows, texture, and transparency while changing pixels that match the selected primary or secondary color. They do not call an AI provider, create another stored image, or modify the garment's saved color metadata.
 
@@ -227,7 +230,7 @@ The Adidas, Nike, Zara, H&M, and Uniqlo vector paths are bundled from the CC0-li
 Open the wardrobe switcher and choose **Download all data**. Wardrobe finishes and integrity-checks the backup before the download starts. It uses a Finder/File Explorer-friendly `.zip` on macOS and Windows, and `.tar.gz` on Linux. Both formats contain:
 
 - every user profile and its 1–3 reference photos
-- all clothing metadata, cutouts, original uploads, and modeled images
+- all clothing metadata, cutouts, original uploads, modeled images, and generated modeled-look videos
 - unfinished import jobs, including their review state
 - the local per-person AI usage and cost ledger
 

@@ -13,6 +13,7 @@ import { CARE_TRANSLATION_KEYS } from "../src/garment-care.js";
 import { GARMENT_CLARIFICATION_TRANSLATION_KEYS } from "../src/garment-clarifications.js";
 import { OUTFIT_TRANSLATION_KEYS } from "../src/outfit-studio.js";
 import { MODELED_LOOK_CONTEXT_TRANSLATION_KEYS } from "../src/modeled-look-context.js";
+import { VIDEO_GENERATION_TRANSLATION_KEYS } from "../src/video-generation.js";
 import {
   FIT_OPTIONS,
   SIZE_FIELDS,
@@ -46,6 +47,7 @@ test("every literal interface translation key has a Portuguese translation", asy
     new URL("../src/MonthYearPicker.jsx", import.meta.url),
     new URL("../src/OutfitStudio.jsx", import.meta.url),
     new URL("../src/ModeledLookDialog.jsx", import.meta.url),
+    new URL("../src/ModeledVideoDialog.jsx", import.meta.url),
     new URL("../src/TutorialWalkthrough.jsx", import.meta.url),
   ];
   const keys = new Set();
@@ -74,6 +76,7 @@ test("every translated metadata option has a Portuguese label", () => {
     ...GARMENT_CLARIFICATION_TRANSLATION_KEYS,
     ...OUTFIT_TRANSLATION_KEYS,
     ...MODELED_LOOK_CONTEXT_TRANSLATION_KEYS,
+    ...VIDEO_GENERATION_TRANSLATION_KEYS,
     ...AI_TASKS.flatMap((task) => [
       task.label,
       task.description,

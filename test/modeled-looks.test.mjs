@@ -21,6 +21,7 @@ test("migrates a legacy modeled image into a look collection", () => {
     image: "/api/import/library/item-modeled.png",
     model: "google/example",
     fallbackUsed: true,
+    videoClips: [],
     generatedAt: "2026-07-24T10:00:00.000Z",
   }]);
 });
@@ -118,6 +119,13 @@ test("collects originals and optimized derivatives for authorization and deletio
       id: "one",
       image: "/modeled.png",
       preview: "/modeled-preview.webp",
+      videoClips: [{
+        id: "clip-one",
+        status: "completed",
+        model: "bytedance/seedance-1-5-pro",
+        settings: { duration: 4, resolution: "480p" },
+        video: "/modeled-video.mp4",
+      }],
     }],
   });
 
@@ -129,6 +137,7 @@ test("collects originals and optimized derivatives for authorization and deletio
     "/original-preview.webp",
     "/modeled.png",
     "/modeled-preview.webp",
+    "/modeled-video.mp4",
   ]);
 });
 

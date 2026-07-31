@@ -3384,6 +3384,30 @@ button { font: inherit; }
 .media-preview-dialog__vault:hover, .media-preview-dialog__vault:focus-visible { border-color: var(--ink); outline: none; }
 .media-preview-dialog__vault:disabled { opacity: .55; cursor: default; }
 
+.media-preview-dialog__video {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 9;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(255, 255, 255, .24);
+  border-radius: 9px;
+  padding: 8px 11px;
+  background: rgba(38, 31, 27, .88);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .2);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  backdrop-filter: blur(7px);
+}
+.media-preview-dialog__video:hover,
+.media-preview-dialog__video:focus-visible { background: rgba(38, 31, 27, .98); outline: 1px solid rgba(255,255,255,.7); }
+.media-preview-dialog__video strong { min-width: 17px; height: 17px; display: grid; place-items: center; border-radius: 999px; background: rgba(255,255,255,.18); font-size: 8px; }
+
 .media-preview-dialog__version-delete {
   border-color: rgba(143, 51, 45, .34);
   color: #8f332d;

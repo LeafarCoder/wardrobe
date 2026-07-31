@@ -90,6 +90,13 @@ import {
   normalizeGeneratedPhotoProvenance,
 } from "../src/generated-photo-library.js";
 import {
+  modeledVideoPrompt,
+  normalizeModeledVideoClip,
+  normalizeModeledVideoSettings,
+  RECOMMENDED_VIDEO_MODEL,
+  videoModel,
+} from "../src/video-generation.js";
+import {
   isCompleteGarmentMediaOrder,
   normalizeGarmentMediaOrder,
 } from "../src/garment-media.js";
@@ -225,6 +232,7 @@ export function providerWithProfilePreferences(provider = {}, profile = {}, paye
     modeledFallbackModels: fallbackModels("modeledFallbackModel", provider.modeledFallbackModels || provider.imageFallbackModels || []),
     modeledMultiReferenceModel: preferences.modeledMultiReferenceModel || provider.modeledMultiReferenceModel,
     modeledMultiReferenceFallbackModels: fallbackModels("modeledMultiReferenceFallbackModel", provider.modeledMultiReferenceFallbackModels || provider.imageFallbackModels || []),
+    videoModel: preferences.videoModel || provider.videoModel,
     plannerModel: preferences.plannerModel || provider.plannerModel || provider.visionModel,
     plannerFallbackModels: fallbackModels("plannerFallbackModel", provider.plannerFallbackModels || []),
   };
@@ -1208,6 +1216,9 @@ export function modeledLooksForRecord(record = {}) {
         ? { context: normalizeModeledLookContext(look.context) }
         : {}),
       ...(provenance ? { provenance } : {}),
+      videoClips: (Array.isArray(look.videoClips) ? look.videoClips : [])
+        .map(normalizeModeledVideoClip)
+        .filter(Boolean),
       ...(vaultedAt(look.vaultedAt) ? { vaultedAt: vaultedAt(look.vaultedAt) } : {}),
       generatedAt: typeof look.generatedAt === "string" && look.generatedAt ? look.generatedAt : null,
     }];
@@ -1727,6 +1738,10 @@ function publicImportedRecord(record, userId, { includeVault = false } = {}) {
       ...look,
       image: storedAssetUrl(record, look.image, userId),
       preview: storedAssetUrl(record, look.preview, userId),
+      videoClips: look.videoClips.map((clip) => ({
+        ...clip,
+        video: storedAssetUrl(record, clip.video, userId),
+      })),
     })),
     originalImage: storedAssetUrl(record, record.originalImage, userId),
     originalPreview: storedAssetUrl(record, record.originalPreview, userId),
@@ -1755,7 +1770,11 @@ export function importedRecordAssets(record = {}) {
     ...garmentColorVariants(record).flatMap((variant) => [variant.image, variant.preview, variant.thumbnail]),
     ...sourcePhotosForRecord(record).flatMap((photo) => [photo.image, photo.preview]),
     record.modeledImage,
-    ...modeledLooksForRecord(record).flatMap((look) => [look.image, look.preview]),
+    ...modeledLooksForRecord(record).flatMap((look) => [
+      look.image,
+      look.preview,
+      ...look.videoClips.map((clip) => clip.video),
+    ]),
     regenerationCandidate?.image,
     regenerationCandidate?.preview,
     regenerationCandidate?.thumbnail,
@@ -1837,6 +1856,7 @@ function imageMime(fileName) {
     ".jpeg": "image/jpeg",
     ".png": "image/png",
     ".webp": "image/webp",
+    ".mp4": "video/mp4",
   })[path.extname(fileName).toLowerCase()] || "application/octet-stream";
 }
 
@@ -4869,6 +4889,7 @@ export function wardrobeImportApi(options = {}) {
         garmentModel: migrateAiModelId(setting("OPENROUTER_GARMENT_MODEL", imageModel || "bytedance-seed/seedream-4.5")),
         modeledModel: migrateAiModelId(setting("OPENROUTER_MODELED_MODEL", imageModel || "google/gemini-3.1-flash-image")),
         modeledMultiReferenceModel: migrateAiModelId(setting("OPENROUTER_MODELED_MULTI_REFERENCE_MODEL", "google/gemini-3.1-flash-image")),
+        videoModel: setting("OPENROUTER_VIDEO_MODEL", RECOMMENDED_VIDEO_MODEL),
         imageFallbackModels: parseModelList(setting("OPENROUTER_IMAGE_FALLBACK_MODELS", "bytedance-seed/seedream-4.5")),
         imageQuality: setting("OPENROUTER_IMAGE_QUALITY", "auto"),
         imageResolution: setting("OPENROUTER_IMAGE_RESOLUTION", "1K"),
@@ -4896,6 +4917,7 @@ export function wardrobeImportApi(options = {}) {
       garmentModel: setting("OPENAI_GARMENT_MODEL", imageModel),
       modeledModel: setting("OPENAI_MODELED_MODEL", imageModel),
       modeledMultiReferenceModel: setting("OPENAI_MODELED_MULTI_REFERENCE_MODEL", setting("OPENAI_MODELED_MODEL", imageModel)),
+      videoModel: "",
       imageFallbackModels: [],
       imageQuality: setting("OPENAI_IMAGE_QUALITY", "high"),
       imageProvider: "",
@@ -6593,6 +6615,237 @@ Interpret this correction semantically in whatever language it is written. It ov
     return task;
   }
 
+  async function submitModeledLookVideo(itemId, lookId, user, input = {}, payerProfile = null) {
+    const records = await loadImported();
+    const record = records.find((candidate) => candidate.id === itemId && candidate.userId === user.id);
+    if (!record) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+    const look = modeledLooksForRecord(record).find((candidate) => candidate.id === lookId);
+    if (!look) throw apiError("Modeled look not found.", 404, "modeled_look_not_found");
+
+    const store = await loadUsersStore();
+    const profile = store?.users.find((candidate) => candidate.id === user.id);
+    if (!profile) throw apiError("The wardrobe profile for this item no longer exists.", 404, "user_not_found");
+    const provider = providerWithProfilePreferences(aiProvider(payerProfile?.id || user.id), profile, payerProfile);
+    if (provider.id !== "openrouter") {
+      throw apiError("Modeled look video generation currently requires OpenRouter.", 400, "video_provider_unsupported");
+    }
+    if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
+    if (!provider.key) {
+      throw apiError(
+        "No OpenRouter key is available. Add your own key under AI & costs in your profile.",
+        503,
+        "openrouter_key_missing",
+      );
+    }
+
+    const settings = normalizeModeledVideoSettings(input, provider.videoModel);
+    const selectedModel = videoModel(settings.model);
+    if (!selectedModel.durations.includes(Number(input.duration))) {
+      throw apiError(`${selectedModel.label} does not support a ${input.duration}-second clip.`, 400, "video_duration_unsupported");
+    }
+    if (!selectedModel.resolutions.includes(input.resolution)) {
+      throw apiError(`${selectedModel.label} does not support ${input.resolution}.`, 400, "video_resolution_unsupported");
+    }
+    if (!selectedModel.frames.includes(input.frameType)) {
+      throw apiError(`${selectedModel.label} cannot use the modeled look as the selected frame.`, 400, "video_frame_unsupported");
+    }
+
+    const imageName = path.basename(new URL(look.image, "http://localhost").pathname);
+    const imageBytes = await readFile(path.join(libraryAssetDir, imageName));
+    const prompt = modeledVideoPrompt(settings);
+    const requestPayload = {
+      model: settings.model,
+      prompt,
+      duration: settings.duration,
+      resolution: settings.resolution,
+      aspect_ratio: "9:16",
+      generate_audio: settings.audio,
+      frame_images: [{
+        type: "image_url",
+        image_url: { url: `data:image/png;base64,${imageBytes.toString("base64")}` },
+        frame_type: settings.frameType,
+      }],
+    };
+    const startedAt = Date.now();
+    let response;
+    try {
+      response = await fetchRequest(`${provider.baseUrl}/videos`, {
+        method: "POST",
+        headers: openRouterHeaders(provider),
+        body: JSON.stringify(requestPayload),
+      });
+    } catch (error) {
+      throw providerNetworkError(error, provider);
+    }
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.id) {
+      const message = upstreamProviderErrorMessage(result)
+        || result.error?.message
+        || "OpenRouter could not start this video generation.";
+      throw apiError(message, response.status || 502, "video_submit_failed");
+    }
+
+    const clipId = randomUUID();
+    const createdAt = new Date().toISOString();
+    const savedRecord = await withLibrary(async () => {
+      const latest = await loadImported();
+      const recordIndex = latest.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
+      if (recordIndex < 0) throw apiError("The wardrobe item was deleted while its video was being submitted.", 409, "wardrobe_item_deleted");
+      const looks = modeledLooksForRecord(latest[recordIndex]);
+      const lookIndex = looks.findIndex((candidate) => candidate.id === lookId);
+      if (lookIndex < 0) throw apiError("The modeled look was deleted while its video was being submitted.", 409, "modeled_look_deleted");
+      looks[lookIndex] = {
+        ...looks[lookIndex],
+        videoClips: [...looks[lookIndex].videoClips, {
+          id: clipId,
+          status: ["in_progress", "completed"].includes(result.status) ? result.status : "pending",
+          model: settings.model,
+          settings,
+          prompt,
+          upstreamJobId: result.id,
+          video: null,
+          cost: null,
+          error: null,
+          createdAt,
+          completedAt: null,
+        }],
+      };
+      latest[recordIndex] = {
+        ...recordWithModeledLooks(latest[recordIndex], looks),
+        updatedAt: createdAt,
+      };
+      await saveImported(latest);
+      return latest[recordIndex];
+    });
+    console.info(`[wardrobe:ai] modeled-video submitted | provider=OpenRouter | model=${settings.model} | garment=${itemId} | look=${lookId} | request=${result.id} | duration=${Date.now() - startedAt}ms`);
+    return { record: savedRecord, clipId };
+  }
+
+  async function pollModeledLookVideo(itemId, lookId, clipId, user, payerProfile = null) {
+    const lock = `library:${itemId}:modeled:${lookId}:video:${clipId}`;
+    if (running.has(lock)) return running.get(lock);
+    const task = (async () => {
+      const records = await loadImported();
+      const record = records.find((candidate) => candidate.id === itemId && candidate.userId === user.id);
+      if (!record) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+      const look = modeledLooksForRecord(record).find((candidate) => candidate.id === lookId);
+      if (!look) throw apiError("Modeled look not found.", 404, "modeled_look_not_found");
+      const clip = look.videoClips.find((candidate) => candidate.id === clipId);
+      if (!clip) throw apiError("Modeled look video not found.", 404, "modeled_video_not_found");
+      if (["completed", "failed"].includes(clip.status)) return { record, clipId };
+
+      const store = await loadUsersStore();
+      const profile = store?.users.find((candidate) => candidate.id === user.id);
+      if (!profile) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+      const provider = providerWithProfilePreferences(aiProvider(payerProfile?.id || user.id), profile, payerProfile);
+      if (provider.id !== "openrouter" || !provider.key) {
+        throw apiError("The OpenRouter key used for this video is no longer available.", 503, "openrouter_key_missing");
+      }
+
+      let response;
+      try {
+        response = await fetchRequest(`${provider.baseUrl}/videos/${encodeURIComponent(clip.upstreamJobId)}`, {
+          headers: openRouterHeaders(provider),
+        });
+      } catch (error) {
+        throw providerNetworkError(error, provider);
+      }
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw apiError(
+          upstreamProviderErrorMessage(result) || result.error?.message || "OpenRouter could not check this video.",
+          response.status || 502,
+          "video_poll_failed",
+        );
+      }
+      const status = result.status === "completed"
+        ? "completed"
+        : result.status === "failed" || ["cancelled", "expired"].includes(result.status)
+          ? "failed"
+          : result.status === "in_progress" ? "in_progress" : "pending";
+      let videoUrl = null;
+      let videoName = null;
+      if (status === "completed") {
+        const contentUrl = result.unsigned_urls?.[0]
+          || `${provider.baseUrl}/videos/${encodeURIComponent(clip.upstreamJobId)}/content?index=0`;
+        const contentResponse = await fetchRequest(contentUrl, {
+          headers: contentUrl.startsWith(provider.baseUrl) ? openRouterHeaders(provider) : undefined,
+        });
+        if (!contentResponse.ok) {
+          throw apiError("The generated video was ready but could not be downloaded.", 502, "video_download_failed");
+        }
+        const contentLength = Number(contentResponse.headers.get("content-length"));
+        if (Number.isFinite(contentLength) && contentLength > 250 * 1024 * 1024) {
+          throw apiError("The generated video is too large to save.", 413, "video_too_large");
+        }
+        const bytes = Buffer.from(await contentResponse.arrayBuffer());
+        if (!bytes.length || bytes.length > 250 * 1024 * 1024) {
+          throw apiError("The generated video is empty or too large to save.", 502, "video_invalid_content");
+        }
+        videoName = `${itemId}-modeled-${lookId}-video-${clipId}.mp4`;
+        await atomicFile(path.join(libraryAssetDir, videoName), bytes);
+        videoUrl = libraryAssetUrl(videoName);
+      }
+
+      const completedAt = ["completed", "failed"].includes(status) ? new Date().toISOString() : null;
+      const cost = Number(result.usage?.cost);
+      let savedRecord;
+      try {
+        savedRecord = await withLibrary(async () => {
+          const latest = await loadImported();
+          const recordIndex = latest.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
+          if (recordIndex < 0) throw apiError("The wardrobe item was deleted while its video was being generated.", 409, "wardrobe_item_deleted");
+          const looks = modeledLooksForRecord(latest[recordIndex]);
+          const lookIndex = looks.findIndex((candidate) => candidate.id === lookId);
+          if (lookIndex < 0) throw apiError("The modeled look was deleted while its video was being generated.", 409, "modeled_look_deleted");
+          const clipIndex = looks[lookIndex].videoClips.findIndex((candidate) => candidate.id === clipId);
+          if (clipIndex < 0) throw apiError("Modeled look video not found.", 404, "modeled_video_not_found");
+          looks[lookIndex].videoClips[clipIndex] = normalizeModeledVideoClip({
+            ...looks[lookIndex].videoClips[clipIndex],
+            status,
+            ...(videoUrl ? { video: videoUrl } : {}),
+            cost: Number.isFinite(cost) ? cost : null,
+            error: status === "failed"
+              ? String(result.error?.message || result.error || `Video generation ${result.status || "failed"}.`)
+              : null,
+            completedAt,
+          });
+          latest[recordIndex] = {
+            ...recordWithModeledLooks(latest[recordIndex], looks),
+            updatedAt: completedAt || latest[recordIndex].updatedAt,
+          };
+          await saveImported(latest);
+          return latest[recordIndex];
+        });
+      } catch (error) {
+        if (videoName) await rm(path.join(libraryAssetDir, videoName), { force: true }).catch(() => {});
+        throw error;
+      }
+
+      if (["completed", "failed"].includes(status)) {
+        void provider.recordUsage?.({
+          userId: provider.wardrobeUserId || provider.userId,
+          billingUserId: provider.userId,
+          wardrobeUserId: provider.wardrobeUserId || provider.userId,
+          provider: provider.id,
+          model: clip.model,
+          operation: "modeled-video",
+          operationGroup: operationGroup("modeled-video"),
+          status: response.status,
+          completed: status === "completed",
+          cost: Number.isFinite(cost) ? cost : null,
+          requestId: clip.upstreamJobId,
+          garmentId: itemId,
+          itemName: record.name,
+          createdAt: completedAt,
+        });
+      }
+      return { record: savedRecord, clipId };
+    })().finally(() => running.delete(lock));
+    running.set(lock, task);
+    return task;
+  }
+
   async function generatePlannedOutfitLook(planId, outfitIndex, user, payerProfile = null, context = {}) {
     const normalizedOutfitIndex = Number(outfitIndex);
     if (!Number.isInteger(normalizedOutfitIndex) || normalizedOutfitIndex < 0 || normalizedOutfitIndex > 11) {
@@ -7061,7 +7314,11 @@ Interpret this correction semantically in whatever language it is written. It ov
     };
     await saveImported(records);
     try {
-      const assets = [removed.preview, removed.image]
+      const assets = [
+        removed.preview,
+        removed.image,
+        ...removed.videoClips.map((clip) => clip.video),
+      ]
         .filter(Boolean)
         .map((asset) => path.basename(new URL(asset, "http://localhost").pathname));
       await Promise.all(assets.map((fileName) => rm(path.join(libraryAssetDir, fileName), { force: true })));
@@ -9138,6 +9395,34 @@ Interpret this correction semantically in whatever language it is written. It ov
           return records[index];
         });
         return json(res, 201, publicImportedRecord(saved, user.id));
+      }
+      const modeledVideoMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/modeled\/([a-z0-9-]{1,80})\/videos(?:\/([a-z0-9-]{1,80}))?$/i);
+      if (modeledVideoMatch && req.method === "POST" && !modeledVideoMatch[3]) {
+        const input = await body(req, 16 * 1024);
+        const result = await submitModeledLookVideo(
+          modeledVideoMatch[1],
+          modeledVideoMatch[2],
+          user,
+          input,
+          payerProfile,
+        );
+        return json(res, 202, {
+          item: publicImportedRecord(result.record, user.id),
+          clipId: result.clipId,
+        });
+      }
+      if (modeledVideoMatch?.[3] && req.method === "GET") {
+        const result = await pollModeledLookVideo(
+          modeledVideoMatch[1],
+          modeledVideoMatch[2],
+          modeledVideoMatch[3],
+          user,
+          payerProfile,
+        );
+        return json(res, 200, {
+          item: publicImportedRecord(result.record, user.id),
+          clipId: result.clipId,
+        });
       }
       const modeledLookMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/modeled\/([a-z0-9-]{1,80})$/i);
       if (modeledLookMatch && req.method === "PATCH") {

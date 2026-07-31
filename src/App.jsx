@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, CrosshairSimple, DownloadSimple, Dress, Eye, EyeSlash, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, Link, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, CrosshairSimple, DownloadSimple, Dress, Eye, EyeSlash, FilmStrip, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, Link, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { BrandIcon } from "./BrandIcon.jsx";
 import { CareIcon } from "./CareIcon.jsx";
@@ -19,6 +19,7 @@ import { formatDate, getLocale, LANGUAGE_OPTIONS, setLocale, tr, useLocale } fro
 import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
 import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
 import { ModeledLookDialog } from "./ModeledLookDialog.jsx";
+import { ModeledVideoDialog } from "./ModeledVideoDialog.jsx";
 import { modeledLookContextDetails } from "./modeled-look-context.js";
 import { imageFallbackToast, withoutFallbackNotice } from "./image-fallback-notice.js";
 import { OptimizedImage } from "./OptimizedImage.jsx";
@@ -32,7 +33,7 @@ import {
   OPENROUTER_KEY_REQUIRED_EVENT,
 } from "./openrouter-key.js";
 import { ProductStage } from "./ProductStage.jsx";
-import { aiModelLabel, AI_TASKS, formatAiCost, normalizeAiPreferences } from "./ai-preferences.js";
+import { aiModelLabel, AI_TASKS, formatAiCost, normalizeAiPreferences, recommendedAiOption } from "./ai-preferences.js";
 import { garmentVariationColors, normalizeHexColor } from "./garment-recolor.js";
 import {
   CARE_GROUPS,
@@ -1609,6 +1610,9 @@ function ItemViewer({
   onSave,
   onDelete,
   onGenerateModeled,
+  onGenerateModeledVideo,
+  onPollModeledVideo,
+  preferredVideoModel,
   onRegenerateGarment,
   onCenterGarmentRegeneration,
   onAcceptGarmentRegeneration,
@@ -1660,6 +1664,7 @@ function ItemViewer({
   const [sourcePhotoOpen, setSourcePhotoOpen] = useState(false);
   const [mediaPreviewOpen, setMediaPreviewOpen] = useState(null);
   const [modeledSettingsOpen, setModeledSettingsOpen] = useState(false);
+  const [modeledVideoOpen, setModeledVideoOpen] = useState(false);
   const [garmentRegenerationOpen, setGarmentRegenerationOpen] = useState(false);
   const [garmentRegenerationBusy, setGarmentRegenerationBusy] = useState(false);
   const [garmentRegenerationError, setGarmentRegenerationError] = useState("");
@@ -1890,6 +1895,8 @@ function ItemViewer({
             setDeleteCandidate(null);
             requestAnimationFrame(() => deleteLookButtonRef.current?.focus({ preventScroll: true }));
           }
+        } else if (modeledVideoOpen) {
+          setModeledVideoOpen(false);
         } else if (garmentRegenerationOpen) {
           setGarmentRegenerationOpen(false);
         } else if (modeledSettingsOpen) {
@@ -1914,7 +1921,7 @@ function ItemViewer({
       document.removeEventListener("keydown", onKeyDown);
       clearTimeout(shakeTimerRef.current);
     };
-  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deleteVersionCandidate, deletingGarment, deletingModeled, deletingSourcePhoto, deletingVersion, garmentDeleteOpen, garmentRegenerationOpen, generatingModeled, mediaPreviewOpen, modeledSettingsOpen, modeledVariantPickerOpen, requestClose, sampling, sourceDeleteCandidate, sourcePhotoOpen, variantStudioOpen]);
+  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deleteVersionCandidate, deletingGarment, deletingModeled, deletingSourcePhoto, deletingVersion, garmentDeleteOpen, garmentRegenerationOpen, generatingModeled, mediaPreviewOpen, modeledSettingsOpen, modeledVariantPickerOpen, modeledVideoOpen, requestClose, sampling, sourceDeleteCandidate, sourcePhotoOpen, variantStudioOpen]);
 
   useEffect(() => {
     if (deleteCandidate) deleteCancelButtonRef.current?.focus({ preventScroll: true });
@@ -1945,7 +1952,7 @@ function ItemViewer({
   }, [colorEditorOpen]);
 
   useEffect(() => {
-    if (!sourcePhotoOpen && !colorEditorOpen && !careGuideOpen && !mediaPreviewOpen && !variantStudioOpen && !modeledVariantPickerOpen) return undefined;
+    if (!sourcePhotoOpen && !colorEditorOpen && !careGuideOpen && !mediaPreviewOpen && !variantStudioOpen && !modeledVariantPickerOpen && !modeledVideoOpen) return undefined;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -1953,7 +1960,7 @@ function ItemViewer({
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [careGuideOpen, colorEditorOpen, mediaPreviewOpen, modeledVariantPickerOpen, sourcePhotoOpen, variantStudioOpen]);
+  }, [careGuideOpen, colorEditorOpen, mediaPreviewOpen, modeledVariantPickerOpen, modeledVideoOpen, sourcePhotoOpen, variantStudioOpen]);
 
   useEffect(() => {
     if (!isDirty) setCloseBlocked(false);
@@ -1985,6 +1992,7 @@ function ItemViewer({
     setSourcePhotoOpen(false);
     setMediaPreviewOpen(null);
     setModeledSettingsOpen(false);
+    setModeledVideoOpen(false);
     setSourceCropVisible(false);
     setSourceImageFrame(null);
     setColorEditorOpen(false);
@@ -2164,6 +2172,17 @@ function ItemViewer({
       return;
     }
     setModeledVariantPickerOpen(true);
+  };
+
+  const generateModeledVideo = async (settings) => {
+    if (!activeModeledLook) throw new Error(tr("Choose a modeled look first."));
+    const result = await onGenerateModeledVideo(item.id, activeModeledLook.id, settings);
+    return { clipId: result.clipId };
+  };
+
+  const pollModeledVideo = async (clipId) => {
+    if (!activeModeledLook) throw new Error(tr("Choose a modeled look first."));
+    return onPollModeledVideo(item.id, activeModeledLook.id, clipId);
   };
 
   const selectColorVersion = async (index, versions = colorVersions) => {
@@ -3422,6 +3441,19 @@ function ItemViewer({
                 </button>
               )}
               {mediaPreviewOpen === "media" && isActiveMediaGenerated && (
+                <button
+                  className="media-preview-dialog__video"
+                  type="button"
+                  onClick={() => setModeledVideoOpen(true)}
+                  aria-label={tr(activeModeledLook.videoClips?.length ? "Open generated clips and video options" : "Generate a video from this modeled look")}
+                  title={tr(activeModeledLook.videoClips?.length ? "Clips and video options" : "Generate video")}
+                >
+                  <FilmStrip size={17} aria-hidden="true" />
+                  <span>{tr(activeModeledLook.videoClips?.length ? "Clips & video" : "Generate video")}</span>
+                  {activeModeledLook.videoClips?.length > 0 && <strong>{activeModeledLook.videoClips.length}</strong>}
+                </button>
+              )}
+              {mediaPreviewOpen === "media" && isActiveMediaGenerated && (
                 <div className="modeled-image-settings">
                   <button
                     type="button"
@@ -3602,6 +3634,16 @@ function ItemViewer({
           )}
         </section>
       </div>
+    )}
+    {modeledVideoOpen && activeModeledLook && (
+      <ModeledVideoDialog
+        itemName={draft.name || type}
+        look={activeModeledLook}
+        preferredModel={preferredVideoModel}
+        onClose={() => setModeledVideoOpen(false)}
+        onGenerate={generateModeledVideo}
+        onPoll={pollModeledVideo}
+      />
     )}
     {sourcePhotoOpen && hasOriginalImage && (
       <div
@@ -5168,6 +5210,7 @@ function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
       <div className="profile-ai-task-list">
         {AI_TASKS.map((task) => {
           const selectedOption = task.options.find((option) => option.id === preferences[task.id]);
+          const recommendedOption = recommendedAiOption(task);
           return (
             <article className="profile-ai-task" key={task.id}>
               <div>
@@ -5180,10 +5223,12 @@ function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
                   value={preferences[task.id]}
                   onChange={(model) => update(task, task.id, model)}
                   options={[
-                    { value: "", label: tr("Recommended") },
+                    { value: "", label: `${recommendedOption?.label || tr("App default")} (${tr("recommended")})` },
                     ...task.options.map((option) => ({
                       value: option.id,
-                      label: `${option.label} · ${tr(option.badge)}`,
+                      label: option.badge === "Recommended"
+                        ? `${option.label} (${tr("recommended")})`
+                        : `${option.label} · ${tr(option.badge)}`,
                       meta: option.pricing,
                       keywords: `${option.id} ${option.badge} ${option.pricing}`,
                     })),
@@ -5211,10 +5256,14 @@ function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
                 />
               </div>
               <aside className={selectedOption ? "" : "is-default"}>
-                <strong>{tr(selectedOption?.badge || "Recommended")}</strong>
+                <strong>{selectedOption
+                  ? selectedOption.badge === "Recommended"
+                    ? `${selectedOption.label} (${tr("recommended")})`
+                    : tr(selectedOption.badge)
+                  : `${recommendedOption?.label || tr("App default")} (${tr("recommended")})`}</strong>
                 <span>
-                  {selectedOption?.pricing && <small className="profile-ai-selected-price">{selectedOption.pricing}</small>}
-                  {tr(selectedOption?.note || "Uses the app’s current recommended choice for this task.")}
+                  {(selectedOption?.pricing || recommendedOption?.pricing) && <small className="profile-ai-selected-price">{selectedOption?.pricing || recommendedOption?.pricing}</small>}
+                  {tr(selectedOption?.note || recommendedOption?.note || "Uses the app’s current recommended choice for this task.")}
                 </span>
                 {selectedOption?.zeroDataRetention === false && (
                   <InfoTooltip className="profile-zdr-help" label={tr("What zero data retention means")}>
@@ -7707,6 +7756,21 @@ export function App() {
     return record;
   };
 
+  const generateModeledVideo = async (id, lookId, settings) => {
+    const result = await profileApi(`/api/import/wardrobe/${id}/modeled/${encodeURIComponent(lookId)}/videos?user=${encodeURIComponent(currentUserId)}`, {
+      method: "POST",
+      body: JSON.stringify(settings),
+    });
+    updateGarmentCollections(result.item);
+    return result;
+  };
+
+  const pollModeledVideo = async (id, lookId, clipId) => {
+    const result = await profileApi(`/api/import/wardrobe/${id}/modeled/${encodeURIComponent(lookId)}/videos/${encodeURIComponent(clipId)}?user=${encodeURIComponent(currentUserId)}`);
+    updateGarmentCollections(result.item);
+    return result;
+  };
+
   const regenerateGarment = async (id, input) => {
     const updated = await profileApi(`/api/import/wardrobe/${id}/regeneration?user=${encodeURIComponent(currentUserId)}`, {
       method: "POST",
@@ -8223,6 +8287,9 @@ export function App() {
           onSave={saveItem}
           onDelete={deleteItem}
           onGenerateModeled={generateModeledLook}
+          onGenerateModeledVideo={generateModeledVideo}
+          onPollModeledVideo={pollModeledVideo}
+          preferredVideoModel={normalizeAiPreferences(currentUser?.aiPreferences).videoModel}
           onRegenerateGarment={regenerateGarment}
           onCenterGarmentRegeneration={centerGarmentRegeneration}
           onAcceptGarmentRegeneration={acceptGarmentRegeneration}
