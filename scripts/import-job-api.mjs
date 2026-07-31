@@ -3509,6 +3509,13 @@ export function openRouterImageResolution(model, size, configuredResolution, fal
     const index = OPENROUTER_RESOLUTION_TIERS.indexOf(normalized);
     return index < OPENROUTER_RESOLUTION_TIERS.indexOf("4K") ? "4K" : normalized;
   }
+  // OpenRouter's Google routes currently expose Gemini 3 image generation at
+  // 1K and 2K. A shared 4K fallback setting must not make an otherwise valid
+  // multi-reference request unroutable when Wardrobe switches to Gemini.
+  if (/^google\/gemini-3(?:\.1)?-.*-image$/i.test(model)) {
+    const index = OPENROUTER_RESOLUTION_TIERS.indexOf(normalized);
+    return index > OPENROUTER_RESOLUTION_TIERS.indexOf("2K") ? "2K" : normalized;
+  }
   return normalized;
 }
 
