@@ -4423,7 +4423,7 @@ export function wardrobeImportApi(options = {}) {
     child.on("error", (error) => {
       clearTimeout(timer);
       reject(apiError(
-        "Local background removal is not available on this server. Install requirements-rembg.txt and restart Wardrobe.",
+        "Local background removal is not available on this server. Install requirements.txt and restart Wardrobe.",
         503,
         "rembg_unavailable",
         error,
@@ -4434,7 +4434,7 @@ export function wardrobeImportApi(options = {}) {
       if (code === 0) return resolve(model);
       reject(apiError(
         /not installed/i.test(detail)
-          ? "Local background removal is not installed on this server. Install requirements-rembg.txt and restart Wardrobe."
+          ? "Local background removal is not installed on this server. Install requirements.txt and restart Wardrobe."
           : `Local background removal failed${detail.trim() ? `: ${detail.trim().split("\n").at(-1)}` : "."}`,
         503,
         "rembg_unavailable",

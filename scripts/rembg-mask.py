@@ -13,7 +13,7 @@ def main():
         from rembg import new_session, remove
     except ImportError as error:
         raise SystemExit(
-            "rembg is not installed. Install requirements-rembg.txt before starting Wardrobe."
+            "rembg is not installed. Install requirements.txt before starting Wardrobe."
         ) from error
 
     source = Path(args.source).read_bytes()
