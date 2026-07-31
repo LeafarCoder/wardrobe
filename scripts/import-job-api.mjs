@@ -2364,6 +2364,7 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
     const pose = personal?.pose || (!hasModeledContext && people.length === 1 ? presentation.pose : "automatic");
     const details = [
       pose !== "automatic" ? `Pose: ${outfitPosePrompt(pose) || modeledLookOptionPrompt("pose", pose) || pose}` : null,
+      personal?.gesture ? `arm and hand gesture: ${modeledLookOptionPrompt("gesture", personal.gesture)}` : null,
       personal?.hairstyle && personal.hairstyle !== "automatic" ? `hairstyle: ${outfitHairstylePrompt(personal.hairstyle) || modeledLookOptionPrompt("hairstyle", personal.hairstyle)}; preserve their real hair color, hairline, and texture` : null,
       personal?.bodyOrientation ? `body orientation: ${modeledLookOptionPrompt("bodyOrientation", personal.bodyOrientation)}` : null,
       personal?.headOrientation ? `head orientation: ${modeledLookOptionPrompt("headOrientation", personal.headOrientation)}` : null,

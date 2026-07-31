@@ -47,6 +47,7 @@ test("preserves normalized generation settings on modeled looks", () => {
       image: "/directed.png",
       context: {
         pose: "walking",
+        gesture: "one-hand-hip",
         headOrientation: "camera",
         environmentType: "outside",
         setting: "city",
@@ -60,6 +61,7 @@ test("preserves normalized generation settings on modeled looks", () => {
   assert.deepEqual(look.context, {
     photographicStyle: "",
     pose: "walking",
+    gesture: "one-hand-hip",
     hairstyle: "",
     bodyOrientation: "",
     headOrientation: "camera",

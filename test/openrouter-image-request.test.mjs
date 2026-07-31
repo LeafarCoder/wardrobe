@@ -411,6 +411,12 @@ test("keeps connected people and their assigned garments distinct in Outfit Stud
       { name: "Navy jacket", part: "wholebody_up", wearerName: "Rafael" },
       { name: "Cream dress", part: "wholebody", wearerName: "Sara" },
     ],
+    {
+      people: [
+        { personId: "rafael", pose: "walking", gesture: "arms-crossed", hairstyle: "short", additionalDirection: "Look toward Sara." },
+        { personId: "sara", pose: "standing", gesture: "tuck-hair", hairstyle: "ponytail", additionalDirection: "Hold Rafael's hand." },
+      ],
+    },
   );
 
   assert.match(prompt, /Rafael \(Character 1\) = Image 0, Image 1.*all images of the same person/i);
@@ -419,8 +425,8 @@ test("keeps connected people and their assigned garments distinct in Outfit Stud
   assert.match(prompt, /Image 4 is the exact reference for "Cream dress".*worn by Sara/);
   assert.match(prompt, /Show exactly 2 people/);
   assert.match(prompt, /never blend faces, bodies, ages, or features/i);
-  assert.match(prompt, /Rafael: Pose: walking with a natural mid-step stride; hairstyle: short hair with its natural texture/i);
-  assert.match(prompt, /Sara: Pose: standing naturally; hairstyle: hair gathered into a natural ponytail/i);
+  assert.match(prompt, /Rafael: Pose: walking with a natural mid-step stride; arm and hand gesture: arms crossed in a relaxed, natural way/i);
+  assert.match(prompt, /Sara: Pose: standing naturally; arm and hand gesture: one hand naturally tucking hair behind one ear/i);
   assert.match(prompt, /Look toward Sara/);
   assert.match(prompt, /Hold Rafael's hand/);
 });

@@ -17,6 +17,20 @@ export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
     { id: "stairs-up", label: "Going upstairs", prompt: "walking naturally up a staircase with a believable step and balanced posture" },
     { id: "stairs-down", label: "Going downstairs", prompt: "walking naturally down a staircase with a believable step and balanced posture" },
   ]),
+  gesture: Object.freeze([
+    { id: "arms-crossed", label: "Arms crossed", prompt: "arms crossed in a relaxed, natural way without hiding the outfit's defining details" },
+    { id: "tuck-hair", label: "Tucking hair behind ear", prompt: "one hand naturally tucking hair behind one ear" },
+    { id: "hand-through-hair", label: "Hand through hair", prompt: "one hand moving gently through their hair" },
+    { id: "one-hand-hip", label: "One hand on hip", prompt: "one hand resting naturally on one hip" },
+    { id: "hands-on-hips", label: "Hands on hips", prompt: "both hands resting naturally on the hips" },
+    { id: "hands-pockets", label: "Hands in pockets", prompt: "hands resting casually in available pockets" },
+    { id: "arms-overhead", label: "Arms overhead", prompt: "both arms raised naturally overhead with believable shoulder and elbow anatomy" },
+    { id: "hands-clasped", label: "Hands clasped", prompt: "hands gently clasped together in front" },
+    { id: "hands-behind-back", label: "Hands behind back", prompt: "hands held naturally behind the back" },
+    { id: "hand-chin", label: "Hand at chin", prompt: "one hand resting thoughtfully near the chin" },
+    { id: "adjusting-cuff", label: "Adjusting a cuff", prompt: "one hand naturally adjusting the opposite sleeve or cuff" },
+    { id: "hands-one-knee", label: "Hands on one knee", prompt: "both hands together resting naturally over one raised or crossed knee" },
+  ]),
   hairstyle: Object.freeze([
     { id: "long-loose", label: "Long hair, loose", prompt: "long loose hair with its natural texture" },
     { id: "shoulder-length", label: "Shoulder-length hair", prompt: "shoulder-length hair with its natural texture" },
@@ -106,6 +120,7 @@ export const MODELED_LOOK_CONTEXT_TRANSLATION_KEYS = Object.freeze(
 export const EMPTY_MODELED_LOOK_CONTEXT = Object.freeze({
   photographicStyle: "",
   pose: "",
+  gesture: "",
   hairstyle: "",
   bodyOrientation: "",
   headOrientation: "",
@@ -121,6 +136,7 @@ export const EMPTY_MODELED_LOOK_CONTEXT = Object.freeze({
 
 const PERSON_DIRECTION_FIELDS = Object.freeze([
   "pose",
+  "gesture",
   "hairstyle",
   "bodyOrientation",
   "headOrientation",
@@ -164,6 +180,7 @@ export function normalizeModeledLookContext(input = {}) {
   return {
     photographicStyle: validOption("photographicStyle", source.photographicStyle),
     pose: validOption("pose", source.pose),
+    gesture: validOption("gesture", source.gesture),
     hairstyle: validOption("hairstyle", source.hairstyle),
     bodyOrientation: validOption("bodyOrientation", source.bodyOrientation),
     headOrientation: validOption("headOrientation", source.headOrientation),
@@ -188,7 +205,8 @@ export function modeledLookContextPrompt(input = {}) {
   const context = normalizeModeledLookContext(input);
   const details = [
     context.photographicStyle ? `Photographic style: ${optionPrompt("photographicStyle", context.photographicStyle)}.` : null,
-    context.pose ? `Pose and action: ${optionPrompt("pose", context.pose)}.` : null,
+    context.pose ? `Body pose and action: ${optionPrompt("pose", context.pose)}.` : null,
+    context.gesture ? `Arm and hand gesture: ${optionPrompt("gesture", context.gesture)}.` : null,
     context.hairstyle ? `Hairstyle: ${optionPrompt("hairstyle", context.hairstyle)}. Preserve the person's real hair color, hairline, and texture.` : null,
     context.bodyOrientation ? `Body orientation: ${optionPrompt("bodyOrientation", context.bodyOrientation)}.` : null,
     context.headOrientation ? `Head orientation: ${optionPrompt("headOrientation", context.headOrientation)}.` : null,
@@ -221,7 +239,8 @@ export function modeledLookContextDetails(input = {}) {
     : null;
   return [
     translated("photographicStyle", "Style", [optionLabel("photographicStyle", context.photographicStyle)]),
-    translated("pose", "Pose", [optionLabel("pose", context.pose)]),
+    translated("pose", "Body pose", [optionLabel("pose", context.pose)]),
+    translated("gesture", "Gesture", [optionLabel("gesture", context.gesture)]),
     translated("hairstyle", "Hairstyle", [optionLabel("hairstyle", context.hairstyle)]),
     translated("bodyOrientation", "Body orientation", [optionLabel("bodyOrientation", context.bodyOrientation)]),
     translated("headOrientation", "Head orientation", [optionLabel("headOrientation", context.headOrientation)]),

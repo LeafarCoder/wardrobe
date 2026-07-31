@@ -10,6 +10,7 @@ import { buildModeledPrompt } from "../scripts/import-job-api.mjs";
 test("normalizes modeled-look direction and keeps settings contextual", () => {
   assert.deepEqual(normalizeModeledLookContext({
     pose: "walking",
+    gesture: "arms-crossed",
     hairstyle: "ponytail",
     bodyOrientation: "three-quarter",
     headOrientation: "camera",
@@ -22,6 +23,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
   }), {
     photographicStyle: "",
     pose: "walking",
+    gesture: "arms-crossed",
     hairstyle: "ponytail",
     bodyOrientation: "three-quarter",
     headOrientation: "camera",
@@ -43,6 +45,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
 test("adds only selected creative direction to the modeled-look prompt", () => {
   const directed = buildModeledPrompt(1, { name: "Rafael" }, { name: "Navy jacket" }, {
     pose: "crouching",
+    gesture: "tuck-hair",
     hairstyle: "long-loose",
     bodyOrientation: "side",
     headOrientation: "left",
@@ -55,6 +58,7 @@ test("adds only selected creative direction to the modeled-look prompt", () => {
 
   assert.match(directed, /Creative direction for this image/);
   assert.match(directed, /crouching in a balanced, natural pose/);
+  assert.match(directed, /tucking hair behind one ear/);
   assert.match(directed, /long loose hair with its natural texture/);
   assert.match(directed, /Preserve the person's real hair color, hairline, and texture/);
   assert.match(directed, /body shown from the side/);
@@ -84,7 +88,7 @@ test("normalizes shared style, saved backgrounds, stair poses, and per-person di
     backgroundReferenceId: "background-1",
     backgroundReferenceName: "Garden",
     people: [
-      { personId: "rafael", pose: "stairs-up", expression: "smiling", additionalDirection: "Hold the rail." },
+      { personId: "rafael", pose: "stairs-up", gesture: "hands-clasped", expression: "smiling", additionalDirection: "Hold the rail." },
       { personId: "rafael", pose: "running" },
     ],
   });
@@ -92,16 +96,19 @@ test("normalizes shared style, saved backgrounds, stair poses, and per-person di
   assert.equal(context.backgroundReferenceId, "background-1");
   assert.equal(context.people.length, 1);
   assert.equal(context.people[0].pose, "stairs-up");
+  assert.equal(context.people[0].gesture, "hands-clasped");
   assert.equal(context.people[0].additionalDirection, "Hold the rail.");
 
   const prompt = buildModeledPrompt(2, { name: "Rafael" }, { name: "Coat" }, context);
   assert.match(prompt, /Scene reference: Image 3/);
   assert.match(prompt, /cinematic photography/);
+  assert.match(prompt, /hands gently clasped together in front/);
 });
 
 test("describes every selected modeled-look setting without translating free text", () => {
   assert.deepEqual(modeledLookContextDetails({
     pose: "walking",
+    gesture: "hands-pockets",
     hairstyle: "ponytail",
     bodyOrientation: "three-quarter",
     headOrientation: "camera",
@@ -111,7 +118,8 @@ test("describes every selected modeled-look setting without translating free tex
     expression: "smiling",
     additionalDirection: "Carry the red book.",
   }), [
-    { id: "pose", label: "Pose", values: ["Walking"], translateValues: true },
+    { id: "pose", label: "Body pose", values: ["Walking"], translateValues: true },
+    { id: "gesture", label: "Gesture", values: ["Hands in pockets"], translateValues: true },
     { id: "hairstyle", label: "Hairstyle", values: ["Ponytail"], translateValues: true },
     { id: "bodyOrientation", label: "Body orientation", values: ["Three-quarters"], translateValues: true },
     { id: "headOrientation", label: "Head orientation", values: ["Looking at camera"], translateValues: true },

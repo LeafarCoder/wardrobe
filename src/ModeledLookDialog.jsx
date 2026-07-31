@@ -2,6 +2,7 @@ import {
   Aperture,
   Check,
   CloudSun,
+  HandWaving,
   House,
   ImageSquare,
   PersonSimple,
@@ -25,7 +26,8 @@ import { OptimizedImage } from "./OptimizedImage.jsx";
 import "./modeled-look-dialog.css";
 
 const GROUP_ICONS = {
-  Pose: PersonSimpleRun,
+  "Body pose": PersonSimpleRun,
+  Gesture: HandWaving,
   Hairstyle: Scissors,
   Expression: SmileyWink,
   "Body orientation": PersonSimple,
@@ -81,6 +83,7 @@ export function ModeledLookDialog({
     people: people.map((person) => ({
       personId: person.id,
       pose: "",
+      gesture: "",
       hairstyle: "",
       bodyOrientation: "",
       headOrientation: "",
@@ -169,11 +172,12 @@ export function ModeledLookDialog({
           )}
 
           <details className="modeled-context__section" open>
-            <summary><span>{tr("Model")}</span><small>{tr("Pose, orientation, hair, and expression")}</small></summary>
+            <summary><span>{tr("Model")}</span><small>{tr("Pose, gesture, orientation, hair, and expression")}</small></summary>
             <div className="modeled-context__section-body">
             {!people.length ? (
               <div className="modeled-context__model-grid">
-                <ChoiceGroup wide label="Pose" options={MODELED_LOOK_CONTEXT_OPTIONS.pose} value={context.pose} onChange={(value) => update("pose", value)} />
+                <ChoiceGroup wide label="Body pose" options={MODELED_LOOK_CONTEXT_OPTIONS.pose} value={context.pose} onChange={(value) => update("pose", value)} />
+                <ChoiceGroup wide label="Gesture" options={MODELED_LOOK_CONTEXT_OPTIONS.gesture} value={context.gesture} onChange={(value) => update("gesture", value)} />
                 <ChoiceGroup label="Body orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.bodyOrientation} value={context.bodyOrientation} onChange={(value) => update("bodyOrientation", value)} />
                 <ChoiceGroup label="Head orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.headOrientation} value={context.headOrientation} onChange={(value) => update("headOrientation", value)} />
                 <ChoiceGroup wide label="Hairstyle" options={MODELED_LOOK_CONTEXT_OPTIONS.hairstyle} value={context.hairstyle} onChange={(value) => update("hairstyle", value)} />
@@ -199,7 +203,8 @@ export function ModeledLookDialog({
                         <div><strong>{person.name}</strong>{person.detail && <small>{person.detail}</small>}</div>
                       </header>
                       <div className="modeled-context__model-grid modeled-context__person-grid">
-                        <ChoiceGroup wide label="Pose" options={MODELED_LOOK_CONTEXT_OPTIONS.pose} value={direction.pose} onChange={(value) => updatePerson(person.id, "pose", value)} />
+                        <ChoiceGroup wide label="Body pose" options={MODELED_LOOK_CONTEXT_OPTIONS.pose} value={direction.pose} onChange={(value) => updatePerson(person.id, "pose", value)} />
+                        <ChoiceGroup wide label="Gesture" options={MODELED_LOOK_CONTEXT_OPTIONS.gesture} value={direction.gesture} onChange={(value) => updatePerson(person.id, "gesture", value)} />
                         <ChoiceGroup label="Body orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.bodyOrientation} value={direction.bodyOrientation} onChange={(value) => updatePerson(person.id, "bodyOrientation", value)} />
                         <ChoiceGroup label="Head orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.headOrientation} value={direction.headOrientation} onChange={(value) => updatePerson(person.id, "headOrientation", value)} />
                         <ChoiceGroup wide label="Hairstyle" options={MODELED_LOOK_CONTEXT_OPTIONS.hairstyle} value={direction.hairstyle} onChange={(value) => updatePerson(person.id, "hairstyle", value)} />
