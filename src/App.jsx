@@ -31,7 +31,7 @@ import {
   OPENROUTER_KEY_REQUIRED_EVENT,
 } from "./openrouter-key.js";
 import { ProductStage } from "./ProductStage.jsx";
-import { AI_TASKS, formatAiCost, normalizeAiPreferences } from "./ai-preferences.js";
+import { aiModelLabel, AI_TASKS, formatAiCost, normalizeAiPreferences } from "./ai-preferences.js";
 import { garmentVariationColors, normalizeHexColor } from "./garment-recolor.js";
 import {
   CARE_GROUPS,
@@ -1660,6 +1660,7 @@ function ItemViewer({
   const hasVersionRow = versionLayout === "spread";
   const hasVersionSpread = hasVersionFan || hasVersionRow;
   const garmentRegenerationCandidate = item.garmentRegenerationCandidate || null;
+  const garmentRegenerationSuggestedModel = garmentRegenerationCandidate?.suggestedModel || null;
   const regenerationPrimaryValid = Boolean(normalizeHexColor(garmentRegenerationForm.color));
   const regenerationSecondaryValid = !garmentRegenerationForm.secondaryColor
     || Boolean(normalizeHexColor(garmentRegenerationForm.secondaryColor));
@@ -2491,7 +2492,7 @@ function ItemViewer({
     });
   };
 
-  const regenerateGarment = async () => {
+  const regenerateGarment = async (useSuggestedModel = false) => {
     const primaryColor = normalizeHexColor(garmentRegenerationForm.color);
     const secondaryColor = garmentRegenerationForm.secondaryColor
       ? normalizeHexColor(garmentRegenerationForm.secondaryColor)
@@ -2519,6 +2520,7 @@ function ItemViewer({
         },
         sourcePhotoIds: garmentRegenerationForm.sourcePhotoIds,
         direction: garmentRegenerationForm.direction.trim(),
+        useSuggestedModel,
       });
     } catch (requestError) {
       setGarmentRegenerationError(readableError(requestError));
@@ -3115,9 +3117,16 @@ function ItemViewer({
                         </div>
                       )}
                     </ProductStage>
-                    <figcaption><strong>{tr("New candidate")}</strong><span>{tr(garmentRegenerationCandidate ? "Review before choosing which garment to keep" : "Generated only after you confirm the settings below")}</span></figcaption>
+                    <figcaption><strong>{tr("New candidate")}</strong><span>{tr(garmentRegenerationCandidate?.validationCode ? "Wardrobe paused so you can review this result" : garmentRegenerationCandidate ? "Review before choosing which garment to keep" : "Generated only after you confirm the settings below")}</span></figcaption>
                   </figure>
                 </div>
+
+                {garmentRegenerationCandidate?.validationCode && (
+                  <p className="garment-regeneration__error" role="status">
+                    <WarningCircle size={15} weight="fill" aria-hidden="true" />
+                    {garmentRegenerationCandidate.validationMessage || tr("This generated result needs your review before another model is tried.")}
+                  </p>
+                )}
 
                 <section className="garment-regeneration__editor" aria-labelledby="garment-regeneration-settings">
                   <div className="garment-regeneration__intro">
@@ -3235,16 +3244,22 @@ function ItemViewer({
                     {garmentRegenerationCandidate ? (
                       <>
                         <button type="button" className="secondary-button" disabled={garmentRegenerationBusy} onClick={discardGarmentRegeneration}>{tr("Keep current garment")}</button>
-                        <button type="button" className="secondary-button" disabled={garmentRegenerationBusy || !canRegenerateGarment} onClick={regenerateGarment}>
+                        <button type="button" className="secondary-button" disabled={garmentRegenerationBusy || !canRegenerateGarment} onClick={() => regenerateGarment(false)}>
                           {garmentRegenerationBusy ? <SpinnerGap className="modeled-request__spinner" size={15} /> : <ArrowCounterClockwise size={15} />}
                           {tr("Regenerate again")}
                         </button>
+                        {garmentRegenerationSuggestedModel && (
+                          <button type="button" className="secondary-button" disabled={garmentRegenerationBusy || !canRegenerateGarment} onClick={() => regenerateGarment(true)}>
+                            <ArrowsLeftRight size={15} />
+                            {tr("Try {model}", { model: aiModelLabel(garmentRegenerationSuggestedModel) })}
+                          </button>
+                        )}
                         <button type="button" className="primary-button" disabled={garmentRegenerationBusy} onClick={acceptGarmentRegeneration}><Check size={15} weight="bold" /> {tr("Use new garment")}</button>
                       </>
                     ) : (
                       <>
                         <button type="button" className="secondary-button" disabled={garmentRegenerationBusy} onClick={() => setGarmentRegenerationOpen(false)}>{tr("Cancel")}</button>
-                        <button type="button" className="primary-button" disabled={garmentRegenerationBusy || !canRegenerateGarment} onClick={regenerateGarment}>
+                        <button type="button" className="primary-button" disabled={garmentRegenerationBusy || !canRegenerateGarment} onClick={() => regenerateGarment(false)}>
                           {garmentRegenerationBusy ? <SpinnerGap className="modeled-request__spinner" size={15} /> : <Sparkle size={15} weight="fill" />}
                           {tr(garmentRegenerationBusy ? "Creating replacement…" : "Generate candidate")}
                         </button>

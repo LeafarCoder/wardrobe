@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   discardedAssetsAfterMerge,
   duplicateCandidateScore,
+  garmentRegenerationCandidateForRecord,
   importedRecordAssets,
   mergeImportedRecords,
   modeledLooksForRecord,
@@ -12,6 +13,24 @@ import {
   sourcePhotosForRecord,
   wardrobePlansAfterGarmentMerge,
 } from "../scripts/import-job-api.mjs";
+
+test("preserves a reviewed garment failure and its explicit alternative model", () => {
+  const candidate = garmentRegenerationCandidateForRecord({
+    garmentRegenerationCandidate: {
+      id: "candidate-1",
+      image: "/api/import/library/candidate-1.png",
+      metadata: { name: "Satin chemise", part: "wholebody", color: "#111111" },
+      backgroundTransparent: false,
+      validationCode: "garment_background_not_transparent",
+      validationMessage: "The generated image has an opaque background.",
+      suggestedModel: "bytedance-seed/seedream-4.5",
+    },
+  });
+
+  assert.equal(candidate.backgroundTransparent, false);
+  assert.equal(candidate.validationCode, "garment_background_not_transparent");
+  assert.equal(candidate.suggestedModel, "bytedance-seed/seedream-4.5");
+});
 
 test("selects at most three requested original photos for saved-garment regeneration", () => {
   const record = recordWithSourcePhotos({}, [

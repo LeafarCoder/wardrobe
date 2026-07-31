@@ -528,6 +528,43 @@ test("retries a fallback model when garment quality validation rejects the prima
   assert.deepEqual(notices, result.fallbackNotices);
 });
 
+test("pauses on a garment quality failure when review is required", async () => {
+  const calls = [];
+  const notices = [];
+  await assert.rejects(
+    editWithSafetyFallback({
+      editImage: async ({ model }) => {
+        calls.push(model);
+        return Buffer.from(model);
+      },
+      provider: { label: "OpenRouter" },
+      model: "primary-image-model",
+      fallbackModels: ["fallback-image-model"],
+      validateImage: async () => {
+        const error = new Error("opaque background");
+        error.code = "garment_background_not_transparent";
+        throw error;
+      },
+      prompt: "reconstruct a garment",
+      images: [],
+      operation: "garment",
+      pauseOnQualityFailure: true,
+      onFallback: async (notice) => notices.push(notice),
+    }),
+    (error) => {
+      assert.equal(error.code, "garment_background_not_transparent");
+      assert.equal(error.rejectedCandidates.length, 1);
+      assert.equal(error.rejectedCandidates[0].model, "primary-image-model");
+      assert.equal(error.rejectedCandidates[0].suggestedModel, "fallback-image-model");
+      assert.equal(error.qualityReview.suggestedModel, "fallback-image-model");
+      return true;
+    },
+  );
+
+  assert.deepEqual(calls, ["primary-image-model"]);
+  assert.deepEqual(notices, []);
+});
+
 test("retains an opaque generated image when a fallback succeeds", async () => {
   const result = await editWithSafetyFallback({
     editImage: async ({ model }) => Buffer.from(model),

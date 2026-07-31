@@ -129,7 +129,7 @@ The profile selector lists only models compatible with each task: multimodal tex
 
 The default Klein garment route is cheaper, but it is not currently available under OpenRouter Zero Data Retention. `OPENROUTER_ALLOW_NON_ZDR_GARMENT=true` is therefore an explicit, garment-only privacy exception. Wardrobe keeps `OPENROUTER_ZDR=true` for clothing analysis and modeled looks, and refuses to send garment source images to Klein unless that exception is present. Use the Private preset if provider retention is not acceptable.
 
-When the primary image model returns a content-policy refusal such as `PROHIBITED_CONTENT` or `IMAGE_SAFETY`, Wardrobe automatically retries the same request with the models in `OPENROUTER_IMAGE_FALLBACK_MODELS`. Other failures—authentication, credits, rate limits, networking, and invalid configuration—are not hidden by this fallback. The default is `bytedance-seed/seedream-4.5`, which supports the app's multiple reference images and 3:2 modeled output. It starts at 2K because the current Seed route rejects the smaller concrete dimensions derived from 1K for some reference-image requests. Set the fallback-model value to `none` to disable it.
+When the primary image model returns a content-policy refusal such as `PROHIBITED_CONTENT` or `IMAGE_SAFETY`, Wardrobe automatically retries the same request with the models in `OPENROUTER_IMAGE_FALLBACK_MODELS`. No image exists to review in that case. If a garment model does return an image but it fails the local resolution or transparency rules, Wardrobe preserves that paid result and pauses for user review; it does not call the fallback until the user explicitly chooses the alternative model. Garment fidelity is confirmed by the side-by-side user review rather than a second paid vision-model call. Authentication, credits, rate limits, networking, and invalid configuration are not hidden by an image fallback. The default alternative is `bytedance-seed/seedream-4.5`, which supports the app's multiple reference images and 3:2 modeled output. It starts at 4K because the current Seed route rejects the smaller concrete dimensions derived from lower resolution tiers for some reference-image requests. Set the fallback-model value to `none` to disable it.
 
 The planner asks OpenRouter for a JSON object and validates the returned structure locally. This avoids provider-specific failures caused by sending a large, deeply nested strict schema to Gemini while retaining predictable saved plan data. When the selected planner route is unavailable or returns malformed JSON, Wardrobe retries the models in `OPENROUTER_PLANNER_FALLBACK_MODELS` in order. The default fallback is the inexpensive, ZDR-compatible `google/gemini-2.5-flash-lite`; set the variable to `none` to disable planner fallback.
 
@@ -153,7 +153,7 @@ The planner asks OpenRouter for a JSON object and validates the returned structu
 | `OPENROUTER_MODELED_PROVIDER` | Automatic |
 | `OPENROUTER_IMAGE_FALLBACK_PROVIDER` | `seed` |
 | `OPENROUTER_IMAGE_RESOLUTION` | `1K` |
-| `OPENROUTER_IMAGE_FALLBACK_RESOLUTION` | `2K` |
+| `OPENROUTER_IMAGE_FALLBACK_RESOLUTION` | `4K` |
 | `OPENROUTER_IMAGE_QUALITY` | `auto` |
 | `OPENROUTER_ZDR` | `true` |
 | `OPENROUTER_IMAGE_PROVIDER` | Automatic |

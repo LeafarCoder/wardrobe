@@ -1276,6 +1276,16 @@ export function garmentRegenerationCandidateForRecord(record = {}) {
     fallbackUsed: Boolean(candidate.fallbackUsed),
     attempt: Math.max(1, Math.round(Number(candidate.attempt) || 1)),
     generatedAt: typeof candidate.generatedAt === "string" ? candidate.generatedAt : null,
+    ...(candidate.backgroundTransparent === false ? { backgroundTransparent: false } : {}),
+    ...(typeof candidate.validationCode === "string" && candidate.validationCode
+      ? { validationCode: candidate.validationCode.slice(0, 80) }
+      : {}),
+    ...(typeof candidate.validationMessage === "string" && candidate.validationMessage
+      ? { validationMessage: candidate.validationMessage.slice(0, 600) }
+      : {}),
+    ...(typeof candidate.suggestedModel === "string" && candidate.suggestedModel
+      ? { suggestedModel: candidate.suggestedModel.slice(0, 180) }
+      : {}),
   };
 }
 
@@ -3136,6 +3146,8 @@ function stageState() {
     prompt: null,
     model: null,
     fallbackUsed: false,
+    qualityReview: null,
+    requestedModel: null,
     updatedAt: null,
   };
 }
@@ -3420,6 +3432,7 @@ export async function editWithSafetyFallback({
   fallbackModels = [],
   validateImage,
   onFallback,
+  pauseOnQualityFailure = false,
   trace = {},
   ...request
 }) {
@@ -3445,15 +3458,33 @@ export async function editWithSafetyFallback({
         rejectedCandidates,
       };
     } catch (error) {
-      if (bytes && error.code === "garment_background_not_transparent") {
-        rejectedCandidates.push({ bytes, model: candidate, code: error.code, fallbackUsed: index > 0 });
-      }
-      const fallback = candidates[index + 1];
       const recoverableQualityError = [
         "garment_output_too_small",
         "garment_type_mismatch",
         "garment_background_not_transparent",
       ].includes(error.code);
+      const rejectedCandidate = bytes && recoverableQualityError
+        ? {
+            bytes: Buffer.isBuffer(error.candidatePreviewBytes) ? error.candidatePreviewBytes : bytes,
+            model: candidate,
+            code: error.code,
+            message: error.message,
+            fallbackUsed: index > 0,
+          }
+        : null;
+      if (rejectedCandidate) rejectedCandidates.push(rejectedCandidate);
+      const fallback = candidates[index + 1];
+      if (pauseOnQualityFailure && recoverableQualityError) {
+        if (fallback && rejectedCandidate) rejectedCandidate.suggestedModel = fallback;
+        error.rejectedCandidates = rejectedCandidates;
+        error.qualityReview = {
+          reason: imageFallbackReason(error),
+          reasonCode: error.code,
+          suggestedModel: fallback || null,
+          createdAt: new Date().toISOString(),
+        };
+        throw error;
+      }
       if (!fallback || (!isSafetyPolicyError(error) && !recoverableQualityError)) {
         if (index > 0 && isSafetyPolicyError(error)) {
           const finalError = apiError(
@@ -5903,13 +5934,24 @@ Interpret this correction semantically in whatever language it is written. It ov
       const previousCandidate = garmentRegenerationCandidateForRecord(record);
       const attempt = (previousCandidate?.attempt || 0) + 1;
       const editImage = provider.id === "openrouter" ? openRouterEdit : openAIEdit;
+      if (input.useSuggestedModel === true && !previousCandidate?.suggestedModel) {
+        throw apiError("No alternative image model is available for this result.", 409, "garment_alternative_model_unavailable");
+      }
+      const configuredGarmentModels = [provider.garmentModel, ...provider.imageFallbackModels]
+        .filter((model, index, models) => model && models.indexOf(model) === index);
+      const requestedModel = input.useSuggestedModel === true ? previousCandidate.suggestedModel : null;
+      if (requestedModel && !configuredGarmentModels.includes(requestedModel)) {
+        throw apiError("The suggested alternative image model is no longer configured.", 409, "garment_alternative_model_unavailable");
+      }
+      const garmentModel = requestedModel || provider.garmentModel;
+      const garmentFallbackModels = provider.imageFallbackModels.filter((model) => model !== garmentModel);
       let cleanedCandidate = null;
-      const validateImage = async (candidateBytes, candidate) => {
+      const validateImage = async (candidateBytes) => {
         cleanedCandidate = null;
         const generated = await sharp(candidateBytes).metadata();
         if ((generated.width || 0) < 512 || (generated.height || 0) < 512) {
           throw apiError(
-            `The image model returned only ${generated.width || 0}×${generated.height || 0} pixels for "${metadata.name}". Wardrobe rejected the low-resolution result and will try a fallback model.`,
+            `The image model returned only ${generated.width || 0}×${generated.height || 0} pixels for "${metadata.name}". Wardrobe kept the low-resolution result for your review.`,
             502,
             "garment_output_too_small",
           );
@@ -5921,72 +5963,64 @@ Interpret this correction semantically in whatever language it is written. It ov
         if (transparencyFailure) {
           throw apiError(
             transparencyFailure === "opaque-border"
-              ? `The image model left "${metadata.name}" standing on its original background instead of cutting it out. Wardrobe rejected it and will try a fallback model that can produce a transparent garment cutout.`
-              : `The image model returned "${metadata.name}" on an opaque background. Wardrobe rejected it and will try a fallback model that can produce a transparent garment cutout.`,
+              ? `The image model left "${metadata.name}" standing on its original background instead of cutting it out. Wardrobe kept the result for your review.`
+              : `The image model returned "${metadata.name}" on an opaque background. Wardrobe kept the result for your review.`,
             422,
             "garment_background_not_transparent",
           );
         }
         cleanedCandidate = backgroundCheck;
-        try {
-          const analyzeImage = provider.id === "openrouter" ? openRouterAnalyze : openAIAnalyze;
-          const validationInput = await prepareProviderImage(candidateBytes, 768);
-          const detected = (await analyzeImage({
-            provider,
-            model: provider.visionModel,
-            image: validationInput.data,
-            mime: validationInput.mime,
-            trace: {
-              uploadId: sources[0]?.importUploadId || record.importUploadId || null,
-              jobId: sources[0]?.importJobId || record.importJobId || null,
-              garmentId: itemId,
-              sourceFileName: sources[0]?.sourceFileName || record.sourceFileName || null,
-              itemName: metadata.name,
-              validationForModel: candidate.model,
-            },
-          })).map(normalizeMetadata);
-          const semanticMismatch = garmentSemanticMismatch(metadata, detected, userDirection);
-          if (!detected.some((item) => item.part === metadata.part) || semanticMismatch) {
-            const actual = detected.map((item) => `${item.name} (${item.part})`).join(", ") || "no recognizable item";
-            throw apiError(
-              `The image model reconstructed the wrong product for "${metadata.name}"${semanticMismatch ? `: it ${semanticMismatch}` : ` (${actual})`}. Wardrobe rejected it and will try another model instead of replacing the garment.`,
-              422,
-              "garment_type_mismatch",
-            );
-          }
-        } catch (error) {
-          if (error.code === "garment_type_mismatch") throw error;
-          console.warn(`[wardrobe:ai] garment regeneration validation skipped | item=${JSON.stringify(cleanLogValue(metadata.name))} | reason=${cleanLogValue(error.message)}`);
-        }
       };
-      console.info(`[wardrobe] Regenerating saved garment with ${provider.label} / ${provider.garmentModel} from ${referenceInputs.length} original photo${referenceInputs.length === 1 ? "" : "s"}...`);
-      const generation = await withGenerationSlot(() => editWithSafetyFallback({
-        editImage,
-        provider,
-        model: provider.garmentModel,
-        fallbackModels: provider.imageFallbackModels,
-        validateImage,
-        quality: provider.imageQuality,
-        size: "1024x1024",
-        background: "transparent",
-        images: referenceInputs.map((reference) => reference.image),
-        prompt: generationPrompt,
-        operation: "garment-regeneration",
-        trace: {
-          uploadId: sources[0]?.importUploadId || record.importUploadId || null,
-          jobId: sources[0]?.importJobId || record.importJobId || null,
-          garmentId: itemId,
-          sourceFileName: sources[0]?.sourceFileName || record.sourceFileName || null,
-          itemName: metadata.name,
-          attempt,
-          sourcePhotoCount: referenceInputs.length,
-        },
-      }));
-      const candidateBytes = cleanedCandidate && cleanedCandidate.verification.contaminatedPixels <= 1
-        ? cleanedCandidate.bytes
-        : await removeChromaBackground(generation.bytes, chromaKey, {
-            protectedColors: [metadata.color, metadata.secondaryColor],
-          });
+      console.info(`[wardrobe] Regenerating saved garment with ${provider.label} / ${garmentModel} from ${referenceInputs.length} original photo${referenceInputs.length === 1 ? "" : "s"}...`);
+      let generation;
+      let validationFailure = null;
+      try {
+        generation = await withGenerationSlot(() => editWithSafetyFallback({
+          editImage,
+          provider,
+          model: garmentModel,
+          fallbackModels: garmentFallbackModels,
+          validateImage,
+          pauseOnQualityFailure: true,
+          quality: provider.imageQuality,
+          size: "1024x1024",
+          background: "transparent",
+          images: referenceInputs.map((reference) => reference.image),
+          prompt: generationPrompt,
+          operation: "garment-regeneration",
+          trace: {
+            uploadId: sources[0]?.importUploadId || record.importUploadId || null,
+            jobId: sources[0]?.importJobId || record.importJobId || null,
+            garmentId: itemId,
+            sourceFileName: sources[0]?.sourceFileName || record.sourceFileName || null,
+            itemName: metadata.name,
+            attempt,
+            sourcePhotoCount: referenceInputs.length,
+            ...(garmentModel !== provider.garmentModel ? { fallbackFrom: provider.garmentModel } : {}),
+          },
+        }));
+      } catch (error) {
+        const rejected = error.rejectedCandidates?.at(-1);
+        if (!rejected) throw error;
+        generation = {
+          bytes: rejected.bytes,
+          model: rejected.model,
+          fallbackUsed: rejected.fallbackUsed || garmentModel !== provider.garmentModel,
+          fallbackNotice: null,
+        };
+        validationFailure = {
+          code: rejected.code,
+          message: rejected.message,
+          suggestedModel: rejected.suggestedModel || null,
+        };
+      }
+      const candidateBytes = validationFailure
+        ? generation.bytes
+        : cleanedCandidate && cleanedCandidate.verification.contaminatedPixels <= 1
+          ? cleanedCandidate.bytes
+          : await removeChromaBackground(generation.bytes, chromaKey, {
+              protectedColors: [metadata.color, metadata.secondaryColor],
+            });
       const candidateId = randomUUID();
       const candidateName = `${itemId}-regeneration-${candidateId}.png`;
       await atomicFile(path.join(libraryAssetDir, candidateName), candidateBytes);
@@ -6003,9 +6037,15 @@ Interpret this correction semantically in whatever language it is written. It ov
         metadata,
         sourcePhotoIds: sources.map((source) => source.id),
         model: generation.model,
-        fallbackUsed: generation.fallbackUsed,
+        fallbackUsed: generation.fallbackUsed || garmentModel !== provider.garmentModel,
         attempt,
         generatedAt: new Date().toISOString(),
+        ...(validationFailure?.code === "garment_background_not_transparent" ? { backgroundTransparent: false } : {}),
+        ...(validationFailure ? {
+          validationCode: validationFailure.code,
+          validationMessage: validationFailure.message,
+          suggestedModel: validationFailure.suggestedModel,
+        } : {}),
       };
       const saved = await withLibrary(async () => {
         const latest = await loadImported();
@@ -6978,6 +7018,12 @@ Interpret this correction semantically in whatever language it is written. It ov
         if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
         if (!provider.key) throw apiError("No OpenRouter key is available. Add your own key under AI & costs in your profile.", 503, `${provider.id}_key_missing`);
         const editImage = provider.id === "openrouter" ? openRouterEdit : openAIEdit;
+        const configuredGarmentModels = [provider.garmentModel, ...provider.imageFallbackModels]
+          .filter((model, index, models) => model && models.indexOf(model) === index);
+        const garmentModel = stageName === "garment" && configuredGarmentModels.includes(stage.requestedModel)
+          ? stage.requestedModel
+          : provider.garmentModel;
+        const garmentFallbackModels = provider.imageFallbackModels.filter((model) => model !== garmentModel);
         const sourceFile = stageName === "garment" && current.internal.cropFile ? current.internal.cropFile : current.internal.originalFile;
         const original = { data: await readFile(path.join(dir, sourceFile)), mime: "image/png", name: sourceFile };
         let bytes;
@@ -7017,22 +7063,16 @@ USER CORRECTION — AUTHORITATIVE AND HIGHEST PRIORITY:
 ${userDirection}
 Interpret this correction semantically in whatever language it is written. It overrides conflicting visual resemblance and generic instructions. Obey every negative constraint literally.`
             : basePrompt;
-          const validateSemantics = Boolean(
-            userDirection
-            || garmentSemanticSubtype(current.metadata, userDirection)
-            || garmentHasStructuralRequirements(current.metadata, userDirection)
-            || otherDetectedItems.length,
-          );
-          console.info(`[wardrobe] Generating garment with ${provider.label} / ${provider.garmentModel} (${diagnostics.cropWidth}x${diagnostics.cropHeight}px crop${generationImages.length > 1 ? ", contextual reference" : ""})...`);
+          console.info(`[wardrobe] Generating garment with ${provider.label} / ${garmentModel} (${diagnostics.cropWidth}x${diagnostics.cropHeight}px crop${generationImages.length > 1 ? ", contextual reference" : ""})...`);
           // Validation already runs the full per-pixel cleanup; keep its output so the
           // accepted candidate is not processed a second time.
           let cleanedCandidate = null;
-          const validateImage = async (candidateBytes, candidate) => {
+          const validateImage = async (candidateBytes) => {
             cleanedCandidate = null;
             const generated = await sharp(candidateBytes).metadata();
             if ((generated.width || 0) < 512 || (generated.height || 0) < 512) {
               throw apiError(
-                `The image model returned only ${generated.width || 0}×${generated.height || 0} pixels for "${current.metadata.name}". Wardrobe rejected the low-resolution result and will try a fallback model.`,
+                `The image model returned only ${generated.width || 0}×${generated.height || 0} pixels for "${current.metadata.name}". Wardrobe kept the low-resolution result for your review.`,
                 502,
                 "garment_output_too_small",
               );
@@ -7044,61 +7084,28 @@ Interpret this correction semantically in whatever language it is written. It ov
             if (transparencyFailure) {
               throw apiError(
                 transparencyFailure === "opaque-border"
-                  ? `The image model left "${current.metadata.name}" standing on its original background instead of cutting it out. Wardrobe rejected it and will try a fallback model that can produce a transparent garment cutout.`
-                  : `The image model returned "${current.metadata.name}" on an opaque background. Wardrobe rejected it and will try a fallback model that can produce a transparent garment cutout.`,
+                  ? `The image model left "${current.metadata.name}" standing on its original background instead of cutting it out. Wardrobe kept the result for your review.`
+                  : `The image model returned "${current.metadata.name}" on an opaque background. Wardrobe kept the result for your review.`,
                 422,
                 "garment_background_not_transparent",
               );
             }
             cleanedCandidate = backgroundCheck;
-            if (!needsContextReference && !validateSemantics) return;
-            try {
-              const analyzeImage = provider.id === "openrouter" ? openRouterAnalyze : openAIAnalyze;
-              const validationInput = await prepareProviderImage(candidateBytes, 768);
-              const detected = (await analyzeImage({
-                provider,
-                model: provider.visionModel,
-                image: validationInput.data,
-                mime: validationInput.mime,
-                trace: {
-                  uploadId: current.uploadId || null,
-                  jobId: current.id,
-                  sourceFileName: current.sourceFileName || null,
-                  itemName: current.metadata.name,
-                  validationForModel: candidate.model,
-                },
-              })).map(normalizeMetadata);
-              const semanticMismatch = garmentSemanticMismatch(current.metadata, detected, userDirection);
-              const extraDetectedItems = otherDetectedItems.length
-                ? detected.filter((item) => item.part !== current.metadata.part)
-                : [];
-              if (!detected.some((item) => item.part === current.metadata.part) || semanticMismatch || extraDetectedItems.length) {
-                const actual = detected.map((item) => `${item.name} (${item.part})`).join(", ") || "no recognizable item";
-                const extraItemMessage = extraDetectedItems.length
-                  ? `: it still contains another separately detected product (${extraDetectedItems.map((item) => item.name).join(", ")})`
-                  : "";
-                throw apiError(
-                  `The image model reconstructed the wrong product for "${current.metadata.name}"${semanticMismatch ? `: it ${semanticMismatch}` : extraItemMessage || ` (${actual})`}. Wardrobe rejected it and will try another model instead of adding an incorrect garment.`,
-                  422,
-                  "garment_type_mismatch",
-                );
-              }
-            } catch (error) {
-              if (error.code === "garment_type_mismatch") throw error;
-              console.warn(`[wardrobe:ai] garment type validation skipped | item=${JSON.stringify(cleanLogValue(current.metadata.name))} | reason=${cleanLogValue(error.message)}`);
-            }
           };
-          const retainOpaqueCandidates = (candidates) => Promise.all(candidates.map(async (candidate, index) => {
-            const rejectedName = `${stageName}-${stage.attempts}-opaque-${index + 1}.png`;
+          const retainRejectedCandidates = (candidates) => Promise.all(candidates.map(async (candidate, index) => {
+            const rejectedName = `${stageName}-${stage.attempts}-rejected-${index + 1}.png`;
             await writeFile(path.join(dir, rejectedName), candidate.bytes);
             return {
-              id: `${stageName}-${stage.attempts}-opaque-${index + 1}`,
+              id: `${stageName}-${stage.attempts}-rejected-${index + 1}`,
               assetUrl: `${ASSET_ROOT}/${current.id}/${rejectedName}`,
               model: candidate.model,
               fallbackUsed: candidate.fallbackUsed,
               attempt: stage.attempts,
               generatedAt: new Date().toISOString(),
-              backgroundTransparent: false,
+              ...(candidate.code === "garment_background_not_transparent" ? { backgroundTransparent: false } : {}),
+              validationCode: candidate.code,
+              validationMessage: candidate.message,
+              suggestedModel: candidate.suggestedModel,
             };
           }));
           let generation;
@@ -7106,10 +7113,11 @@ Interpret this correction semantically in whatever language it is written. It ov
             generation = await withGenerationSlot(() => editWithSafetyFallback({
               editImage,
               provider,
-              model: provider.garmentModel,
-              fallbackModels: provider.imageFallbackModels,
+              model: garmentModel,
+              fallbackModels: garmentFallbackModels,
               validateImage,
               onFallback: recordFallbackNotice,
+              pauseOnQualityFailure: true,
               quality: provider.imageQuality,
               size: "1024x1024",
               background: "transparent",
@@ -7122,11 +7130,12 @@ Interpret this correction semantically in whatever language it is written. It ov
                 sourceFileName: current.sourceFileName || null,
                 itemName: current.metadata.name,
                 attempt: stage.attempts,
+                ...(garmentModel !== provider.garmentModel ? { fallbackFrom: provider.garmentModel } : {}),
               },
             }));
           } catch (error) {
             if (!error.rejectedCandidates?.length) throw error;
-            const retainedCandidates = await retainOpaqueCandidates(error.rejectedCandidates);
+            const retainedCandidates = await retainRejectedCandidates(error.rejectedCandidates);
             const fresh = await loadJob(current.id);
             if (!fresh) return;
             for (const rejectedCandidate of retainedCandidates) {
@@ -7136,6 +7145,8 @@ Interpret this correction semantically in whatever language it is written. It ov
             fresh.stages.garment.decision = null;
             fresh.stages.garment.error = null;
             fresh.stages.garment.failedAssetUrl = null;
+            fresh.stages.garment.qualityReview = error.qualityReview || null;
+            fresh.stages.garment.requestedModel = null;
             fresh.stages.garment.chromaKey = chromaKeyUsed;
             fresh.stages.garment.updatedAt = new Date().toISOString();
             fresh.cropDiagnostics = diagnostics;
@@ -7144,8 +7155,8 @@ Interpret this correction semantically in whatever language it is written. It ov
           }
           bytes = generation.bytes;
           usedModel = generation.model;
-          fallbackUsed = generation.fallbackUsed;
-          rejectedGarmentCandidates = await retainOpaqueCandidates(generation.rejectedCandidates || []);
+          fallbackUsed = generation.fallbackUsed || garmentModel !== provider.garmentModel;
+          rejectedGarmentCandidates = await retainRejectedCandidates(generation.rejectedCandidates || []);
           current.cropDiagnostics = diagnostics;
           const rawName = `${stageName}-${stage.attempts}-source.png`;
           await writeFile(path.join(dir, rawName), bytes);
@@ -7224,6 +7235,10 @@ Interpret this correction semantically in whatever language it is written. It ov
         fresh.stages[stageName].failedAssetUrl = null;
         fresh.stages[stageName].cleanupPreviewUrl = null;
         fresh.stages[stageName].cleanupDiagnostics = null;
+        if (stageName === "garment") {
+          fresh.stages[stageName].qualityReview = null;
+          fresh.stages[stageName].requestedModel = null;
+        }
         if (stageName === "garment" && current.cropDiagnostics) fresh.cropDiagnostics = current.cropDiagnostics;
         if (chromaKeyUsed) fresh.stages[stageName].chromaKey = chromaKeyUsed;
         fresh.stages[stageName].updatedAt = generatedAt;
@@ -9334,6 +9349,17 @@ Interpret this correction semantically in whatever language it is written. It ov
           if (stageName === "crop") throw Object.assign(new Error("Upload the image again to create new crops"), { status: 400 });
           const input = await body(req);
           job.stages[stageName].prompt = typeof input.prompt === "string" ? input.prompt.trim().slice(0, 1200) || null : null;
+          if (stageName === "garment") {
+            const selectedCandidate = selectedImportGenerationCandidate(job.stages.garment);
+            if (input.useSuggestedModel === true) {
+              if (!selectedCandidate?.suggestedModel) {
+                throw apiError("No alternative image model is available for this result.", 409, "garment_alternative_model_unavailable");
+              }
+              job.stages.garment.requestedModel = selectedCandidate.suggestedModel;
+            } else {
+              job.stages.garment.requestedModel = null;
+            }
+          }
           job.stages[stageName].status = "queued";
           job.stages[stageName].decision = null;
           await saveJob(job);
@@ -9343,6 +9369,13 @@ Interpret this correction semantically in whatever language it is written. It ov
         if (!DECISIONS.has(decision) || job.stages[stageName].status !== "review") throw Object.assign(new Error("Stage is not ready for review"), { status: 409 });
         if (stageName === "garment" && decision === "approve") {
           const selectedCandidate = selectedImportGenerationCandidate(job.stages.garment);
+          if (selectedCandidate?.validationCode && selectedCandidate.validationCode !== "garment_background_not_transparent") {
+            throw apiError(
+              "This generated result did not pass Wardrobe's garment validation. Regenerate it or try the suggested alternative model before adding it.",
+              409,
+              "invalid_garment_candidate",
+            );
+          }
           if (selectedCandidate?.backgroundTransparent === false) {
             const input = await body(req);
             if (input.allowOpaqueBackground !== true) {

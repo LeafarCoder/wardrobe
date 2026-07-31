@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowCounterClockwise, ArrowsLeftRight, Camera, Check, Clipboard, CoatHanger, Crop, Dress, FolderOpen, Handbag, ImageSquare, Pants, Plus, Sneaker, SpinnerGap, Trash, TShirt, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
 import { formatNumber, getLocale, tr } from "./i18n.js";
+import { aiModelLabel } from "./ai-preferences.js";
 import {
   garmentClarificationDetails,
   garmentClarificationGroups,
@@ -821,6 +822,11 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
   const garmentCandidates = isGarment ? importGenerationCandidates(job.stages.garment) : [];
   const selectedGarmentCandidate = isGarment ? selectedImportGenerationCandidate(job.stages.garment) : null;
   const selectedHasOpaqueBackground = selectedGarmentCandidate?.backgroundTransparent === false;
+  const selectedValidationCode = selectedGarmentCandidate?.validationCode || null;
+  const selectedFailedGarmentValidation = Boolean(
+    selectedValidationCode && selectedValidationCode !== "garment_background_not_transparent",
+  );
+  const suggestedModel = selectedGarmentCandidate?.suggestedModel || null;
   const [opaqueConfirmationOpen, setOpaqueConfirmationOpen] = useState(false);
   const primaryValid = HEX_COLOR.test(draft.color);
   const secondaryValid = !draft.secondaryColor || HEX_COLOR.test(draft.secondaryColor);
@@ -846,10 +852,12 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
             <ProductStage className="import-editor__comparison-media import-editor__preview-stage" animated staticStage>
               <img className="import-editor__preview" src={comparison.generated} alt={tr("Generated garment for comparison")} />
             </ProductStage>
-            <figcaption className={selectedHasOpaqueBackground ? "has-warning" : ""}>
+            <figcaption className={selectedValidationCode ? "has-warning" : ""}>
               <strong>{tr("Generated garment")}</strong>
               {selectedHasOpaqueBackground
                 ? <span className="import-editor__opaque-warning"><WarningCircle size={13} weight="fill" aria-hidden="true" />{tr("The model did not correctly generate this image without a background.")}</span>
+                : selectedFailedGarmentValidation
+                  ? <span className="import-editor__opaque-warning"><WarningCircle size={13} weight="fill" aria-hidden="true" />{tr(selectedValidationCode === "garment_type_mismatch" ? "Wardrobe found the wrong or an extra product in this result." : "This result did not pass Wardrobe's image check.")}</span>
                 : <span>{tr("AI reconstruction")}</span>}
             </figcaption>
           </figure>
@@ -879,8 +887,8 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
                     >
                       <img src={candidate.assetUrl} alt={tr("Generated garment version {number}", { number: index + 1 })} />
                       <span>{tr("Version {number}", { number: index + 1 })}</span>
-                      {candidate.backgroundTransparent === false
-                        ? <WarningCircle className="import-candidate-history__warning" size={12} weight="fill" aria-label={tr("Background is not transparent")} />
+                      {candidate.validationCode || candidate.backgroundTransparent === false
+                        ? <WarningCircle className="import-candidate-history__warning" size={12} weight="fill" aria-label={tr(candidate.backgroundTransparent === false ? "Background is not transparent" : "Did not pass garment validation")} />
                         : isSelected && <Check size={12} weight="bold" aria-hidden="true" />}
                     </button>
                   );
@@ -924,6 +932,12 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
               value={draft.garmentClarifications}
               onChange={(garmentClarifications) => setDraft({ ...draft, garmentClarifications })}
             />
+            {selectedValidationCode && (
+              <p className="import-card__detail import-editor__generation-warning">
+                <WarningCircle size={15} weight="fill" aria-hidden="true" />
+                <span>{selectedGarmentCandidate.validationMessage || tr("Wardrobe paused here so you can inspect the generated image before spending credits on another model.")}</span>
+              </p>
+            )}
             {job.stages.garment?.error && garmentCandidates.length > 0 && (
               <p className="import-card__detail import-editor__generation-warning">
                 <WarningCircle size={15} weight="fill" aria-hidden="true" />
@@ -941,9 +955,14 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
         <div className="import-actions">
           <button className="import-button" disabled={busy} onClick={() => onAction("reject")}><Trash size={14} /> {tr("Reject")}</button>
           {!isCrop && <button className="import-button" disabled={busy || (isGarment && (!draft.name.trim() || !primaryValid || !secondaryValid))} onClick={() => onAction("regenerate", regenPrompt)}><ArrowCounterClockwise size={14} /> {tr("Regenerate")}</button>}
+          {isGarment && suggestedModel && (
+            <button className="import-button" disabled={busy || !draft.name.trim() || !primaryValid || !secondaryValid} onClick={() => onAction("regenerate", regenPrompt, { useSuggestedModel: true })}>
+              <ArrowsLeftRight size={14} /> {tr("Try {model}", { model: aiModelLabel(suggestedModel) })}
+            </button>
+          )}
           <button
             className="import-button import-button--primary"
-            disabled={busy || (isGarment && (!draft.name.trim() || !primaryValid || !secondaryValid))}
+            disabled={busy || (isGarment && (!draft.name.trim() || !primaryValid || !secondaryValid || selectedFailedGarmentValidation))}
             onClick={() => selectedHasOpaqueBackground ? setOpaqueConfirmationOpen(true) : onAction("approve")}
           ><Check size={14} weight="bold" /> {tr(isCrop ? "Use crop" : isGarment ? "Add to wardrobe" : "Approve")}</button>
         </div>
@@ -1308,7 +1327,13 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
             body: JSON.stringify({ metadata }),
           }, userId);
         }
-        const updated = await api(`${API}/${job.id}/stages/${stage}/${action}`, { method: "POST", body: action === "regenerate" ? JSON.stringify({ prompt }) : undefined }, userId);
+        const updated = await api(`${API}/${job.id}/stages/${stage}/${action}`, {
+          method: "POST",
+          body: action === "regenerate" ? JSON.stringify({
+            prompt,
+            useSuggestedModel: actionOptions.useSuggestedModel === true,
+          }) : undefined,
+        }, userId);
         const removeFromQueue = action === "reject" || (stage === "modeled" && action === "approve");
         const remainingJobs = removeFromQueue ? jobs.filter((item) => item.id !== job.id) : null;
         setJobs((current) => removeFromQueue ? current.filter((item) => item.id !== job.id) : current.map((item) => item.id === job.id ? updated : item));

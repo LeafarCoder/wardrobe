@@ -11,6 +11,15 @@ function cleanCandidate(candidate = {}) {
     attempt: Math.max(1, Math.round(Number(candidate.attempt) || 1)),
     generatedAt: typeof candidate.generatedAt === "string" ? candidate.generatedAt : null,
     ...(candidate.backgroundTransparent === false ? { backgroundTransparent: false } : {}),
+    ...(typeof candidate.validationCode === "string" && candidate.validationCode
+      ? { validationCode: candidate.validationCode.slice(0, 80) }
+      : {}),
+    ...(typeof candidate.validationMessage === "string" && candidate.validationMessage
+      ? { validationMessage: candidate.validationMessage.slice(0, 600) }
+      : {}),
+    ...(typeof candidate.suggestedModel === "string" && candidate.suggestedModel
+      ? { suggestedModel: candidate.suggestedModel.slice(0, 180) }
+      : {}),
   };
 }
 

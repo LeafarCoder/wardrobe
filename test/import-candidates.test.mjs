@@ -61,3 +61,18 @@ test("preserves the opaque-background warning when selecting a retained result",
     false,
   );
 });
+
+test("preserves validation details and the user-invoked alternative model", () => {
+  const stage = appendImportGenerationCandidate({}, {
+    id: "garment-wrong-product",
+    assetUrl: "/api/import/assets/job/garment-wrong-product.png",
+    validationCode: "garment_type_mismatch",
+    validationMessage: "The generated image still contains another product.",
+    suggestedModel: "bytedance-seed/seedream-4.5",
+  });
+  const candidate = selectedImportGenerationCandidate(stage);
+
+  assert.equal(candidate.validationCode, "garment_type_mismatch");
+  assert.equal(candidate.validationMessage, "The generated image still contains another product.");
+  assert.equal(candidate.suggestedModel, "bytedance-seed/seedream-4.5");
+});
