@@ -6,6 +6,7 @@ import {
   Check,
   CloudRain,
   CoatHanger,
+  EyeSlash,
   FloppyDisk,
   Flower,
   Leaf,
@@ -157,6 +158,7 @@ export function OutfitStudio({
   onReorder,
   onGenerate,
   onDeleteLook,
+  onArchiveLook,
 }) {
   const [draft, setDraft] = useState(blankDraft);
   const [search, setSearch] = useState("");
@@ -462,6 +464,20 @@ export function OutfitStudio({
     }
   };
 
+  const archiveModeledLook = async (lookId) => {
+    if (!draft.id || busy) return;
+    setBusy("archive-look");
+    setError("");
+    try {
+      const result = await onArchiveLook(draft.id, lookId);
+      loadOutfit(result.outfit);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy("");
+    }
+  };
+
   const activeAi = aiCandidates[activeAiIndex];
   const originalIds = new Set((aiOriginal?.garments || []).map((entry) => entry.itemId));
   const candidateIds = new Set(activeAi?.itemIds || []);
@@ -614,7 +630,12 @@ export function OutfitStudio({
               <p className="outfit-presentation-note">{tr("Image direction stays hidden until you choose to generate.")}</p>
               {visibleLook && (
                 <div className="outfit-modeled-gallery">
-                  <OptimizedImage src={visibleLook.preview || visibleLook.image} alt={draft.name} sizes="720px" />
+                  <div className="outfit-modeled-stage">
+                    <OptimizedImage src={visibleLook.preview || visibleLook.image} alt={draft.name} sizes="720px" />
+                    <button type="button" onClick={() => archiveModeledLook(visibleLook.id)} disabled={Boolean(busy)} title={tr("Move this photo to the Vault")}>
+                      {busy === "archive-look" ? <SpinnerGap className="spin" /> : <EyeSlash />}{tr("Move to Vault")}
+                    </button>
+                  </div>
                   <div>{draft.modeledLooks.map((look) => <span className={look.id === visibleLook.id ? "active" : ""} key={look.id}><button type="button" className="outfit-look-preview" onClick={() => setActiveLookId(look.id)} aria-label={tr("Show this modeled look")}><OptimizedImage src={look.preview || look.image} alt="" sizes="88px" /></button><button type="button" className={deleteLookId === look.id ? "confirm-delete" : ""} onClick={() => removeModeledLook(look.id)} aria-label={deleteLookId === look.id ? tr("Confirm delete") : tr("Delete modeled look")}>{deleteLookId === look.id ? <Check /> : <Trash />}</button></span>)}</div>
                 </div>
               )}

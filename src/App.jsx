@@ -180,7 +180,7 @@ function editableItem(item) {
 
 function itemModeledLooks(item) {
   if (Array.isArray(item.modeledLooks)) {
-    return item.modeledLooks.filter((look) => look?.id && look?.image);
+    return item.modeledLooks.filter((look) => look?.id && look?.image && !look.vaultedAt);
   }
   return item.modeledImage ? [{
     id: "legacy",
@@ -1532,6 +1532,8 @@ function ItemViewer({
   onSelectColorVersion,
   onReorderColorVersions,
   onDeleteModeled,
+  onArchiveGarment,
+  onArchiveModeled,
   onDeleteSourcePhoto,
   onReorderMedia,
   onDirtyChange,
@@ -1583,6 +1585,7 @@ function ItemViewer({
   const [sourcePhotoIndex, setSourcePhotoIndex] = useState(0);
   const [generatingModeledFor, setGeneratingModeledFor] = useState(null);
   const [deletingModeled, setDeletingModeled] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState(null);
   const [sourceDeleteCandidate, setSourceDeleteCandidate] = useState(null);
   const [deletingSourcePhoto, setDeletingSourcePhoto] = useState(false);
@@ -2202,6 +2205,53 @@ function ItemViewer({
     }
   };
 
+  const archiveModeledLook = async () => {
+    if (!activeModeledLook || archiving || deletingModeled || generatingModeled) return;
+    if (isDirty) {
+      setViewerToast({
+        title: tr("Save this garment first"),
+        message: tr("Save your changes before moving a photo to the Vault."),
+      });
+      nudgeUnsaved(false);
+      return;
+    }
+    setArchiving(true);
+    setViewerToast(null);
+    try {
+      const previousIndex = activeMediaIndex;
+      const updated = await onArchiveModeled(item.id, activeModeledLook.id);
+      const nextMedia = orderedGarmentMedia({
+        sourcePhotos: itemSourcePhotos(updated),
+        modeledLooks: itemModeledLooks(updated),
+        mediaOrder: updated.mediaOrder,
+      });
+      setActiveMediaId(nextMedia[Math.min(previousIndex, Math.max(0, nextMedia.length - 1))]?.id || null);
+      setMediaPreviewOpen(null);
+      setViewerToast({ title: tr("Photo moved to Vault"), message: tr("Open Vault from your profile menu to restore it.") });
+    } catch (requestError) {
+      setViewerToast({ title: tr("Could not move the photo"), message: readableError(requestError) });
+    } finally {
+      setArchiving(false);
+    }
+  };
+
+  const archiveGarment = async () => {
+    if (archiving || deletingGarment || isDirty) {
+      if (isDirty) {
+        setViewerToast({ title: tr("Save this garment first"), message: tr("Save your changes before moving the garment to the Vault.") });
+        nudgeUnsaved(false);
+      }
+      return;
+    }
+    setArchiving(true);
+    try {
+      await onArchiveGarment(item.id);
+    } catch (requestError) {
+      setViewerToast({ title: tr("Could not move the garment"), message: readableError(requestError) });
+      setArchiving(false);
+    }
+  };
+
   const requestDeleteSourcePhoto = () => {
     if (activeMedia?.kind !== GARMENT_MEDIA_ORIGINAL || deletingSourcePhoto || generatingModeled) return;
     if (isDirty) {
@@ -2809,6 +2859,14 @@ function ItemViewer({
 
         <div className="viewer-actions">
           <button
+            className="secondary-button viewer-vault-button"
+            type="button"
+            onClick={archiveGarment}
+            disabled={archiving || deletingGarment}
+          >
+            {archiving ? <SpinnerGap className="spin" size={15} /> : <EyeSlash size={15} weight="regular" aria-hidden="true" />} {tr(archiving ? "Moving…" : "Move to Vault")}
+          </button>
+          <button
             ref={deleteGarmentButtonRef}
             className="delete-button"
             type="button"
@@ -3120,6 +3178,19 @@ function ItemViewer({
                 <span className="garment-media-ai-badge is-dialog" role="img" tabIndex={0} aria-label={tr("AI generated")} data-tooltip={tr("AI generated")}>
                   <Sparkle size={9} weight="fill" aria-hidden="true" />
                 </span>
+              )}
+              {mediaPreviewOpen === "media" && isActiveMediaGenerated && (
+                <button
+                  className="media-preview-dialog__vault"
+                  type="button"
+                  onClick={archiveModeledLook}
+                  disabled={archiving}
+                  aria-label={tr("Move this photo to the Vault")}
+                  title={tr("Move this photo to the Vault")}
+                >
+                  {archiving ? <SpinnerGap className="spin" size={16} /> : <EyeSlash size={17} aria-hidden="true" />}
+                  <span>{tr(archiving ? "Moving…" : "Move to Vault")}</span>
+                </button>
               )}
               {mediaPreviewOpen === "media" && isActiveMediaGenerated && (
                 <div className="modeled-image-settings">
@@ -3706,7 +3777,7 @@ function InfoTooltip({ label, children, className = "" }) {
   );
 }
 
-function ProfileMenu({ users, currentUser, canCreate, connectionCount, originalPhotoCount, onConnections, onOriginalPhotos, onCreate, onSelect, onEdit, onExport, onLogout }) {
+function ProfileMenu({ users, currentUser, canCreate, connectionCount, originalPhotoCount, onConnections, onOriginalPhotos, onVault, onCreate, onSelect, onEdit, onExport, onLogout }) {
   const detailsRef = useRef(null);
   const closeMenu = () => { if (detailsRef.current) detailsRef.current.open = false; };
 
@@ -3786,6 +3857,9 @@ function ProfileMenu({ users, currentUser, canCreate, connectionCount, originalP
           </button>
           <button className="profile-menu__export" type="button" onClick={() => { onOriginalPhotos(); closeMenu(); }}>
             <ImageSquare size={14} /> {tr("Original photos")}<span className="profile-menu__notification is-neutral">{originalPhotoCount}</span>
+          </button>
+          <button className="profile-menu__export" type="button" onClick={() => { onVault(); closeMenu(); }}>
+            <LockKey size={14} /> {tr("Vault")}
           </button>
           <button className="profile-menu__export" type="button" onClick={() => { onExport(); closeMenu(); }} title={tr("Includes only your own wardrobe and photos")}>
             <DownloadSimple size={14} /> {tr("Download data")}
@@ -3918,6 +3992,126 @@ function ProfileHeightEditor({ value, onChange }) {
         </label>
       )}
     </section>
+  );
+}
+
+function VaultDialog({ user, onClose, onRestore, onSetUpPassword }) {
+  const [password, setPassword] = useState("");
+  const [entries, setEntries] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [preview, setPreview] = useState(null);
+  const passwordRef = useRef(null);
+
+  useEffect(() => {
+    if (user.hasVaultPassword) requestAnimationFrame(() => passwordRef.current?.focus());
+  }, [user.hasVaultPassword]);
+
+  useEffect(() => {
+    const closeOnEscape = (event) => {
+      if (event.key !== "Escape" || busy) return;
+      event.preventDefault();
+      if (preview) setPreview(null);
+      else onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [busy, onClose, preview]);
+
+  const unlock = async (event) => {
+    event.preventDefault();
+    setBusy("unlock");
+    setError("");
+    try {
+      const result = await profileApi(withWardrobeUser(`/api/users/${user.id}/vault`, user.id), {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+      setEntries(result.entries || []);
+      setPassword("");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const restore = async (entry) => {
+    setBusy(entry.id);
+    setError("");
+    try {
+      await onRestore(entry);
+      setEntries((current) => current.filter((candidate) => candidate.id !== entry.id));
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const groups = entries ? [
+    ["garment", tr("Garments")],
+    ["garment-look", tr("Garment photos")],
+    ["outfit-look", tr("Outfit photos")],
+  ].map(([kind, label]) => ({ kind, label, entries: entries.filter((entry) => entry.kind === kind) })).filter((group) => group.entries.length) : [];
+
+  return (
+    <div className="vault-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
+      <section className={`vault-dialog${entries ? " is-open" : " is-locked"}`} role="dialog" aria-modal="true" aria-labelledby="vault-title">
+        <header>
+          <div><p>{tr("Private storage")}</p><h2 id="vault-title">{tr("Vault")}</h2></div>
+          <button type="button" onClick={onClose} disabled={Boolean(busy)} aria-label={tr("Close Vault")}><X size={21} /></button>
+        </header>
+        {entries ? (
+          <div className="vault-dialog__content">
+            <div className="vault-dialog__intro"><LockKey size={18} /><span><strong>{tr("Vault unlocked")}</strong><small>{tr("Restore anything you want to return to your wardrobe or Outfit Studio.")}</small></span></div>
+            {!entries.length && <div className="vault-empty"><EyeSlash size={34} weight="light" /><strong>{tr("Your Vault is empty")}</strong><p>{tr("Hidden garments and generated photos will appear here.")}</p></div>}
+            {groups.map((group) => (
+              <section className="vault-group" key={group.kind}>
+                <header><h3>{group.label}</h3><span>{group.entries.length}</span></header>
+                <div className="vault-grid">
+                  {group.entries.map((entry) => (
+                    <article key={entry.id}>
+                      <button className="vault-card__image" type="button" onClick={() => setPreview(entry)} aria-label={tr("Enlarge {name}", { name: entry.name })}>
+                        <OptimizedImage src={entry.preview || entry.image} alt="" sizes="240px" />
+                        {entry.kind !== "garment" && <span><Sparkle size={10} weight="fill" /> {tr("Generated")}</span>}
+                      </button>
+                      <div><strong>{entry.name}</strong><small>{tr(entry.kind === "garment" ? "Hidden garment" : entry.kind === "outfit-look" ? "Outfit Studio photo" : "Garment photo")}</small></div>
+                      <button className="vault-card__restore" type="button" disabled={Boolean(busy)} onClick={() => restore(entry)}>
+                        {busy === entry.id ? <SpinnerGap className="spin" size={14} /> : <ArrowCounterClockwise size={14} />}{tr("Restore")}
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ))}
+            {error && <p className="vault-error" role="alert">{error}</p>}
+          </div>
+        ) : user.hasVaultPassword ? (
+          <form className="vault-unlock" onSubmit={unlock}>
+            <span className="vault-unlock__icon"><LockKey size={29} weight="light" /></span>
+            <h3>{tr("Enter your Vault password")}</h3>
+            <p>{tr("The Vault locks again each time you close it.")}</p>
+            <label><span>{tr("Password")}</span><input ref={passwordRef} type="password" value={password} autoComplete="current-password" required minLength="6" maxLength="128" onChange={(event) => { setPassword(event.target.value); setError(""); }} /></label>
+            {error && <p className="vault-error" role="alert">{error}</p>}
+            <button type="submit" disabled={busy === "unlock" || password.length < 6}>{busy === "unlock" ? <SpinnerGap className="spin" size={15} /> : <LockKey size={15} />}{tr(busy === "unlock" ? "Unlocking…" : "Unlock Vault")}</button>
+          </form>
+        ) : (
+          <div className="vault-unlock vault-setup">
+            <span className="vault-unlock__icon"><LockKey size={29} weight="light" /></span>
+            <h3>{tr("Set up your Vault")}</h3>
+            <p>{tr("Create a password in profile preferences before hiding sensitive garments or generated photos.")}</p>
+            <button type="button" onClick={onSetUpPassword}><Key size={15} />{tr("Create Vault password")}</button>
+          </div>
+        )}
+        {preview && (
+          <div className="vault-preview" role="dialog" aria-modal="true" aria-label={preview.name} onMouseDown={(event) => event.target === event.currentTarget && setPreview(null)}>
+            <OptimizedImage src={preview.image} alt={preview.name} sizes="90vw" priority />
+            <button type="button" onClick={() => setPreview(null)} aria-label={tr("Close enlarged photo")}><X size={22} /></button>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -4101,6 +4295,7 @@ const PROFILE_TABS = [
   { id: "sizes", label: "Sizes & fit" },
   { id: "style", label: "Style" },
   { id: "display", label: "Wardrobe" },
+  { id: "vault", label: "Vault" },
   { id: "ai", label: "AI & costs" },
 ];
 
@@ -4785,11 +4980,14 @@ function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
   );
 }
 
-function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, onStartTutorial }) {
+function ProfileEditor({ user, busy, error, canManageAccount, initialTab = "basics", onClose, onSave, onStartTutorial }) {
   const isNew = !user;
   const accountEditable = canManageAccount && (isNew || user?.accountStatus === "prepared");
   const originalLanguageRef = useRef(user?.language || getLocale());
-  const [activeTab, setActiveTab] = useState("basics");
+  const [activeTab, setActiveTab] = useState(initialTab);
+  const [vaultPassword, setVaultPassword] = useState("");
+  const [vaultPasswordConfirm, setVaultPasswordConfirm] = useState("");
+  const [vaultPasswordError, setVaultPasswordError] = useState("");
   const [draft, setDraft] = useState({
     name: user?.name || "",
     accountEmail: user?.email || "",
@@ -4948,6 +5146,16 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
 
   const submit = async (event) => {
     event.preventDefault();
+    if (vaultPassword && vaultPassword.length < 6) {
+      setActiveTab("vault");
+      setVaultPasswordError(tr("Use at least 6 characters for the Vault password."));
+      return;
+    }
+    if (vaultPassword && vaultPassword !== vaultPasswordConfirm) {
+      setActiveTab("vault");
+      setVaultPasswordError(tr("The Vault passwords do not match."));
+      return;
+    }
     if (!isNew && referencesChanged && !visibleReferences.length) {
       setActiveTab("basics");
       setFileError(tr("Add at least one reference photo."));
@@ -4985,6 +5193,7 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
       // Omitted entirely unless the person actually typed a new key, so saving
       // any other tab never disturbs the stored one.
       ...(typeof apiKeyDraft === "string" ? { openRouterApiKey: apiKeyDraft.trim() } : {}),
+      ...(vaultPassword ? { vaultPassword } : {}),
     });
   };
 
@@ -5297,6 +5506,51 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
                 value={draft.wardrobeDisplay}
                 onChange={(wardrobeDisplay) => setDraft({ ...draft, wardrobeDisplay })}
               />
+            </section>
+          )}
+          {activeTab === "vault" && (
+            <section className="profile-tab-panel profile-vault-settings" role="tabpanel" id="profile-panel-vault" aria-labelledby="profile-tab-vault">
+              <div className="profile-tab-intro">
+                <div>
+                  <h3>{tr("Protect your Vault")}</h3>
+                  <p>{tr("Garments and generated photos moved to the Vault disappear from the wardrobe and Outfit Studio. This password is required every time the Vault is opened.")}</p>
+                </div>
+                <span><LockKey size={16} /> {tr(user?.hasVaultPassword ? "Password protected" : "Password not set")}</span>
+              </div>
+              <div className="profile-vault-card">
+                <span className="profile-vault-card__icon"><LockKey size={22} weight="light" /></span>
+                <div>
+                  <strong>{tr(user?.hasVaultPassword ? "Change Vault password" : "Create a Vault password")}</strong>
+                  <small>{tr(user?.hasVaultPassword
+                    ? "Leave these fields empty to keep your current password."
+                    : "Use at least 6 characters. The password is stored as a secure salted hash and cannot be recovered.")}</small>
+                </div>
+                <label>
+                  <span>{tr(user?.hasVaultPassword ? "New password" : "Password")}</span>
+                  <input
+                    type="password"
+                    value={vaultPassword}
+                    minLength="6"
+                    maxLength="128"
+                    autoComplete="new-password"
+                    placeholder={user?.hasVaultPassword ? "••••••••" : tr("At least 6 characters")}
+                    onChange={(event) => { setVaultPassword(event.target.value); setVaultPasswordError(""); }}
+                  />
+                </label>
+                <label>
+                  <span>{tr("Confirm password")}</span>
+                  <input
+                    type="password"
+                    value={vaultPasswordConfirm}
+                    minLength="6"
+                    maxLength="128"
+                    autoComplete="new-password"
+                    placeholder={user?.hasVaultPassword ? "••••••••" : tr("Repeat the password")}
+                    onChange={(event) => { setVaultPasswordConfirm(event.target.value); setVaultPasswordError(""); }}
+                  />
+                </label>
+                {vaultPasswordError && <p role="alert">{vaultPasswordError}</p>}
+              </div>
             </section>
           )}
           {activeTab === "ai" && (
@@ -6078,6 +6332,7 @@ export function App() {
   const [isOwner, setIsOwner] = useState(false);
   const [currentUserId, setCurrentUserId] = useState(null);
   const [profileEditor, setProfileEditor] = useState(null);
+  const [profileInitialTab, setProfileInitialTab] = useState("basics");
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [connectionsOpen, setConnectionsOpen] = useState(false);
@@ -6103,6 +6358,7 @@ export function App() {
   const [plannerError, setPlannerError] = useState("");
   const [outfitStudioOpen, setOutfitStudioOpen] = useState(false);
   const [originalPhotosOpen, setOriginalPhotosOpen] = useState(false);
+  const [vaultOpen, setVaultOpen] = useState(false);
   const [selectedOriginalPhotoId, setSelectedOriginalPhotoId] = useState(null);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [tutorialStep, setTutorialStep] = useState("profile");
@@ -6142,6 +6398,7 @@ export function App() {
       setPlannerOpen(false);
       setOutfitStudioOpen(false);
       setOriginalPhotosOpen(false);
+      setVaultOpen(false);
       setSelectedOriginalPhotoId(null);
       setConnectionsOpen(false);
       setConnectionsData(EMPTY_CONNECTION_DATA);
@@ -6299,6 +6556,7 @@ export function App() {
     setTutorialStep(step);
     setTutorialOpen(true);
     if (step === "profile") {
+      setProfileInitialTab("basics");
       setProfileError("");
       setProfileEditor(currentUser.id);
     }
@@ -6340,6 +6598,7 @@ export function App() {
     setPlannerOpen(false);
     setOutfitStudioOpen(false);
     setOriginalPhotosOpen(false);
+    setVaultOpen(false);
     setSelectedOriginalPhotoId(null);
     setPlannerError("");
     setMergeSourceId(null);
@@ -6354,13 +6613,13 @@ export function App() {
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!plannerOpen && !outfitStudioOpen && !originalPhotosOpen && !connectionsOpen && !savedViewDialogOpen && !savedViewDeleteCandidate && !mergeCandidateItem && !openRouterKeyDialogOpen) return undefined;
+    if (!plannerOpen && !outfitStudioOpen && !originalPhotosOpen && !vaultOpen && !connectionsOpen && !savedViewDialogOpen && !savedViewDeleteCandidate && !mergeCandidateItem && !openRouterKeyDialogOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [connectionsOpen, mergeCandidateItem, openRouterKeyDialogOpen, originalPhotosOpen, outfitStudioOpen, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen]);
+  }, [connectionsOpen, mergeCandidateItem, openRouterKeyDialogOpen, originalPhotosOpen, outfitStudioOpen, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen, vaultOpen]);
 
   const customOrderedItems = useMemo(() => {
     const sourcePositions = new Map(items.map((item, index) => [item.id, index]));
@@ -6834,6 +7093,7 @@ export function App() {
     closeViewer();
     setTutorialStep("profile");
     setTutorialOpen(true);
+    setProfileInitialTab("basics");
     setProfileError("");
     setProfileEditor(currentUser.id);
     void persistTutorial("active", "profile").catch((requestError) => setError(requestError.message));
@@ -7106,6 +7366,55 @@ export function App() {
     return updated;
   };
 
+  const archiveGarment = async (id) => {
+    const result = await profileApi(`/api/import/wardrobe/${id}/vault?user=${encodeURIComponent(currentUserId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ vaulted: true }),
+    });
+    setItems((current) => current.filter((item) => item.id !== id));
+    closeViewer();
+    setAppToast({ title: tr("Garment moved to Vault"), message: tr("It is now hidden from your wardrobe and Outfit Studio.") });
+    return result.item;
+  };
+
+  const archiveModeledLook = async (id, lookId) => {
+    const updated = await profileApi(`/api/import/wardrobe/${id}/modeled/${encodeURIComponent(lookId)}?user=${encodeURIComponent(currentUserId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ vaulted: true }),
+    });
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    return updated;
+  };
+
+  const restoreVaultEntry = async (entry) => {
+    if (entry.kind === "garment") {
+      const result = await profileApi(`/api/import/wardrobe/${entry.itemId}/vault?user=${encodeURIComponent(currentUserId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ vaulted: false }),
+      });
+      setItems((current) => current.some((item) => item.id === result.item.id)
+        ? current.map((item) => item.id === result.item.id ? { ...item, ...result.item } : item)
+        : [...current, result.item]);
+      return result;
+    }
+    if (entry.kind === "garment-look") {
+      const updated = await profileApi(`/api/import/wardrobe/${entry.itemId}/modeled/${encodeURIComponent(entry.lookId)}?user=${encodeURIComponent(currentUserId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ vaulted: false }),
+      });
+      if (!updated.vaultedAt) {
+        setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+      }
+      return updated;
+    }
+    const result = await profileApi(`/api/import/outfits/${encodeURIComponent(entry.outfitId)}/modeled/${encodeURIComponent(entry.lookId)}?user=${encodeURIComponent(currentUserId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ vaulted: false }),
+    });
+    setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+    return result;
+  };
+
   const deleteSourcePhoto = async (id, sourcePhotoId, replacementSourcePhotoId = null) => {
     const updated = await profileApi(`/api/import/wardrobe/${id}/sources/${encodeURIComponent(sourcePhotoId)}?user=${encodeURIComponent(currentUserId)}`, {
       method: "DELETE",
@@ -7246,6 +7555,15 @@ export function App() {
     return result;
   };
 
+  const archiveWardrobeOutfitLook = async (outfitId, lookId) => {
+    const result = await profileApi(`/api/import/outfits/${encodeURIComponent(outfitId)}/modeled/${encodeURIComponent(lookId)}?user=${encodeURIComponent(currentUserId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ vaulted: true }),
+    });
+    setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+    return result;
+  };
+
   // Cmd/Ctrl + . opens the profile editor, matching the settings shortcut most
   // desktop apps use. Ignored while typing so it cannot interrupt an edit.
   useEffect(() => {
@@ -7256,6 +7574,7 @@ export function App() {
         && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
       if (typing || !currentUser?.id) return;
       event.preventDefault();
+      setProfileInitialTab("basics");
       setProfileError("");
       setProfileEditor((current) => (current ? null : currentUser.id));
     };
@@ -7515,6 +7834,8 @@ export function App() {
           onSelectColorVersion={selectColorVersion}
           onReorderColorVersions={reorderColorVersions}
           onDeleteModeled={deleteModeledLook}
+          onArchiveGarment={archiveGarment}
+          onArchiveModeled={archiveModeledLook}
           onDeleteSourcePhoto={deleteSourcePhoto}
           onReorderMedia={reorderGarmentMedia}
           onDirtyChange={setViewerDirty}
@@ -7549,9 +7870,10 @@ export function App() {
             setSelectedOriginalPhotoId(null);
             setOriginalPhotosOpen(true);
           }}
-          onCreate={() => { setProfileError(""); setProfileEditor("new"); }}
+          onVault={() => setVaultOpen(true)}
+          onCreate={() => { setProfileInitialTab("basics"); setProfileError(""); setProfileEditor("new"); }}
           onSelect={selectUser}
-          onEdit={() => { setProfileError(""); setProfileEditor(currentUser.id); }}
+          onEdit={() => { setProfileInitialTab("basics"); setProfileError(""); setProfileEditor(currentUser.id); }}
           onExport={downloadPersonalData}
           onLogout={auth.enabled ? logout : null}
         />
@@ -7585,12 +7907,26 @@ export function App() {
           onDisconnect={disconnectConnection}
         />
       )}
+      {vaultOpen && currentUser && (
+        <VaultDialog
+          user={currentUser}
+          onClose={() => setVaultOpen(false)}
+          onRestore={restoreVaultEntry}
+          onSetUpPassword={() => {
+            setVaultOpen(false);
+            setProfileInitialTab("vault");
+            setProfileError("");
+            setProfileEditor(currentUser.id);
+          }}
+        />
+      )}
       {profileEditor && (
         <ProfileEditor
           user={profileEditor === "new" ? null : users.find((user) => user.id === profileEditor)}
           busy={profileBusy}
           error={profileError}
           canManageAccount={isOwner}
+          initialTab={profileInitialTab}
           onClose={() => !profileBusy && setProfileEditor(null)}
           onSave={saveProfile}
           onStartTutorial={users.find((user) => user.id === profileEditor)?.id === auth?.user?.id ? startTutorial : null}
@@ -7641,6 +7977,7 @@ export function App() {
           onReorder={reorderWardrobeOutfits}
           onGenerate={generateWardrobeOutfitLook}
           onDeleteLook={deleteWardrobeOutfitLook}
+          onArchiveLook={archiveWardrobeOutfitLook}
         />
       )}
       {tutorialOpen && currentUser?.id === auth?.user?.id && (
@@ -7651,7 +7988,7 @@ export function App() {
           hasSelectedGarment={Boolean(selectedItem)}
           onAdvance={advanceTutorial}
           onCancel={cancelTutorial}
-          onOpenProfile={() => { setProfileError(""); setProfileEditor(currentUser.id); }}
+          onOpenProfile={() => { setProfileInitialTab("basics"); setProfileError(""); setProfileEditor(currentUser.id); }}
           onOpenImporter={openTutorialImporter}
           onOpenPlanner={openTutorialPlanner}
           onOpenOutfitStudio={openTutorialOutfitStudio}

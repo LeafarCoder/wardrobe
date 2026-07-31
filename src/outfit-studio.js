@@ -201,6 +201,7 @@ function normalizeModeledLooks(value) {
       model: cleanText(look.model, 180) || null,
       fallbackUsed: Boolean(look.fallbackUsed),
       generatedAt: cleanText(look.generatedAt, 40) || null,
+      ...(cleanText(look.vaultedAt, 40) ? { vaultedAt: cleanText(look.vaultedAt, 40) } : {}),
       presentation: normalizeOutfitPresentation(look.presentation),
       context: normalizeModeledLookContext(look.context),
     }];

@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import {
   copyFile as fsCopyFile,
@@ -142,6 +142,38 @@ export function normalizeOpenRouterApiKey(value) {
 export function openRouterApiKeyHint(value) {
   const key = normalizeOpenRouterApiKey(value);
   return key ? `${key.slice(0, 11)}…${key.slice(-4)}` : "";
+}
+
+const VAULT_PASSWORD_FORMAT = /^scrypt\$([a-f0-9]{32})\$([a-f0-9]{64})$/i;
+
+export function normalizeVaultPassword(value) {
+  if (typeof value !== "string" || value.length < 6 || value.length > 128) return "";
+  return value;
+}
+
+export function hashVaultPassword(value, salt = randomBytes(16)) {
+  const password = normalizeVaultPassword(value);
+  if (!password) throw apiError("Use at least 6 characters for the Vault password.", 400, "invalid_vault_password");
+  const saltBuffer = Buffer.isBuffer(salt) ? salt : Buffer.from(String(salt), "hex");
+  if (saltBuffer.length !== 16) throw new Error("Vault password salt must be 16 bytes.");
+  return `scrypt$${saltBuffer.toString("hex")}$${scryptSync(password, saltBuffer, 32).toString("hex")}`;
+}
+
+export function verifyVaultPassword(value, encoded) {
+  const password = normalizeVaultPassword(value);
+  const match = typeof encoded === "string" ? encoded.match(VAULT_PASSWORD_FORMAT) : null;
+  if (!password || !match) return false;
+  const expected = Buffer.from(match[2], "hex");
+  const actual = scryptSync(password, Buffer.from(match[1], "hex"), expected.length);
+  return timingSafeEqual(actual, expected);
+}
+
+function vaultedAt(value) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
+function isVaulted(value) {
+  return Boolean(vaultedAt(value?.vaultedAt));
 }
 
 // The key belongs to whoever is signed in, not to the wardrobe being edited, so
@@ -1006,6 +1038,7 @@ export function modeledLooksForRecord(record = {}) {
       ...(look.context && typeof look.context === "object" && !Array.isArray(look.context)
         ? { context: normalizeModeledLookContext(look.context) }
         : {}),
+      ...(vaultedAt(look.vaultedAt) ? { vaultedAt: vaultedAt(look.vaultedAt) } : {}),
       generatedAt: typeof look.generatedAt === "string" && look.generatedAt ? look.generatedAt : null,
     }];
   });
@@ -1013,7 +1046,7 @@ export function modeledLooksForRecord(record = {}) {
 
 export function recordWithModeledLooks(record, looks) {
   const modeledLooks = modeledLooksForRecord({ modeledLooks: looks });
-  const latest = modeledLooks.at(-1) || null;
+  const latest = modeledLooks.filter((look) => !isVaulted(look)).at(-1) || null;
   const next = {
     ...record,
     modeledLooks,
@@ -1367,9 +1400,11 @@ function storedAssetUrl(owner, value, userId) {
   return withUser(assetId ? `/api/assets/${assetId}` : value, userId);
 }
 
-function publicImportedRecord(record, userId) {
+function publicImportedRecord(record, userId, { includeVault = false } = {}) {
   const regenerationCandidate = garmentRegenerationCandidateForRecord(record);
   const { assetIds, ...publicRecord } = record;
+  const modeledLooks = modeledLooksForRecord(record).filter((look) => includeVault || !isVaulted(look));
+  const latestModeledLook = modeledLooks.at(-1) || null;
   return {
     ...publicRecord,
     seasons: normalizeGarmentSeasons(record.seasons),
@@ -1385,8 +1420,11 @@ function publicImportedRecord(record, userId) {
     })),
     colorVariantOrder: garmentVersionOrder(record),
     selectedColorVariantId: selectedGarmentVariantId(record),
-    modeledImage: storedAssetUrl(record, record.modeledImage, userId),
-    modeledLooks: modeledLooksForRecord(record).map((look) => ({
+    modeledImage: storedAssetUrl(record, latestModeledLook?.image, userId),
+    modeledModel: latestModeledLook?.model || null,
+    modeledFallbackUsed: Boolean(latestModeledLook?.fallbackUsed),
+    modeledGeneratedAt: latestModeledLook?.generatedAt || null,
+    modeledLooks: modeledLooks.map((look) => ({
       ...look,
       image: storedAssetUrl(record, look.image, userId),
       preview: storedAssetUrl(record, look.preview, userId),
@@ -4442,6 +4480,9 @@ export function wardrobeImportApi(options = {}) {
       openRouterApiKey: Object.hasOwn(input, "openRouterApiKey")
         ? normalizeOpenRouterApiKey(input.openRouterApiKey)
         : normalizeOpenRouterApiKey(existing.openRouterApiKey),
+      vaultPasswordHash: Object.hasOwn(input, "vaultPassword")
+        ? hashVaultPassword(input.vaultPassword)
+        : existing.vaultPasswordHash || null,
       name,
       age,
       city: cleanProfileText(input.city ?? existing.city, 120),
@@ -4473,6 +4514,7 @@ export function wardrobeImportApi(options = {}) {
 
   const publicProfile = ({
     openRouterApiKey,
+    vaultPasswordHash,
     assetIds,
     googleSubject,
     accountPreparedAt,
@@ -4486,6 +4528,7 @@ export function wardrobeImportApi(options = {}) {
     // and enough of it to recognize which key is stored.
     hasOpenRouterKey: Boolean(normalizeOpenRouterApiKey(openRouterApiKey)),
     openRouterKeyHint: openRouterApiKeyHint(openRouterApiKey),
+    hasVaultPassword: Boolean(vaultPasswordHash && VAULT_PASSWORD_FORMAT.test(vaultPasswordHash)),
     wardrobePlans: normalizeWardrobePlans(profile.wardrobePlans).map((plan) => ({
       ...plan,
       result: {
@@ -4507,7 +4550,7 @@ export function wardrobeImportApi(options = {}) {
     })),
     wardrobeOutfits: normalizeWardrobeOutfits(profile.wardrobeOutfits).map((outfit) => ({
       ...outfit,
-      modeledLooks: outfit.modeledLooks.map((look) => ({
+      modeledLooks: outfit.modeledLooks.filter((look) => !isVaulted(look)).map((look) => ({
         ...look,
         image: storedAssetUrl({ assetIds }, look.image, profile.id),
         preview: storedAssetUrl({ assetIds }, look.preview, profile.id),
@@ -4654,7 +4697,7 @@ export function wardrobeImportApi(options = {}) {
         permissions: connection.permissions,
         person: connection.person,
         garments: connection.permissions.garments
-          ? records.filter((record) => record.userId === connection.grantorUserId)
+          ? records.filter((record) => record.userId === connection.grantorUserId && !isVaulted(record))
             .map((record) => sharedGarmentForViewer(record, userId))
           : [],
       }));
@@ -5222,12 +5265,58 @@ export function wardrobeImportApi(options = {}) {
     return index;
   }
 
-  async function loadImported(userId = null) {
+  async function loadImported(userId = null, { includeVault = false } = {}) {
     const records = await readLibraryRecords();
     if (!userId) return structuredClone(records);
     return records
-      .filter((record) => record.userId === userId)
-      .map((record) => publicImportedRecord(record, userId));
+      .filter((record) => record.userId === userId && (includeVault || !isVaulted(record)))
+      .map((record) => publicImportedRecord(record, userId, { includeVault }));
+  }
+
+  async function vaultPayload(profile) {
+    const records = (await loadImported()).filter((record) => record.userId === profile.id);
+    const entries = [];
+    for (const record of records) {
+      if (isVaulted(record)) {
+        entries.push({
+          id: `garment:${record.id}`,
+          kind: "garment",
+          itemId: record.id,
+          name: record.name,
+          preview: storedAssetUrl(record, record.thumbnail || record.imagePreview || record.image, profile.id),
+          image: storedAssetUrl(record, record.image, profile.id),
+          vaultedAt: record.vaultedAt,
+        });
+      }
+      for (const look of modeledLooksForRecord(record).filter(isVaulted)) {
+        entries.push({
+          id: `garment-look:${record.id}:${look.id}`,
+          kind: "garment-look",
+          itemId: record.id,
+          lookId: look.id,
+          name: record.name,
+          preview: storedAssetUrl(record, look.preview || look.image, profile.id),
+          image: storedAssetUrl(record, look.image, profile.id),
+          vaultedAt: look.vaultedAt,
+        });
+      }
+    }
+    for (const outfit of normalizeWardrobeOutfits(profile.wardrobeOutfits)) {
+      for (const look of outfit.modeledLooks.filter(isVaulted)) {
+        entries.push({
+          id: `outfit-look:${outfit.id}:${look.id}`,
+          kind: "outfit-look",
+          outfitId: outfit.id,
+          lookId: look.id,
+          name: outfit.name,
+          preview: storedAssetUrl(profile, look.preview || look.image, profile.id),
+          image: storedAssetUrl(profile, look.image, profile.id),
+          vaultedAt: look.vaultedAt,
+        });
+      }
+    }
+    entries.sort((first, second) => Date.parse(second.vaultedAt || 0) - Date.parse(first.vaultedAt || 0));
+    return { entries };
   }
 
   const libraryAssetUrl = (fileName, version = null) => (
@@ -7392,6 +7481,18 @@ Interpret this correction semantically in whatever language it is written. It ov
         });
         return json(res, 200, { user: publicProfile(profile) });
       }
+      const vaultMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/vault$/i);
+      if (vaultMatch && req.method === "POST") {
+        if (vaultMatch[1] !== signedInUserId) throw apiError("You can only open your own Vault.", 403, "forbidden_vault");
+        const input = await body(req, 8 * 1024);
+        if (!signedInUser.vaultPasswordHash) {
+          throw apiError("Set a Vault password in profile preferences first.", 409, "vault_password_not_set");
+        }
+        if (!verifyVaultPassword(input.password, signedInUser.vaultPasswordHash)) {
+          throw apiError("That Vault password is not correct.", 403, "invalid_vault_password");
+        }
+        return json(res, 200, await vaultPayload(signedInUser));
+      }
       const aiActivityMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/ai-usage\/activities$/i);
       if (aiActivityMatch && req.method === "GET") {
         if (aiActivityMatch[1] !== signedInUserId) throw apiError("You can only open your own wardrobe.", 403, "forbidden_profile");
@@ -7704,6 +7805,33 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (outfitModeledMatch && req.method === "DELETE" && outfitModeledMatch[2]) {
         return json(res, 200, await deleteSavedOutfitLook(outfitModeledMatch[1], outfitModeledMatch[2], user));
       }
+      if (outfitModeledMatch && req.method === "PATCH" && outfitModeledMatch[2]) {
+        const input = await body(req, 8 * 1024);
+        const saved = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const index = store.users.findIndex((candidate) => candidate.id === user.id);
+          if (index < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+          const outfits = normalizeWardrobeOutfits(store.users[index].wardrobeOutfits);
+          const outfitIndex = outfits.findIndex((candidate) => candidate.id === outfitModeledMatch[1]);
+          if (outfitIndex < 0) throw apiError("Saved outfit not found.", 404, "outfit_not_found");
+          const lookIndex = outfits[outfitIndex].modeledLooks.findIndex((look) => look.id === outfitModeledMatch[2]);
+          if (lookIndex < 0) throw apiError("Modeled outfit photo not found.", 404, "outfit_look_not_found");
+          const now = new Date().toISOString();
+          outfits[outfitIndex].modeledLooks[lookIndex] = {
+            ...outfits[outfitIndex].modeledLooks[lookIndex],
+            vaultedAt: input.vaulted === false ? null : now,
+          };
+          outfits[outfitIndex].updatedAt = now;
+          store.users[index] = { ...store.users[index], wardrobeOutfits: outfits, updatedAt: now };
+          await saveUsersStore(store);
+          return store.users[index];
+        });
+        const publicUser = publicProfile(saved);
+        return json(res, 200, {
+          outfit: publicUser.wardrobeOutfits.find((outfit) => outfit.id === outfitModeledMatch[1]),
+          user: publicUser,
+        });
+      }
       const outfitMatch = url.pathname.match(/^\/api\/import\/outfits\/([a-z0-9-]{1,80})$/i);
       if (outfitMatch && req.method === "PATCH") {
         const input = await body(req, 64 * 1024);
@@ -8010,7 +8138,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           }
           await withLibrary(async () => {
             const records = await loadImported();
-            const owned = records.filter((record) => record.userId === user.id);
+            const owned = records.filter((record) => record.userId === user.id && !isVaulted(record));
             const submitted = new Set(input.ids);
             if (
               submitted.size !== input.ids.length
@@ -8021,7 +8149,7 @@ Interpret this correction semantically in whatever language it is written. It ov
             }
             const positions = new Map(input.ids.map((id, index) => [id, index]));
             for (const record of records) {
-              if (record.userId === user.id) record.customOrder = positions.get(record.id);
+              if (record.userId === user.id && !isVaulted(record)) record.customOrder = positions.get(record.id);
             }
             await saveImported(records);
           });
@@ -8051,6 +8179,23 @@ Interpret this correction semantically in whatever language it is written. It ov
           ids: orderedIds,
           user: publicProfile(profile),
         });
+      }
+      const garmentVaultMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/vault$/i);
+      if (garmentVaultMatch && req.method === "PATCH") {
+        const input = await body(req, 8 * 1024);
+        const updated = await withLibrary(async () => {
+          const records = await loadImported();
+          const index = records.findIndex((record) => record.id === garmentVaultMatch[1] && record.userId === user.id);
+          if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+          records[index] = {
+            ...records[index],
+            vaultedAt: input.vaulted === false ? null : new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          await saveImported(records);
+          return records[index];
+        });
+        return json(res, 200, { item: publicImportedRecord(updated, user.id) });
       }
       const garmentRegenerationMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/regeneration(?:\/(accept))?$/i);
       if (garmentRegenerationMatch && !garmentRegenerationMatch[2] && req.method === "POST") {
@@ -8212,6 +8357,23 @@ Interpret this correction semantically in whatever language it is written. It ov
         return json(res, 201, publicImportedRecord(saved, user.id));
       }
       const modeledLookMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/modeled\/([a-z0-9-]{1,80})$/i);
+      if (modeledLookMatch && req.method === "PATCH") {
+        const input = await body(req, 8 * 1024);
+        const record = await withLibrary(async () => {
+          const records = await loadImported();
+          const index = records.findIndex((candidate) => candidate.id === modeledLookMatch[1] && candidate.userId === user.id);
+          if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+          const looks = modeledLooksForRecord(records[index]);
+          const lookIndex = looks.findIndex((look) => look.id === modeledLookMatch[2]);
+          if (lookIndex < 0) throw apiError("Modeled garment photo not found.", 404, "modeled_look_not_found");
+          const now = new Date().toISOString();
+          looks[lookIndex] = { ...looks[lookIndex], vaultedAt: input.vaulted === false ? null : now };
+          records[index] = { ...recordWithModeledLooks(records[index], looks), updatedAt: now };
+          await saveImported(records);
+          return records[index];
+        });
+        return json(res, 200, publicImportedRecord(record, user.id));
+      }
       if (modeledLookMatch && req.method === "DELETE") {
         const record = await deleteImportedModeledLook(modeledLookMatch[1], modeledLookMatch[2], user);
         return json(res, 200, publicImportedRecord(record, user.id));

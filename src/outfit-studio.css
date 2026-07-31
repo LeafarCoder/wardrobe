@@ -312,7 +312,11 @@
 .outfit-direction textarea:focus { border-color: var(--ink); }
 .outfit-direction > small { position: absolute; right: 8px; bottom: 7px; color: var(--muted); font-size: 8px; }
 .outfit-modeled-gallery { margin-top: 13px; }
-.outfit-modeled-gallery > img { width: 100%; max-height: 570px; object-fit: contain; border: 1px solid var(--line); background: #eee8de; }
+.outfit-modeled-stage { position: relative; }
+.outfit-modeled-stage > img { width: 100%; max-height: 570px; display: block; object-fit: contain; border: 1px solid var(--line); background: #eee8de; }
+.outfit-modeled-stage > button { position: absolute; top: 9px; right: 9px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(25,24,22,.22); border-radius: 7px; padding: 7px 9px; background: rgba(255,253,249,.94); color: var(--ink); font: inherit; font-size: 9px; cursor: pointer; }
+.outfit-modeled-stage > button:hover, .outfit-modeled-stage > button:focus-visible { border-color: var(--ink); outline: none; }
+.outfit-modeled-stage > button svg { width: 13px; height: 13px; }
 .outfit-modeled-gallery > div { display: flex; gap: 7px; margin-top: 7px; overflow-x: auto; }
 .outfit-modeled-gallery > div > span { position: relative; flex: 0 0 86px; border: 1px solid var(--line); }
 .outfit-modeled-gallery > div > span.active { border-color: var(--ink); }
