@@ -567,24 +567,21 @@ function ImportQueueBoard({ jobs, drafts, selectedId, busyId, onReview, onRetry,
   );
 }
 
-function DuplicateComparisonDrawer({ job, busy, onClose, onMerge, onKeep }) {
+function DuplicateComparisonEditor({ job, busy, onMerge, onKeep }) {
   const candidate = job.duplicateReview?.candidate;
   if (!candidate) return null;
   const partLabel = PARTS.find(([id]) => id === candidate.part)?.[1] || "Garment";
   const match = Math.round((job.duplicateReview?.score || 0) * 100);
   const sourceCount = Number(candidate.sourcePhotoCount) || 0;
   return (
-    <div className="import-duplicate-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
-      <aside className="import-duplicate-drawer" aria-labelledby="duplicate-drawer-title">
-        <header className="import-duplicate-drawer__header">
-          <div>
-            <p>{tr("Possible duplicate")}</p>
-            <h2 id="duplicate-drawer-title">{tr("Is this the same garment?")}</h2>
-          </div>
-          <button className="import-icon-button" type="button" disabled={busy} onClick={onClose} aria-label={tr("Close comparison")}><X size={20} /></button>
-        </header>
-        <div className="import-duplicate-drawer__body">
-          <p className="import-duplicate-intro">{tr("This looks similar to something already in this wardrobe. Compare them before spending credits on another garment image.")}</p>
+    <section className="import-duplicate-editor" aria-labelledby={`duplicate-title-${job.id}`}>
+      <header className="import-duplicate-editor__header">
+        <p>{tr("Possible duplicate")}</p>
+        <h2 id={`duplicate-title-${job.id}`}>{tr("Is this the same garment?")}</h2>
+        <span>{tr("This looks similar to something already in this wardrobe. Compare them before spending credits on another garment image.")}</span>
+      </header>
+      <div className="import-duplicate-editor__content">
+        <div>
           <div className="import-duplicate-score">
             <span>{tr("Match strength")}</span>
             <strong>{match}%</strong>
@@ -599,6 +596,8 @@ function DuplicateComparisonDrawer({ job, busy, onClose, onMerge, onKeep }) {
               <figcaption><span>{tr("In your wardrobe")}</span><strong>{candidate.name}</strong></figcaption>
             </figure>
           </div>
+        </div>
+        <div className="import-duplicate-editor__details">
           <dl className="import-duplicate-facts">
             <div><dt>{tr("Category")}</dt><dd>{tr(partLabel)}</dd></div>
             <div><dt>{tr("Color")}</dt><dd><i style={{ background: candidate.color }} /> {candidate.color}</dd></div>
@@ -611,15 +610,15 @@ function DuplicateComparisonDrawer({ job, busy, onClose, onMerge, onKeep }) {
             <p>{tr("Merging keeps the existing garment and adds this upload to its source-photo gallery.")}</p>
           </div>
         </div>
-        <footer className="import-duplicate-drawer__actions">
-          <button className="import-button" type="button" disabled={busy} onClick={onKeep}>{tr("Keep as new")}</button>
-          <button className="import-button import-button--primary" type="button" disabled={busy} onClick={onMerge}>
-            {busy ? <SpinnerGap size={14} className="import-spinner" /> : <ArrowsLeftRight size={14} />}
-            {tr("Merge with existing")}
-          </button>
-        </footer>
-      </aside>
-    </div>
+      </div>
+      <footer className="import-duplicate-editor__actions">
+        <button className="import-button" type="button" disabled={busy} onClick={onKeep}>{tr("Keep as new")}</button>
+        <button className="import-button import-button--primary" type="button" disabled={busy} onClick={onMerge}>
+          {busy ? <SpinnerGap size={14} className="import-spinner" /> : <ArrowsLeftRight size={14} />}
+          {tr("Merge with existing")}
+        </button>
+      </footer>
+    </section>
   );
 }
 
@@ -1476,14 +1475,17 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
           ? deriveStatus(active)
           : notice;
   const readyCount = jobs.filter((job) => ["ready", "duplicate"].includes(deriveStatus(job).tone)).length;
-  const duplicateReviewJob = jobs.find((job) => job.id === duplicateReviewId && hasDuplicateReview(job)) || null;
+  const selectedDuplicateReviewJob = jobs.find((job) => job.id === duplicateReviewId && hasDuplicateReview(job)) || null;
   const selectedReviewJob = jobs.find((job) => (
     job.id === selectedReviewId
     && (selectedReviewStage === "cleanup"
       ? hasCleanupFailure(job)
       : job.stages?.[selectedReviewStage]?.status === "review")
   ));
-  const nextCropReviewJob = jobs.find((job) => job.stages?.crop?.status === "review");
+  const duplicateReviewJob = selectedDuplicateReviewJob
+    || (!selectedReviewJob ? jobs.find(hasDuplicateReview) : null)
+    || null;
+  const nextCropReviewJob = jobs.find((job) => job.stages?.crop?.status === "review" && !hasDuplicateReview(job));
   const cropReviewComplete = !nextCropReviewJob;
   const nextGarmentReviewJob = cropReviewComplete
     ? jobs.find((job) => job.stages?.garment?.status === "review")
@@ -1568,7 +1570,14 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
           ) : sourcePickerOpen || !jobs.length ? <ImportSourcePicker disabled={!setup?.ready} notice={notice} onChooseFiles={() => inputRef.current?.click()} onDropFiles={submitFiles} onReadClipboard={readClipboard} onTakePhoto={() => setCameraOpen(true)} /> : (
             <>
               <div className={`import-progress${activeStatus?.tone !== "processing" ? " is-reviewing" : progress < 100 ? " is-indeterminate" : ""}`}><div className="import-progress__meta"><span>{activeStatus?.text}</span><span>{tr(jobs.length === 1 ? "{count} item" : "{count} items", { count: jobs.length })}</span></div>{activeStatus?.tone === "processing" && <div className="import-progress__track"><div className="import-progress__bar" style={{ "--import-progress": `${progress}%` }} /></div>}</div>
-              {reviewJob && reviewStage ? <ReviewEditor job={reviewJob} stage={reviewStage} draft={drafts[reviewJob.id] || defaultDraft(reviewJob)} setDraft={(draft) => setDrafts((current) => ({ ...current, [reviewJob.id]: draft }))} regenPrompt={regenerationPrompts[`${reviewJob.id}:${reviewStage}`] || ""} setRegenPrompt={(prompt) => setRegenerationPrompts((current) => ({ ...current, [`${reviewJob.id}:${reviewStage}`]: prompt }))} busy={busyId === reviewJob.id} onAction={(action, prompt, actionOptions) => perform(reviewJob, reviewStage, action, prompt, actionOptions)} onCropSave={(boundingBox) => saveCrop(reviewJob, boundingBox)} onSelectCandidate={(candidateId) => selectGarmentCandidate(reviewJob, candidateId)} /> : reviewJob && hasCleanupFailure(reviewJob) ? <CleanupEditor job={reviewJob} tolerance={cleanupTolerances[reviewJob.id] ?? reviewJob.stages.garment.cleanupTolerance ?? 46} setTolerance={(tolerance) => setCleanupTolerances((current) => ({ ...current, [reviewJob.id]: tolerance }))} busy={busyId === reviewJob.id} onPreview={(tolerance) => performCleanup(reviewJob, "preview", tolerance)} onAccept={() => performCleanup(reviewJob, "accept")} /> : null}
+              {duplicateReviewJob ? (
+                <DuplicateComparisonEditor
+                  job={duplicateReviewJob}
+                  busy={busyId === duplicateReviewJob.id}
+                  onMerge={() => performDuplicate(duplicateReviewJob, "merge")}
+                  onKeep={() => performDuplicate(duplicateReviewJob, "keep")}
+                />
+              ) : reviewJob && reviewStage ? <ReviewEditor job={reviewJob} stage={reviewStage} draft={drafts[reviewJob.id] || defaultDraft(reviewJob)} setDraft={(draft) => setDrafts((current) => ({ ...current, [reviewJob.id]: draft }))} regenPrompt={regenerationPrompts[`${reviewJob.id}:${reviewStage}`] || ""} setRegenPrompt={(prompt) => setRegenerationPrompts((current) => ({ ...current, [`${reviewJob.id}:${reviewStage}`]: prompt }))} busy={busyId === reviewJob.id} onAction={(action, prompt, actionOptions) => perform(reviewJob, reviewStage, action, prompt, actionOptions)} onCropSave={(boundingBox) => saveCrop(reviewJob, boundingBox)} onSelectCandidate={(candidateId) => selectGarmentCandidate(reviewJob, candidateId)} /> : reviewJob && hasCleanupFailure(reviewJob) ? <CleanupEditor job={reviewJob} tolerance={cleanupTolerances[reviewJob.id] ?? reviewJob.stages.garment.cleanupTolerance ?? 46} setTolerance={(tolerance) => setCleanupTolerances((current) => ({ ...current, [reviewJob.id]: tolerance }))} busy={busyId === reviewJob.id} onPreview={(tolerance) => performCleanup(reviewJob, "preview", tolerance)} onAccept={() => performCleanup(reviewJob, "accept")} /> : null}
               <ImportQueueBoard
                 jobs={jobs}
                 drafts={drafts}
@@ -1589,15 +1598,6 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
               />
               <div className="import-actions"><button className="import-button" disabled={Boolean(analysis)} onClick={showSourcePicker}><Plus size={14} /> {tr("Add another")}</button></div>
             </>
-          )}
-          {duplicateReviewJob && (
-            <DuplicateComparisonDrawer
-              job={duplicateReviewJob}
-              busy={busyId === duplicateReviewJob.id}
-              onClose={() => setDuplicateReviewId(null)}
-              onMerge={() => performDuplicate(duplicateReviewJob, "merge")}
-              onKeep={() => performDuplicate(duplicateReviewJob, "keep")}
-            />
           )}
         </section>
       </div>
