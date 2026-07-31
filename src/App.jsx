@@ -13,6 +13,7 @@ import {
 } from "./connection-paths.js";
 import { CITY_SUGGESTIONS } from "./city-suggestions.js";
 import { GarmentColorPreview } from "./GarmentColorPreview.jsx";
+import { compareWardrobeColors } from "./color-organization.js";
 import { DayDatePicker } from "./DayDatePicker.jsx";
 import { formatDate, getLocale, LANGUAGE_OPTIONS, setLocale, tr, useLocale } from "./i18n.js";
 import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
@@ -135,6 +136,7 @@ const TYPES = [
 const TYPE_MAP = Object.fromEntries(TYPES.map((type) => [type.id, type]));
 const SORT_MODES = [
   { id: "custom", label: "My order", icon: ListNumbers },
+  { id: "color", label: "Color", icon: Palette },
   { id: "updated", label: "Last updated", icon: ClockCounterClockwise },
   { id: "purchase-oldest", label: "Oldest first", icon: CalendarBlank },
 ];
@@ -6910,8 +6912,9 @@ export function App() {
   );
 
   useEffect(() => {
-    const legacyColorGrouping = currentUser?.wardrobeSortMode === "color";
-    const nextSortMode = SORT_MODE_IDS.has(currentUser?.wardrobeSortMode)
+    const legacyColorGrouping = currentUser?.wardrobeSortMode === "color"
+      && !GROUP_MODE_IDS.has(currentUser?.wardrobeGroupMode);
+    const nextSortMode = !legacyColorGrouping && SORT_MODE_IDS.has(currentUser?.wardrobeSortMode)
       ? currentUser.wardrobeSortMode
       : "custom";
     const nextGroupMode = GROUP_MODE_IDS.has(currentUser?.wardrobeGroupMode)
@@ -6976,6 +6979,7 @@ export function App() {
       type: activeType,
     }));
     if (sortMode === "custom") return filtered;
+    if (sortMode === "color") return [...filtered].sort(compareWardrobeColors);
     if (sortMode === "updated") {
       return [...filtered].sort((first, second) => (
         timestampValue(second) - timestampValue(first)

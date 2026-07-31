@@ -124,7 +124,7 @@ const GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
 const STAGES = new Set(["crop", "garment", "modeled"]);
 const DECISIONS = new Set(["approve", "reject"]);
 const PARTS = new Set(["upperbody", "wholebody_up", "lowerbody", "wholebody", "shoes", "accessories_up"]);
-const WARDROBE_SORT_MODES = new Set(["custom", "updated", "purchase-oldest"]);
+const WARDROBE_SORT_MODES = new Set(["custom", "color", "updated", "purchase-oldest"]);
 const WARDROBE_GROUP_MODES = new Set(["none", "color", "type", "brand", "purchase-year"]);
 const LEGACY_WARDROBE_ORGANIZATION_MODES = new Set([...WARDROBE_SORT_MODES, "color"]);
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
@@ -4735,6 +4735,7 @@ export function wardrobeImportApi(options = {}) {
     }
     const rawSortMode = input.wardrobeSortMode ?? existing.wardrobeSortMode;
     const rawGroupMode = input.wardrobeGroupMode ?? existing.wardrobeGroupMode;
+    const legacyColorGrouping = rawSortMode === "color" && !WARDROBE_GROUP_MODES.has(rawGroupMode);
     return {
       ...existing,
       // Identity is set by the sign-in flow only; a profile edit can never move a
@@ -4774,10 +4775,10 @@ export function wardrobeImportApi(options = {}) {
       // Missing state belongs to installations that predate onboarding, so it
       // must not surprise every existing person with a first-login tour.
       tutorial: normalizeTutorialState(existing.tutorial, { defaultStatus: "completed" }),
-      wardrobeSortMode: WARDROBE_SORT_MODES.has(rawSortMode) ? rawSortMode : "custom",
+      wardrobeSortMode: !legacyColorGrouping && WARDROBE_SORT_MODES.has(rawSortMode) ? rawSortMode : "custom",
       wardrobeGroupMode: WARDROBE_GROUP_MODES.has(rawGroupMode)
         ? rawGroupMode
-        : rawSortMode === "color" ? "color" : "none",
+        : legacyColorGrouping ? "color" : "none",
     };
   };
 

@@ -113,6 +113,17 @@ test("normalizes portable saved filter combinations", () => {
   assert.equal(activeFilterCount(view.filters), 4);
 });
 
+test("preserves an explicit color sort without turning it into color grouping", () => {
+  const [view] = normalizeSavedViews([{
+    id: "spectrum",
+    name: "Spectrum",
+    sortMode: "color",
+    groupMode: "none",
+  }]);
+  assert.equal(view.sortMode, "color");
+  assert.equal(view.groupMode, "none");
+});
+
 test("groups garments by type, brand, and purchase year while preserving item order", () => {
   const items = [
     { id: "one", name: "First", part: "upperbody", brand: "Zara", purchaseMonth: "2024-05" },

@@ -100,7 +100,7 @@ export const DEFAULT_WARDROBE_FILTERS = Object.freeze({
 });
 
 const FACET_KEYS = ["colors", "brands", "tags", "sizes", "fits", "materials", "seasons"];
-const WARDROBE_SORT_MODE_IDS = new Set(["custom", "updated", "purchase-oldest"]);
+const WARDROBE_SORT_MODE_IDS = new Set(["custom", "color", "updated", "purchase-oldest"]);
 const WARDROBE_GROUP_MODE_IDS = new Set(["none", "color", "type", "brand", "purchase-year"]);
 const VIEW_ID = /^[a-z0-9-]{1,80}$/i;
 const DATE_VALUE = /^\d{4}-\d{2}-\d{2}$/;
@@ -189,7 +189,9 @@ export function normalizeSavedViews(value = {}) {
       filters: normalizeWardrobeFilters(view.filters),
       sortMode: WARDROBE_SORT_MODE_IDS.has(view.sortMode)
         ? view.sortMode
-        : WARDROBE_SORT_MODE_IDS.has(legacyMode) ? legacyMode : "custom",
+        : legacyMode === "color"
+          ? "custom"
+          : WARDROBE_SORT_MODE_IDS.has(legacyMode) ? legacyMode : "custom",
       groupMode: WARDROBE_GROUP_MODE_IDS.has(view.groupMode)
         ? view.groupMode
         : legacyMode === "color" ? "color" : "none",

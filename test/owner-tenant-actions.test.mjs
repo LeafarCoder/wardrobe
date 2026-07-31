@@ -263,16 +263,18 @@ test("an owner can edit the selected tenant while non-owners remain isolated", a
     const scopedPath = withWardrobeUser(`/api/users/${TARGET_ID}`, TARGET_ID);
     const ownerResponse = mockResponse();
     await api.handler(mockRequest(scopedPath, {
-      wardrobeSortMode: "custom",
+      wardrobeSortMode: "color",
       wardrobeGroupMode: "color",
     }), ownerResponse, () => {});
 
     assert.equal(ownerResponse.statusCode, 200);
     assert.equal(ownerResponse.json().user.id, TARGET_ID);
+    assert.equal(ownerResponse.json().user.wardrobeSortMode, "color");
     assert.equal(ownerResponse.json().user.wardrobeGroupMode, "color");
     assert.equal(ownerResponse.json().user.referenceImages[0].url.endsWith(`?user=${TARGET_ID}`), true);
     assert.equal(ownerResponse.json().user.referenceImages[0].avatarUrl.endsWith(`?user=${TARGET_ID}`), true);
     const saved = JSON.parse(await readFile(usersFile, "utf8"));
+    assert.equal(saved.users.find((user) => user.id === TARGET_ID).wardrobeSortMode, "color");
     assert.equal(saved.users.find((user) => user.id === TARGET_ID).wardrobeGroupMode, "color");
     assert.equal(saved.users.find((user) => user.id === "default").wardrobeGroupMode, "none");
 

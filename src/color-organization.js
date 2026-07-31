@@ -1,4 +1,8 @@
 const MUTED_CHROMATIC_SATURATION = 0.1;
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+const NEUTRAL_GROUP_IDS = new Set(["light-neutrals", "dark-neutrals"]);
+// Starting just before red keeps hues on either side of 0° next to each other.
+const SPECTRUM_START_HUE = 345;
 
 export function hexToHsl(value) {
   const match = /^#([0-9a-f]{6})$/i.exec(value || "");
@@ -42,4 +46,30 @@ export function colorGroup(item) {
   }
 
   return { id, ...color };
+}
+
+function colorSortKey(item = {}) {
+  if (!HEX_COLOR.test(item.color || "")) {
+    return { category: 2, hue: 0, saturation: 0, lightness: 0 };
+  }
+  const color = colorGroup(item);
+  if (NEUTRAL_GROUP_IDS.has(color.id)) {
+    return { category: 1, hue: 0, saturation: color.saturation, lightness: color.lightness };
+  }
+  return {
+    category: 0,
+    hue: (color.hue - SPECTRUM_START_HUE + 360) % 360,
+    saturation: color.saturation,
+    lightness: color.lightness,
+  };
+}
+
+export function compareWardrobeColors(first, second) {
+  const firstColor = colorSortKey(first);
+  const secondColor = colorSortKey(second);
+  return firstColor.category - secondColor.category
+    || (firstColor.category === 0 ? firstColor.hue - secondColor.hue : 0)
+    || secondColor.saturation - firstColor.saturation
+    || secondColor.lightness - firstColor.lightness
+    || String(first?.name || "").localeCompare(String(second?.name || ""));
 }
