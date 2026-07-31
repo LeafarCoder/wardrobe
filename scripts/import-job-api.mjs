@@ -33,7 +33,14 @@ import {
   normalizeWardrobePlans,
   SEASON_OPTIONS,
 } from "../src/wardrobe-discovery.js";
-import { garmentColorVariants, normalizeVariantThreshold, selectedGarmentVariantId } from "../src/garment-variants.js";
+import {
+  GARMENT_ORIGINAL_VERSION_ID,
+  garmentColorVariants,
+  garmentVersionOrder,
+  isCompleteGarmentVersionOrder,
+  normalizeVariantThreshold,
+  selectedGarmentVariantId,
+} from "../src/garment-variants.js";
 import { normalizeCareInstructions } from "../src/garment-care.js";
 import {
   connectionCanShare,
@@ -1334,6 +1341,7 @@ function publicImportedRecord(record, userId) {
       preview: storedAssetUrl(record, variant.preview, userId),
       thumbnail: storedAssetUrl(record, variant.thumbnail, userId),
     })),
+    colorVariantOrder: garmentVersionOrder(record),
     selectedColorVariantId: selectedGarmentVariantId(record),
     modeledImage: storedAssetUrl(record, record.modeledImage, userId),
     modeledLooks: modeledLooksForRecord(record).map((look) => ({
@@ -4506,6 +4514,8 @@ export function wardrobeImportApi(options = {}) {
       imagePreview: publicRecord.imagePreview,
       thumbnail: publicRecord.thumbnail,
       colorVariants: publicRecord.colorVariants,
+      colorVariantOrder: publicRecord.colorVariantOrder,
+      selectedColorVariantId: publicRecord.selectedColorVariantId,
     };
   };
 
@@ -5395,6 +5405,8 @@ export function wardrobeImportApi(options = {}) {
       image: `${LIBRARY_ASSET_ROOT}/${garmentName}`,
       thumbnail: `${LIBRARY_ASSET_ROOT}/${garmentName}`,
       colorVariants: garmentColorVariants(existing),
+      colorVariantOrder: garmentVersionOrder(existing || {}),
+      selectedColorVariantId: selectedGarmentVariantId(existing || {}),
       originalImage: originalImage || existing?.originalImage || null,
       importJobId: job.id,
       importUploadId: job.uploadId || existing?.importUploadId || null,
@@ -7924,6 +7936,31 @@ Interpret this correction semantically in whatever language it is written. It ov
       }
       const garmentVariantMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/variants$/i);
       const garmentVariantSelectionMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/variants\/selection$/i);
+      const garmentVariantOrderMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/variants\/order$/i);
+      if (garmentVariantOrderMatch && req.method === "PATCH") {
+        const input = await body(req, 16 * 1024);
+        const saved = await withLibrary(async () => {
+          const records = await loadImported();
+          const index = records.findIndex((record) => record.id === garmentVariantOrderMatch[1] && record.userId === user.id);
+          if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+          if (!isCompleteGarmentVersionOrder(records[index], input.ids)) {
+            throw apiError(
+              "The garment version order is no longer current. Refresh and try again.",
+              409,
+              "garment_variant_order_stale",
+            );
+          }
+          const first = input.ids[0];
+          records[index] = {
+            ...records[index],
+            colorVariantOrder: [...input.ids],
+            selectedColorVariantId: first === GARMENT_ORIGINAL_VERSION_ID ? null : first,
+          };
+          await saveImported(records);
+          return records[index];
+        });
+        return json(res, 200, publicImportedRecord(saved, user.id));
+      }
       if (garmentVariantSelectionMatch && req.method === "PATCH") {
         const input = await body(req, 8 * 1024);
         const selected = typeof input.variantId === "string" ? input.variantId : null;
@@ -7934,8 +7971,11 @@ Interpret this correction semantically in whatever language it is written. It ov
           if (selected && !garmentColorVariants(records[index]).some((variant) => variant.id === selected)) {
             throw apiError("That garment color version could not be found.", 404, "garment_variant_not_found");
           }
+          const selectedId = selected || GARMENT_ORIGINAL_VERSION_ID;
+          const nextOrder = [selectedId, ...garmentVersionOrder(records[index]).filter((id) => id !== selectedId)];
           records[index] = {
             ...records[index],
+            colorVariantOrder: nextOrder,
             selectedColorVariantId: selected,
           };
           await saveImported(records);
@@ -7979,6 +8019,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           records[index] = {
             ...records[index],
             colorVariants: [...garmentColorVariants(records[index]), variant],
+            colorVariantOrder: [...garmentVersionOrder(records[index]), variant.id],
             updatedAt: variant.createdAt,
           };
           await saveImported(records);

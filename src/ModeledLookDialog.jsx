@@ -173,7 +173,7 @@ export function ModeledLookDialog({
   onGenerate,
 }) {
   const closeButtonRef = useRef(null);
-  const [variantId, setVariantId] = useState(null);
+  const [variantId, setVariantId] = useState(() => colorVersions[0]?.id || null);
   const [context, setContext] = useState(() => ({
     ...EMPTY_MODELED_LOOK_CONTEXT,
     people: people.map((person) => ({

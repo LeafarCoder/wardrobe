@@ -91,7 +91,7 @@ test("saves one complete mixed order for original and generated garment photos",
   }
 });
 
-test("saves the last selected garment color version", async () => {
+test("promotes a selected garment version and persists a complete thumbnail order", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "wardrobe-selected-variant-api-"));
   const dataDir = path.join(root, "data");
   const api = wardrobeImportApi({
@@ -112,7 +112,10 @@ test("saves the last selected garment color version", async () => {
       part: "upperbody",
       color: "#eee8dc",
       image: "/api/import/library/shirt.png",
-      colorVariants: [{ id: "navy", image: "/api/import/library/shirt-navy.png" }],
+      colorVariants: [
+        { id: "navy", image: "/api/import/library/shirt-navy.png" },
+        { id: "green", image: "/api/import/library/shirt-green.png" },
+      ],
     }], null, 2));
 
     const selectResponse = mockResponse();
@@ -123,9 +126,31 @@ test("saves the last selected garment color version", async () => {
     ), selectResponse, () => {});
     assert.equal(selectResponse.statusCode, 200);
     assert.equal(selectResponse.json().selectedColorVariantId, "navy");
+    assert.deepEqual(selectResponse.json().colorVariantOrder, ["navy", "original", "green"]);
 
-    const stored = JSON.parse(await readFile(path.join(dataDir, "library.json"), "utf8"));
-    assert.equal(stored[0].selectedColorVariantId, "navy");
+    let stored = JSON.parse(await readFile(path.join(dataDir, "library.json"), "utf8"));
+    assert.deepEqual(stored[0].colorVariantOrder, ["navy", "original", "green"]);
+
+    const orderResponse = mockResponse();
+    await api.handler(mockJsonRequest(
+      `/api/import/wardrobe/${ITEM_ID}/variants/order`,
+      "PATCH",
+      { ids: ["green", "navy", "original"] },
+    ), orderResponse, () => {});
+    assert.equal(orderResponse.statusCode, 200);
+    assert.equal(orderResponse.json().selectedColorVariantId, "green");
+    assert.deepEqual(orderResponse.json().colorVariantOrder, ["green", "navy", "original"]);
+    stored = JSON.parse(await readFile(path.join(dataDir, "library.json"), "utf8"));
+    assert.deepEqual(stored[0].colorVariantOrder, ["green", "navy", "original"]);
+
+    const staleOrderResponse = mockResponse();
+    await api.handler(mockJsonRequest(
+      `/api/import/wardrobe/${ITEM_ID}/variants/order`,
+      "PATCH",
+      { ids: ["green", "original"] },
+    ), staleOrderResponse, () => {});
+    assert.equal(staleOrderResponse.statusCode, 409);
+    assert.equal(staleOrderResponse.json().code, "garment_variant_order_stale");
 
     const originalResponse = mockResponse();
     await api.handler(mockJsonRequest(
@@ -135,6 +160,7 @@ test("saves the last selected garment color version", async () => {
     ), originalResponse, () => {});
     assert.equal(originalResponse.statusCode, 200);
     assert.equal(originalResponse.json().selectedColorVariantId, null);
+    assert.deepEqual(originalResponse.json().colorVariantOrder, ["original", "green", "navy"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

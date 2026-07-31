@@ -42,9 +42,12 @@ import {
   GARMENT_VARIANT_THRESHOLD_DEFAULT,
   GARMENT_VARIANT_THRESHOLD_MAX,
   GARMENT_VARIANT_THRESHOLD_MIN,
+  GARMENT_ORIGINAL_VERSION_ID,
   garmentColorVariants,
   garmentVersionFanSlot,
   garmentVersionLayout,
+  garmentVersionOrder,
+  moveGarmentVersion,
   selectedGarmentVariantId,
 } from "./garment-variants.js";
 import {
@@ -215,7 +218,7 @@ function garmentRegenerationDraft(item) {
 }
 
 function itemColorVersions(item) {
-  return [{
+  const versions = [{
     id: null,
     image: item.image,
     preview: item.imagePreview || item.image,
@@ -224,6 +227,8 @@ function itemColorVersions(item) {
     secondaryColor: item.secondaryColor || null,
     original: true,
   }, ...garmentColorVariants(item)];
+  const byId = new Map(versions.map((version) => [version.id || GARMENT_ORIGINAL_VERSION_ID, version]));
+  return garmentVersionOrder(item).map((id) => byId.get(id)).filter(Boolean);
 }
 
 function itemSelectedColorVersionIndex(item, versions = itemColorVersions(item)) {
@@ -1520,6 +1525,7 @@ function ItemViewer({
   onDiscardGarmentRegeneration,
   onCreateVariant,
   onSelectColorVersion,
+  onReorderColorVersions,
   onDeleteModeled,
   onDeleteSourcePhoto,
   onReorderMedia,
@@ -1581,6 +1587,8 @@ function ItemViewer({
   const [viewerToast, setViewerToast] = useState(null);
   const [draggedMediaId, setDraggedMediaId] = useState(null);
   const [mediaOrderBusy, setMediaOrderBusy] = useState(false);
+  const [draggedColorVersionId, setDraggedColorVersionId] = useState(null);
+  const [colorVersionOrderBusy, setColorVersionOrderBusy] = useState(false);
   const [originalHeroPosition, setOriginalHeroPosition] = useState(() => originalPhotoPosition(item));
   const type = tr(TYPE_MAP[item.part]?.singular || "Wardrobe item");
   const colorVersions = useMemo(() => itemColorVersions(item), [item]);
@@ -1618,8 +1626,8 @@ function ItemViewer({
     ? "carousel"
     : garmentVersionLayout(draft.part || item.part, colorVersions.length, hasHeroImage);
   const hasVersionFan = versionLayout === "fan";
-  const hasVersionStack = versionLayout === "stack";
-  const hasVersionSpread = hasVersionFan || hasVersionStack;
+  const hasVersionRow = versionLayout === "spread";
+  const hasVersionSpread = hasVersionFan || hasVersionRow;
   const garmentRegenerationCandidate = item.garmentRegenerationCandidate || null;
   const regenerationPrimaryValid = Boolean(normalizeHexColor(garmentRegenerationForm.color));
   const regenerationSecondaryValid = !garmentRegenerationForm.secondaryColor
@@ -1880,6 +1888,8 @@ function ItemViewer({
     })[0]?.id || null);
     setDraggedMediaId(null);
     setMediaOrderBusy(false);
+    setDraggedColorVersionId(null);
+    setColorVersionOrderBusy(false);
     setDeleteCandidate(null);
     setSourceDeleteCandidate(null);
     setDeletingSourcePhoto(false);
@@ -2050,9 +2060,13 @@ function ItemViewer({
   const selectColorVersion = async (index, versions = colorVersions) => {
     const normalizedIndex = Math.max(0, Math.min(index, versions.length - 1));
     const previousIndex = activeColorVersionIndex;
+    const selectedVersionId = versions[normalizedIndex]?.id || null;
     setColorVersionIndex(normalizedIndex);
     try {
-      await onSelectColorVersion(item.id, versions[normalizedIndex]?.id || null);
+      const updated = await onSelectColorVersion(item.id, selectedVersionId);
+      const updatedVersions = itemColorVersions(updated);
+      const updatedIndex = updatedVersions.findIndex((version) => (version.id || null) === selectedVersionId);
+      setColorVersionIndex(updatedIndex >= 0 ? updatedIndex : 0);
     } catch (requestError) {
       setColorVersionIndex(previousIndex);
       setViewerToast({
@@ -2066,6 +2080,34 @@ function ItemViewer({
     if (colorVersions.length < 2) return;
     const nextIndex = (activeColorVersionIndex + direction + colorVersions.length) % colorVersions.length;
     void selectColorVersion(nextIndex);
+  };
+
+  const previewColorVersion = (direction) => {
+    if (colorVersions.length < 2) return;
+    setColorVersionIndex((activeColorVersionIndex + direction + colorVersions.length) % colorVersions.length);
+  };
+
+  const reorderColorVersions = async (targetId) => {
+    if (!draggedColorVersionId || colorVersionOrderBusy || draggedColorVersionId === targetId) return;
+    const ids = colorVersions.map((version) => version.id || GARMENT_ORIGINAL_VERSION_ID);
+    const activeId = activeColorVersion?.id || GARMENT_ORIGINAL_VERSION_ID;
+    const nextIds = moveGarmentVersion(ids, draggedColorVersionId, targetId);
+    setDraggedColorVersionId(null);
+    setColorVersionOrderBusy(true);
+    setViewerToast(null);
+    try {
+      const updated = await onReorderColorVersions(item.id, nextIds);
+      const nextVersions = itemColorVersions(updated);
+      const nextIndex = nextVersions.findIndex((version) => (version.id || GARMENT_ORIGINAL_VERSION_ID) === activeId);
+      setColorVersionIndex(nextIndex >= 0 ? nextIndex : 0);
+    } catch (requestError) {
+      setViewerToast({
+        title: tr("Could not reorder garment versions"),
+        message: readableError(requestError),
+      });
+    } finally {
+      setColorVersionOrderBusy(false);
+    }
   };
 
   const rotateGarmentMedia = (direction) => {
@@ -2389,6 +2431,16 @@ function ItemViewer({
   };
 
   const keepMediaPreviewFocus = (event) => {
+    if (mediaPreviewOpen === "garment" && colorVersions.length > 1 && event.key === "ArrowLeft") {
+      event.preventDefault();
+      previewColorVersion(-1);
+      return;
+    }
+    if (mediaPreviewOpen === "garment" && colorVersions.length > 1 && event.key === "ArrowRight") {
+      event.preventDefault();
+      previewColorVersion(1);
+      return;
+    }
     if (mediaPreviewOpen === "media" && garmentMedia.length > 1 && event.key === "ArrowLeft") {
       event.preventDefault();
       rotateGarmentMedia(-1);
@@ -2437,6 +2489,24 @@ function ItemViewer({
     }
   };
 
+  const colorVersionPositionStyle = (index) => {
+    const slot = garmentVersionFanSlot(index, colorVersions.length);
+    const fanStep = colorVersions.length === 2 ? 24 : 13;
+    const horizontalStep = colorVersions.length === 2 ? 20 : 10;
+    const spreadScale = colorVersions.length === 4 ? .48 : .4;
+    const spreadStep = colorVersions.length === 4 ? 54 : 46;
+    const spreadGap = colorVersions.length === 4 ? 10 : 9;
+    return {
+      "--fan-angle": `${slot * fanStep}deg`,
+      "--fan-x": `${slot * horizontalStep}px`,
+      "--fan-rank": Math.abs(slot),
+      "--fan-layer": 80 - Math.abs(slot),
+      "--spread-x-percent": `${slot * spreadStep}%`,
+      "--spread-x-gap": `${slot * spreadGap}px`,
+      "--spread-scale": spreadScale,
+    };
+  };
+
   const activeGarmentPreview = (
     <GarmentColorPreview
       src={activeColorVersion.preview || activeColorVersion.image}
@@ -2461,7 +2531,7 @@ function ItemViewer({
 
   const garmentArtwork = (
     <div
-      className={`viewer-art${hasHeroImage ? " viewer-art-floating" : ""}${sampling ? " sampling" : ""}${hasVersionFan ? " has-version-fan" : ""}${hasVersionStack ? " has-version-stack" : ""}`}
+      className={`viewer-art${hasHeroImage ? " viewer-art-floating" : ""}${sampling ? " sampling" : ""}${hasVersionFan ? " has-version-fan" : ""}${hasVersionRow ? " has-version-spread" : ""}`}
       style={hasHeroImage ? { "--piece-rotation": pieceRotation } : undefined}
       ref={garmentArtworkButtonRef}
       role={!sampling ? (hasVersionSpread ? "group" : "button") : undefined}
@@ -2476,23 +2546,13 @@ function ItemViewer({
     >
       {hasVersionSpread ? (
         <>
-          <div className={`garment-version-fan${hasVersionStack ? " is-stack" : ""}`} aria-hidden="true">
+          <div className={`garment-version-fan${hasVersionRow ? " is-spread" : ""}`} aria-hidden="true">
             {colorVersions.map((version, index) => {
-              const slot = garmentVersionFanSlot(index, colorVersions.length);
-              const fanStep = colorVersions.length === 2 ? 24 : 13;
-              const horizontalStep = colorVersions.length === 2 ? 20 : 10;
-              const stackStep = colorVersions.length === 4 ? 32 : 27;
               return (
                 <div
                   key={version.id || "original"}
                   className={`garment-version-fan__visual${index === activeColorVersionIndex ? " is-selected" : ""}${index === hoveredColorVersionIndex ? " is-hovered" : ""}`}
-                  style={{
-                    "--fan-angle": `${slot * fanStep}deg`,
-                    "--fan-x": `${slot * horizontalStep}px`,
-                    "--fan-rank": Math.abs(slot),
-                    "--fan-layer": 80 - Math.abs(slot),
-                    "--stack-y": `${slot * stackStep}px`,
-                  }}
+                  style={colorVersionPositionStyle(index)}
                 >
                   <GarmentColorPreview
                     src={version.preview || version.image}
@@ -2513,7 +2573,7 @@ function ItemViewer({
             })}
           </div>
           <div
-            className={`garment-version-fan__targets${hasVersionStack ? " is-stack" : ""}`}
+            className={`garment-version-fan__targets${hasVersionRow ? " is-spread" : ""}`}
             style={{ "--fan-count": colorVersions.length }}
             onMouseLeave={() => setHoveredColorVersionIndex(null)}
           >
@@ -2527,9 +2587,11 @@ function ItemViewer({
                 onFocus={() => setHoveredColorVersionIndex(index)}
                 onBlur={() => setHoveredColorVersionIndex(null)}
                 onMouseDown={(event) => event.preventDefault()}
+                style={colorVersionPositionStyle(index)}
                 onClick={(event) => {
                   event.stopPropagation();
                   void selectColorVersion(index);
+                  openMediaPreview("garment");
                 }}
               />
             ))}
@@ -2539,20 +2601,6 @@ function ItemViewer({
           </div>
         </>
       ) : activeGarmentPreview}
-      {hasVersionSpread && (
-        <button
-          className="garment-version-open"
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            openMediaPreview("garment");
-          }}
-          aria-label={tr("Open garment image and regeneration options")}
-          title={tr("Open garment image and regeneration options")}
-        >
-          <MagnifyingGlass size={14} aria-hidden="true" />
-        </button>
-      )}
       {colorVersions.length > 1 && (
         <div className={`garment-version-nav${hasVersionSpread ? " is-fan-fallback" : ""}`} aria-label={tr("Garment color versions")}>
           <button type="button" onClick={(event) => { event.stopPropagation(); rotateColorVersion(-1); }} aria-label={tr("Previous garment version")}><CaretLeft size={18} /></button>
@@ -3034,7 +3082,7 @@ function ItemViewer({
               </div>
             </div>
           ) : (
-          <div className={`media-preview-dialog__body${mediaPreviewOpen === "media" && garmentMedia.length > 1 ? " has-carousel" : ""}${mediaPreviewOpen === "garment" && item.id.startsWith("import-") && sourcePhotos.length > 0 ? " has-actions" : ""}`}>
+          <div className={`media-preview-dialog__body${mediaPreviewOpen === "media" && garmentMedia.length > 1 ? " has-carousel" : ""}${mediaPreviewOpen === "garment" && colorVersions.length > 1 ? " has-version-gallery" : ""}${mediaPreviewOpen === "garment" && item.id.startsWith("import-") && sourcePhotos.length > 0 ? " has-actions" : ""}`}>
             <ProductStage className="media-preview-dialog__viewport" interactive animated>
               {mediaPreviewOpen === "media" ? (
                 <OptimizedImage
@@ -3133,6 +3181,29 @@ function ItemViewer({
                   </span>
                 </>
               )}
+              {mediaPreviewOpen === "garment" && colorVersions.length > 1 && (
+                <>
+                  <button
+                    className="source-photo-dialog__nav is-previous"
+                    type="button"
+                    onClick={() => previewColorVersion(-1)}
+                    aria-label={tr("Previous garment version")}
+                  >
+                    <CaretLeft size={24} aria-hidden="true" />
+                  </button>
+                  <button
+                    className="source-photo-dialog__nav is-next"
+                    type="button"
+                    onClick={() => previewColorVersion(1)}
+                    aria-label={tr("Next garment version")}
+                  >
+                    <CaretRight size={24} aria-hidden="true" />
+                  </button>
+                  <span className="source-photo-dialog__counter" aria-live="polite">
+                    {tr("{current} of {total}", { current: activeColorVersionIndex + 1, total: colorVersions.length })}
+                  </span>
+                </>
+              )}
             </ProductStage>
             {mediaPreviewOpen === "media" && garmentMedia.length > 1 && (
               <aside className="media-preview-dialog__gallery" aria-label={tr("Garment photo gallery")}>
@@ -3171,6 +3242,48 @@ function ItemViewer({
                     )}
                   </button>
                 ))}
+                </div>
+              </aside>
+            )}
+            {mediaPreviewOpen === "garment" && colorVersions.length > 1 && (
+              <aside className="media-preview-dialog__gallery garment-version-gallery" aria-label={tr("Garment color versions")}>
+                <p>{tr(colorVersionOrderBusy
+                  ? "Saving version order…"
+                  : "Drag thumbnails to reorder. The first version is the default garment.")}</p>
+                <div className="media-preview-dialog__thumbnail-row">
+                  {colorVersions.map((version, index) => {
+                    const versionId = version.id || GARMENT_ORIGINAL_VERSION_ID;
+                    return (
+                      <button
+                        type="button"
+                        className={`${index === activeColorVersionIndex ? "active" : ""}${draggedColorVersionId === versionId ? " is-dragging" : ""}`}
+                        onClick={() => setColorVersionIndex(index)}
+                        aria-label={tr("View garment version {number}", { number: index + 1 })}
+                        aria-pressed={index === activeColorVersionIndex}
+                        draggable={item.id.startsWith("import-") && !colorVersionOrderBusy}
+                        onDragStart={() => setDraggedColorVersionId(versionId)}
+                        onDragOver={(event) => {
+                          if (item.id.startsWith("import-") && !colorVersionOrderBusy) event.preventDefault();
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          void reorderColorVersions(versionId);
+                        }}
+                        onDragEnd={() => setDraggedColorVersionId(null)}
+                        key={versionId}
+                      >
+                        <OptimizedImage
+                          src={version.thumbnail || version.preview || version.image}
+                          alt=""
+                          sizes="80px"
+                          breakpoints={[80, 120, 180]}
+                          quality={72}
+                          reveal
+                        />
+                        <span className="media-preview-dialog__number">{index + 1}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </aside>
             )}
@@ -6759,6 +6872,15 @@ export function App() {
     return updated;
   };
 
+  const reorderColorVersions = async (id, ids) => {
+    const updated = await profileApi(`/api/import/wardrobe/${id}/variants/order?user=${encodeURIComponent(currentUserId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ ids }),
+    });
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    return updated;
+  };
+
   const generateModeledLook = async (id, variantId = null, context = {}) => {
     const generated = await profileApi(`/api/import/wardrobe/${id}/modeled?user=${encodeURIComponent(currentUserId)}`, {
       method: "POST",
@@ -7205,6 +7327,7 @@ export function App() {
           onDiscardGarmentRegeneration={discardGarmentRegeneration}
           onCreateVariant={createColorVariant}
           onSelectColorVersion={selectColorVersion}
+          onReorderColorVersions={reorderColorVersions}
           onDeleteModeled={deleteModeledLook}
           onDeleteSourcePhoto={deleteSourcePhoto}
           onReorderMedia={reorderGarmentMedia}

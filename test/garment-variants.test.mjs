@@ -4,9 +4,13 @@ import {
   GARMENT_VARIANT_THRESHOLD_DEFAULT,
   GARMENT_VARIANT_THRESHOLD_MAX,
   GARMENT_VARIANT_THRESHOLD_MIN,
+  GARMENT_ORIGINAL_VERSION_ID,
   garmentColorVariants,
   garmentVersionLayout,
   garmentVersionFanSlot,
+  garmentVersionOrder,
+  isCompleteGarmentVersionOrder,
+  moveGarmentVersion,
   normalizeVariantThreshold,
   selectedGarmentVariantId,
   supportsGarmentVersionFan,
@@ -54,11 +58,29 @@ test("keeps a saved color-version selection only while that version exists", () 
   assert.equal(selectedGarmentVariantId({ ...record, selectedColorVariantId: null }), null);
 });
 
-test("uses fan, vertical stack, and carousel layouts at the requested version counts", () => {
+test("keeps the first ordered version as the saved garment default", () => {
+  const record = {
+    colorVariants: [
+      { id: "navy", image: "/navy.png" },
+      { id: "cream", image: "/cream.png" },
+    ],
+    colorVariantOrder: ["cream", GARMENT_ORIGINAL_VERSION_ID, "navy"],
+  };
+  assert.deepEqual(garmentVersionOrder(record), ["cream", GARMENT_ORIGINAL_VERSION_ID, "navy"]);
+  assert.equal(selectedGarmentVariantId(record), "cream");
+  assert.equal(isCompleteGarmentVersionOrder(record, ["navy", "cream", GARMENT_ORIGINAL_VERSION_ID]), true);
+  assert.equal(isCompleteGarmentVersionOrder(record, ["navy", GARMENT_ORIGINAL_VERSION_ID]), false);
+  assert.deepEqual(
+    moveGarmentVersion(garmentVersionOrder(record), "navy", "cream"),
+    ["navy", "cream", GARMENT_ORIGINAL_VERSION_ID],
+  );
+});
+
+test("uses fan, horizontal spread, and carousel layouts at the requested version counts", () => {
   assert.equal(garmentVersionLayout("upperbody", 2, true), "fan");
   assert.equal(garmentVersionLayout("upperbody", 3, true), "fan");
-  assert.equal(garmentVersionLayout("upperbody", 4, true), "stack");
-  assert.equal(garmentVersionLayout("upperbody", 5, true), "stack");
+  assert.equal(garmentVersionLayout("upperbody", 4, true), "spread");
+  assert.equal(garmentVersionLayout("upperbody", 5, true), "spread");
   assert.equal(garmentVersionLayout("upperbody", 6, true), "carousel");
   assert.equal(garmentVersionLayout("wholebody_up", 3, true), "carousel");
   assert.equal(garmentVersionLayout("wholebody", 3, false), "carousel");

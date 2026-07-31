@@ -3233,6 +3233,14 @@ button { font: inherit; }
   grid-template-rows: minmax(0, 1fr) auto;
 }
 
+.media-preview-dialog__body.has-version-gallery {
+  grid-template-rows: minmax(0, 1fr) 126px;
+}
+
+.media-preview-dialog__body.has-version-gallery.has-actions {
+  grid-template-rows: minmax(0, 1fr) 126px auto;
+}
+
 .media-preview-dialog__viewport {
   position: relative;
   min-width: 0;
@@ -3333,6 +3341,12 @@ button { font: inherit; }
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.media-preview-dialog__gallery.garment-version-gallery img {
+  padding: 5px;
+  background: #eee8de;
+  object-fit: contain;
 }
 
 .media-preview-dialog__gallery .media-preview-dialog__number {
@@ -4332,22 +4346,27 @@ button { font: inherit; }
     scale(1.055);
 }
 
-.garment-version-fan.is-stack .garment-version-fan__visual {
+.garment-version-fan.is-spread .garment-version-fan__visual {
   transform-origin: 50% 50%;
 }
 
-.viewer-art.has-version-stack:hover .garment-version-fan__visual,
-.viewer-art.has-version-stack:focus-within .garment-version-fan__visual {
+.viewer-art.has-version-spread:hover .garment-version-fan__visual,
+.viewer-art.has-version-spread:focus-within .garment-version-fan__visual {
   opacity: 1;
   transition-delay: 0ms;
-  transform: translateY(var(--stack-y)) scale(.82);
+  transform:
+    translateX(calc(var(--spread-x-percent) + var(--spread-x-gap)))
+    scale(var(--spread-scale));
 }
 
-.viewer-art.has-version-stack:hover .garment-version-fan__visual.is-hovered,
-.viewer-art.has-version-stack:focus-within .garment-version-fan__visual.is-hovered {
+.viewer-art.has-version-spread:hover .garment-version-fan__visual.is-hovered,
+.viewer-art.has-version-spread:focus-within .garment-version-fan__visual.is-hovered {
   z-index: 100;
   filter: drop-shadow(0 7px 7px rgba(39, 31, 23, .16));
-  transform: translateY(var(--stack-y)) scale(.91);
+  transform:
+    translateX(calc(var(--spread-x-percent) + var(--spread-x-gap)))
+    translateY(-7px)
+    scale(calc(var(--spread-scale) + .045));
 }
 
 .garment-version-fan__visual canvas {
@@ -4361,9 +4380,17 @@ button { font: inherit; }
   pointer-events: none;
 }
 
-.garment-version-fan__targets.is-stack {
-  grid-template-columns: 1fr;
-  grid-template-rows: repeat(var(--fan-count), minmax(0, 1fr));
+.garment-version-fan__targets.is-spread {
+  display: block;
+}
+
+.garment-version-fan__targets.is-spread button {
+  position: absolute;
+  inset: 0;
+  transform:
+    translateX(calc(var(--spread-x-percent) + var(--spread-x-gap)))
+    scale(var(--spread-scale));
+  transform-origin: 50% 50%;
 }
 
 .garment-version-fan__targets button {
@@ -4378,15 +4405,15 @@ button { font: inherit; }
 
 .viewer-art.has-version-fan:hover .garment-version-fan__targets,
 .viewer-art.has-version-fan:focus-within .garment-version-fan__targets,
-.viewer-art.has-version-stack:hover .garment-version-fan__targets,
-.viewer-art.has-version-stack:focus-within .garment-version-fan__targets {
+.viewer-art.has-version-spread:hover .garment-version-fan__targets,
+.viewer-art.has-version-spread:focus-within .garment-version-fan__targets {
   pointer-events: auto;
 }
 
 .viewer-art.has-version-fan:hover .garment-version-fan__targets button,
 .viewer-art.has-version-fan:focus-within .garment-version-fan__targets button,
-.viewer-art.has-version-stack:hover .garment-version-fan__targets button,
-.viewer-art.has-version-stack:focus-within .garment-version-fan__targets button {
+.viewer-art.has-version-spread:hover .garment-version-fan__targets button,
+.viewer-art.has-version-spread:focus-within .garment-version-fan__targets button {
   pointer-events: auto;
 }
 
@@ -4406,33 +4433,6 @@ button { font: inherit; }
   background: var(--ink);
   box-shadow: 0 0 0 1px rgba(25, 24, 22, .55);
   transform: translateX(-50%);
-}
-
-.garment-version-open {
-  position: absolute;
-  top: 3px;
-  right: -5px;
-  z-index: 130;
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(25, 25, 25, .15);
-  border-radius: 4px;
-  padding: 0;
-  background: rgba(248, 245, 239, .92);
-  color: var(--ink);
-  box-shadow: 0 6px 18px rgba(25, 25, 25, .12);
-  cursor: zoom-in;
-  backdrop-filter: blur(7px);
-  -webkit-backdrop-filter: blur(7px);
-}
-
-.garment-version-open:hover,
-.garment-version-open:focus-visible {
-  border-color: rgba(25, 25, 25, .55);
-  background: var(--paper);
-  outline: none;
 }
 
 .viewer-art-floating .sample-hint {
@@ -7252,7 +7252,9 @@ button { font: inherit; }
   .media-preview-dialog__viewport { margin: 8px; padding: 8px; }
   .modeled-image-settings { top: 10px; right: 10px; }
   .modeled-image-settings > section { width: min(330px, calc(100vw - 36px)); max-height: 58vh; }
-  .media-preview-dialog__body.has-carousel { grid-template-rows: minmax(0, 1fr) 110px; }
+  .media-preview-dialog__body.has-carousel,
+  .media-preview-dialog__body.has-version-gallery { grid-template-rows: minmax(0, 1fr) 110px; }
+  .media-preview-dialog__body.has-version-gallery.has-actions { grid-template-rows: minmax(0, 1fr) 110px auto; }
   .media-preview-dialog__actions { padding: 10px 12px max(12px, env(safe-area-inset-bottom)); }
   .media-preview-dialog__actions button { width: 100%; }
   .garment-regeneration__scroll { padding: 10px; }

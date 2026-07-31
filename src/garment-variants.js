@@ -5,7 +5,8 @@ export const GARMENT_VARIANT_THRESHOLD_MAX = 160;
 export const GARMENT_VARIANT_THRESHOLD_DEFAULT = 100;
 export const GARMENT_VERSION_FAN_PARTS = new Set(["upperbody", "wholebody"]);
 export const GARMENT_VERSION_FAN_MAX = 3;
-export const GARMENT_VERSION_STACK_MAX = 5;
+export const GARMENT_VERSION_SPREAD_MAX = 5;
+export const GARMENT_ORIGINAL_VERSION_ID = "original";
 
 export function normalizeVariantThreshold(value) {
   if (value == null || value === "") return GARMENT_VARIANT_THRESHOLD_DEFAULT;
@@ -46,18 +47,53 @@ export function garmentColorVariants(value = {}) {
 }
 
 export function selectedGarmentVariantId(value = {}) {
-  const selected = typeof value.selectedColorVariantId === "string"
+  const first = garmentVersionOrder(value)[0];
+  return first && first !== GARMENT_ORIGINAL_VERSION_ID ? first : null;
+}
+
+export function garmentVersionOrder(value = {}) {
+  const available = [GARMENT_ORIGINAL_VERSION_ID, ...garmentColorVariants(value).map((variant) => variant.id)];
+  const availableSet = new Set(available);
+  const seen = new Set();
+  const saved = Array.isArray(value.colorVariantOrder) ? value.colorVariantOrder.flatMap((id) => {
+    if (typeof id !== "string" || seen.has(id) || !availableSet.has(id)) return [];
+    seen.add(id);
+    return [id];
+  }) : [];
+  if (saved.length) return [...saved, ...available.filter((id) => !seen.has(id))];
+
+  const legacySelected = typeof value.selectedColorVariantId === "string"
+    && availableSet.has(value.selectedColorVariantId)
     ? value.selectedColorVariantId
     : null;
-  return selected && garmentColorVariants(value).some((variant) => variant.id === selected)
-    ? selected
-    : null;
+  return legacySelected
+    ? [legacySelected, ...available.filter((id) => id !== legacySelected)]
+    : available;
+}
+
+export function isCompleteGarmentVersionOrder(value = {}, ids) {
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) return false;
+  const available = garmentVersionOrder({ ...value, colorVariantOrder: [] });
+  return ids.length === available.length
+    && new Set(ids).size === ids.length
+    && available.every((id) => ids.includes(id));
+}
+
+export function moveGarmentVersion(ids, draggedId, targetId) {
+  if (!Array.isArray(ids) || draggedId === targetId) return Array.isArray(ids) ? [...ids] : [];
+  const from = ids.indexOf(draggedId);
+  const to = ids.indexOf(targetId);
+  if (from < 0 || to < 0) return [...ids];
+  const next = [...ids];
+  const [dragged] = next.splice(from, 1);
+  next.splice(to, 0, dragged);
+  return next;
 }
 
 export function garmentVersionLayout(part, versionCount, hasHeroImage = true) {
   if (!hasHeroImage || !GARMENT_VERSION_FAN_PARTS.has(part) || !Number.isInteger(versionCount)) return "carousel";
   if (versionCount > 1 && versionCount <= GARMENT_VERSION_FAN_MAX) return "fan";
-  if (versionCount > GARMENT_VERSION_FAN_MAX && versionCount <= GARMENT_VERSION_STACK_MAX) return "stack";
+  if (versionCount > GARMENT_VERSION_FAN_MAX && versionCount <= GARMENT_VERSION_SPREAD_MAX) return "spread";
   return "carousel";
 }
 
