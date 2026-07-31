@@ -1500,13 +1500,124 @@ function setSimilarity(first, second) {
   return (jaccard * 0.4) + (coverage * 0.6);
 }
 
+function rgbToLab(value) {
+  if (!HEX_COLOR.test(value || "")) return null;
+  const [red, green, blue] = [1, 3, 5]
+    .map((index) => Number.parseInt(value.slice(index, index + 2), 16) / 255)
+    .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+  const x = ((red * 0.4124) + (green * 0.3576) + (blue * 0.1805)) / 0.95047;
+  const y = (red * 0.2126) + (green * 0.7152) + (blue * 0.0722);
+  const z = ((red * 0.0193) + (green * 0.1192) + (blue * 0.9505)) / 1.08883;
+  const transform = (channel) => channel > 0.008856
+    ? Math.cbrt(channel)
+    : ((7.787 * channel) + (16 / 116));
+  const fx = transform(x);
+  const fy = transform(y);
+  const fz = transform(z);
+  return [(116 * fy) - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
+function rgbColorProperties(value) {
+  if (!HEX_COLOR.test(value || "")) return null;
+  const [red, green, blue] = [1, 3, 5]
+    .map((index) => Number.parseInt(value.slice(index, index + 2), 16) / 255);
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  const chroma = maximum - minimum;
+  let hue = 0;
+  if (chroma && maximum === red) hue = ((green - blue) / chroma) % 6;
+  else if (chroma && maximum === green) hue = ((blue - red) / chroma) + 2;
+  else if (chroma) hue = ((red - green) / chroma) + 4;
+  return {
+    chroma,
+    hue: ((hue * 60) + 360) % 360,
+    lightness: (maximum + minimum) / 2,
+  };
+}
+
 function hexSimilarity(first, second) {
-  if (!HEX_COLOR.test(first || "") || !HEX_COLOR.test(second || "")) return 0;
-  const channels = (value) => [1, 3, 5].map((index) => Number.parseInt(value.slice(index, index + 2), 16));
-  const a = channels(first);
-  const b = channels(second);
-  const distance = Math.sqrt(a.reduce((total, channel, index) => total + ((channel - b[index]) ** 2), 0));
-  return Math.max(0, 1 - (distance / Math.sqrt(3 * (255 ** 2))));
+  const a = rgbToLab(first);
+  const b = rgbToLab(second);
+  if (!a || !b) return 0;
+  const deltaE = Math.sqrt(a.reduce((total, channel, index) => total + ((channel - b[index]) ** 2), 0));
+  const perceptualSimilarity = Math.max(0, 1 - (deltaE / 100));
+  const firstColor = rgbColorProperties(first);
+  const secondColor = rgbColorProperties(second);
+  // Lab can overstate the distance between two dark shades. When both colors
+  // carry enough chroma to have a meaningful hue, retain a hue/lightness path
+  // so navy and dark blue (or two browns) can still match.
+  if (firstColor.chroma < 0.12 || secondColor.chroma < 0.12) return perceptualSimilarity;
+  const hueDistance = Math.min(
+    Math.abs(firstColor.hue - secondColor.hue),
+    360 - Math.abs(firstColor.hue - secondColor.hue),
+  ) / 180;
+  const hueLightnessSimilarity = Math.max(0, 1
+    - (hueDistance * 0.55)
+    - (Math.abs(firstColor.lightness - secondColor.lightness) * 0.45));
+  return Math.max(perceptualSimilarity, hueLightnessSimilarity);
+}
+
+const GARMENT_SUBTYPES = [
+  ["trouser", /\b(trousers?|pants?|slacks?|jeans?|chinos?|calcas?)\b/],
+  ["shorts", /\b(shorts?|bermudas?)\b/],
+  ["skirt", /\b(skirts?|saia|saias)\b/],
+  ["tshirt", /\b(t[- ]?shirts?|tees?)\b/],
+  ["shirt", /\b(shirts?|camisas?|button[- ]?(?:down|up))\b/],
+  ["sweater", /\b(sweaters?|jumpers?|pullovers?|cardigans?|camisolas?)\b/],
+  ["jacket", /\b(jackets?|blazers?|casacos?|blus(?:ao|oes))\b/],
+  ["coat", /\b(coats?|overcoats?|trench(?: coats?)?)\b/],
+  ["sneaker", /\b(sneakers?|trainers?|tenis)\b/],
+  ["loafer", /\b(loafers?|mocassins?)\b/],
+  ["boot", /\b(boots?|botas?)\b/],
+  ["sandal", /\b(sandals?|sandalias?)\b/],
+];
+
+const PATTERNED_GARMENT = /\b(animal(?:[- ]print)?|check(?:ed|erboard)?|chevron|floral|flower|geometric|gingham|houndstooth|leopard|paisley|pattern(?:ed)?|plaid|polka(?:[- ]dot)?|print(?:ed)?|snake(?:[- ]print)?|spot(?:ted)?|stripe(?:d)?|swirl|tartan|tie[- ]dye|zebra)\b/;
+const SOLID_GARMENT = /\b(monochrome|plain|solid|unpatterned)\b/;
+
+function duplicateDescription(record = {}) {
+  return [record.name, ...(record.tags || []), ...(record.fits || [])].join(" ")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase();
+}
+
+function garmentSubtype(record = {}) {
+  const description = duplicateDescription(record);
+  return GARMENT_SUBTYPES.find(([, pattern]) => pattern.test(description))?.[0] || null;
+}
+
+function garmentPalette(record = {}) {
+  return [record.color, record.secondaryColor].filter((color) => HEX_COLOR.test(color || ""));
+}
+
+function paletteSimilarity(first = {}, second = {}) {
+  const firstPalette = garmentPalette(first);
+  const secondPalette = garmentPalette(second);
+  if (!firstPalette.length || !secondPalette.length) return 0;
+  return Math.max(...firstPalette.flatMap((color) => (
+    secondPalette.map((candidate) => hexSimilarity(color, candidate))
+  )));
+}
+
+function duplicateConflictReasons(record = {}, metadata = {}, colorSimilarity = 0) {
+  const reasons = [];
+  const recordSubtype = garmentSubtype(record);
+  const metadataSubtype = garmentSubtype(metadata);
+  if (recordSubtype && metadataSubtype && recordSubtype !== metadataSubtype) reasons.push("subtype");
+
+  const recordDescription = duplicateDescription(record);
+  const metadataDescription = duplicateDescription(metadata);
+  const recordPatterned = PATTERNED_GARMENT.test(recordDescription);
+  const metadataPatterned = PATTERNED_GARMENT.test(metadataDescription);
+  const recordLooksSolid = SOLID_GARMENT.test(recordDescription) || (!recordPatterned && !record.secondaryColor);
+  const metadataLooksSolid = SOLID_GARMENT.test(metadataDescription) || (!metadataPatterned && !metadata.secondaryColor);
+  if ((recordPatterned && metadataLooksSolid) || (metadataPatterned && recordLooksSolid)) reasons.push("pattern");
+
+  if (garmentPalette(record).length && garmentPalette(metadata).length && colorSimilarity < 0.62) {
+    reasons.push("color");
+  }
+  return reasons;
 }
 
 export function duplicateCandidateScore(record = {}, metadata = {}) {
@@ -1518,6 +1629,8 @@ export function duplicateCandidateScore(record = {}, metadata = {}) {
       detailSimilarity: 0,
       descriptorSimilarity: 0,
       brandMatch: false,
+      compatible: false,
+      conflictReasons: ["category"],
     };
   }
   const nameSimilarity = setSimilarity(duplicateTokens(record.name), duplicateTokens(metadata.name));
@@ -1546,7 +1659,9 @@ export function duplicateCandidateScore(record = {}, metadata = {}) {
       ...(metadata.fits || []),
     ].join(" ")),
   );
-  const colorSimilarity = hexSimilarity(record.color, metadata.color);
+  // Compare whole palettes because analysis can swap the primary and secondary
+  // colors of the same multicolor garment between photos.
+  const colorSimilarity = paletteSimilarity(record, metadata);
   const secondarySimilarity = record.secondaryColor && metadata.secondaryColor
     ? hexSimilarity(record.secondaryColor, metadata.secondaryColor)
     : 0;
@@ -1554,6 +1669,8 @@ export function duplicateCandidateScore(record = {}, metadata = {}) {
   const metadataBrand = String(metadata.brand || "").trim().toLocaleLowerCase();
   const brandMatch = Boolean(recordBrand && metadataBrand && recordBrand === metadataBrand);
   const brandConflict = Boolean(recordBrand && metadataBrand && recordBrand !== metadataBrand);
+  const conflictReasons = duplicateConflictReasons(record, metadata, colorSimilarity);
+  const compatible = conflictReasons.length === 0;
   const score = Math.max(0, Math.min(1,
     (colorSimilarity * 0.38)
     + (nameSimilarity * 0.18)
@@ -1570,6 +1687,8 @@ export function duplicateCandidateScore(record = {}, metadata = {}) {
     detailSimilarity,
     descriptorSimilarity,
     brandMatch,
+    compatible,
+    conflictReasons,
   };
 }
 
@@ -5758,7 +5877,8 @@ export function wardrobeImportApi(options = {}) {
       .filter((record) => record.userId === job.userId)
       .map((record) => ({ record, match: duplicateCandidateScore(record, job.metadata) }))
       .filter(({ match }) => (
-        match.score >= 0.48
+        match.compatible
+        && match.score >= 0.48
         && (
           match.nameSimilarity >= 0.22
           || match.detailSimilarity >= 0.18

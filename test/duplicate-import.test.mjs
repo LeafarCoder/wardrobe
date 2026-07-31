@@ -96,6 +96,44 @@ test("treats navy and dark blue tailoring as a plausible duplicate", () => {
   assert.ok(match.score >= 0.60);
   assert.ok(match.nameSimilarity >= 0.5);
   assert.ok(match.colorSimilarity >= 0.8);
+  assert.equal(match.compatible, true);
+});
+
+test("rejects a black-and-white swirl print as a duplicate of solid pink trousers", () => {
+  const match = duplicateCandidateScore({
+    name: "pink wide leg trousers",
+    part: "lowerbody",
+    color: "#e08db4",
+    tags: ["wide leg", "elastic waist", "pleated"],
+  }, {
+    name: "Wide Leg Swirl Print Trousers",
+    part: "lowerbody",
+    color: "#f3f1ea",
+    secondaryColor: "#241c18",
+    tags: ["wide leg", "elastic waist", "swirl print"],
+  });
+
+  assert.ok(match.score >= 0.48, "regression fixture should exercise the old score threshold");
+  assert.equal(match.compatible, false);
+  assert.ok(match.conflictReasons.includes("pattern"));
+  assert.ok(match.conflictReasons.includes("color"));
+});
+
+test("rejects different garment subtypes within the same broad category", () => {
+  const match = duplicateCandidateScore({
+    name: "Black pleated midi skirt",
+    part: "lowerbody",
+    color: "#161616",
+    tags: ["pleated", "midi"],
+  }, {
+    name: "Black pleated trousers",
+    part: "lowerbody",
+    color: "#171717",
+    tags: ["pleated", "wide leg"],
+  });
+
+  assert.equal(match.compatible, false);
+  assert.ok(match.conflictReasons.includes("subtype"));
 });
 
 test("matches Portuguese garment metadata against an English wardrobe", () => {
