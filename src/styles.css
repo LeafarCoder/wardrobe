@@ -807,6 +807,29 @@ button { font: inherit; }
 .profile-reference-field > p { margin: 10px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .profile-field-error { display: block; margin-top: 8px; color: var(--accent); font-size: 10px; }
 
+.profile-background-library { border: 1px solid var(--line); padding: 18px; background: rgba(255, 255, 255, .2); }
+.profile-background-library > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.profile-background-library > header span { color: var(--muted); font-size: 9px; letter-spacing: .11em; text-transform: uppercase; }
+.profile-background-library > header h4 { margin: 4px 0 5px; font-size: 15px; font-weight: 540; }
+.profile-background-library > header p { max-width: 570px; margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.profile-background-library > header button { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--ink); padding: 7px 10px; background: transparent; color: var(--ink); font: inherit; font-size: 10px; white-space: nowrap; cursor: pointer; }
+.profile-background-library > header button:hover,
+.profile-background-library > header button:focus-visible { background: var(--ink); color: var(--paper); outline: none; }
+.profile-background-library > header button:disabled { opacity: .45; cursor: default; }
+.profile-background-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-top: 18px; }
+.profile-background-grid article { position: relative; min-width: 0; border: 1px solid var(--line); background: var(--paper); }
+.profile-background-grid article > img { width: 100%; height: 122px; display: block; object-fit: cover; background: #eee8de; }
+.profile-background-grid article > div { min-width: 0; padding: 9px 10px 10px; }
+.profile-background-grid strong,
+.profile-background-grid small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-background-grid strong { font-size: 10px; font-weight: 560; }
+.profile-background-grid small { margin-top: 3px; color: var(--muted); font-size: 8px; }
+.profile-background-grid article > button { position: absolute; top: 7px; right: 7px; min-width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid rgba(25, 24, 22, .35); padding: 0 6px; background: rgba(248, 245, 239, .94); color: var(--ink); font: inherit; font-size: 9px; cursor: pointer; }
+.profile-background-grid article > button.is-confirming { color: #fff; border-color: var(--accent); background: var(--accent); }
+.profile-background-empty { width: 100%; min-height: 190px; display: grid; place-items: center; align-content: center; gap: 6px; margin-top: 18px; border: 1px dashed var(--line); background: rgba(248, 245, 239, .55); color: var(--ink); font: inherit; cursor: pointer; }
+.profile-background-empty strong { font-size: 12px; font-weight: 560; }
+.profile-background-empty span { max-width: 380px; color: var(--muted); font-size: 10px; }
+
 .profile-reference-lightbox {
   position: fixed;
   inset: 0;
@@ -3652,6 +3675,73 @@ button { font: inherit; }
 .garment-delete-dialog__image img {
   width: min(82%, 300px);
   height: min(82%, 230px);
+}
+
+.source-delete-dialog {
+  width: min(560px, 100%);
+}
+
+.source-delete-dialog__image {
+  height: min(34vh, 240px);
+}
+
+.source-delete-dialog__image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.source-delete-dialog__body > p:last-of-type {
+  max-width: 470px;
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.source-delete-dialog__alternatives {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 9px;
+  max-height: 154px;
+  margin-top: 16px;
+  overflow: auto;
+}
+
+.source-delete-dialog__alternatives button {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  padding: 5px 5px 7px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.source-delete-dialog__alternatives button:hover,
+.source-delete-dialog__alternatives button:focus-visible,
+.source-delete-dialog__alternatives button.is-selected {
+  border-color: var(--ink);
+  outline: none;
+}
+
+.source-delete-dialog__alternatives button.is-selected {
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+
+.source-delete-dialog__alternatives img {
+  width: 100%;
+  height: 72px;
+  display: block;
+  object-fit: cover;
+}
+
+.source-delete-dialog__alternatives span {
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .look-delete-dialog__image.product-stage--animated .product-stage__light {

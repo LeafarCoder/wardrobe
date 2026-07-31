@@ -33,7 +33,7 @@ import {
   normalizeWardrobePlans,
   SEASON_OPTIONS,
 } from "../src/wardrobe-discovery.js";
-import { garmentColorVariants, normalizeVariantThreshold } from "../src/garment-variants.js";
+import { garmentColorVariants, normalizeVariantThreshold, selectedGarmentVariantId } from "../src/garment-variants.js";
 import { normalizeCareInstructions } from "../src/garment-care.js";
 import {
   connectionCanShare,
@@ -1064,6 +1064,48 @@ export function recordWithSourcePhotos(record, photos) {
   return { ...next, mediaOrder: normalizeGarmentMediaOrder(next) };
 }
 
+export function recordWithoutSourcePhoto(record, sourcePhotoId, replacementSourcePhotoId = null) {
+  const sources = sourcePhotosForRecord(record);
+  const removed = sources.find((photo) => photo.id === sourcePhotoId) || null;
+  if (!removed) return { record, removed: null };
+
+  const remaining = sources.filter((photo) => photo.id !== sourcePhotoId);
+  const replacementIndex = replacementSourcePhotoId
+    ? remaining.findIndex((photo) => photo.id === replacementSourcePhotoId)
+    : -1;
+  if (replacementSourcePhotoId && replacementIndex < 0) {
+    return { record, removed: null, invalidReplacement: true };
+  }
+  if (replacementIndex > 0) {
+    const [replacement] = remaining.splice(replacementIndex, 1);
+    remaining.unshift(replacement);
+  }
+
+  const candidate = garmentRegenerationCandidateForRecord(record);
+  const candidateUsedRemovedSource = candidate?.sourcePhotoIds.includes(sourcePhotoId);
+  const nextCandidate = candidate && candidateUsedRemovedSource ? {
+    ...candidate,
+    sourcePhotoIds: candidate.sourcePhotoIds
+      .filter((id) => id !== sourcePhotoId && remaining.some((photo) => photo.id === id))
+      .concat(remaining.map((photo) => photo.id))
+      .filter((id, index, ids) => ids.indexOf(id) === index)
+      .slice(0, 3),
+  } : candidate;
+  const next = recordWithSourcePhotos({
+    ...record,
+    garmentRegenerationCandidate: nextCandidate,
+  }, remaining);
+  const primary = remaining[0] || null;
+  return {
+    record: {
+      ...next,
+      boundingBox: primary?.boundingBox || null,
+      originalFocusBox: primary?.focusBox || null,
+    },
+    removed,
+  };
+}
+
 export function mergeImportedRecords(keeper = {}, discarded = {}, updatedAt = new Date().toISOString()) {
   const sourcePhotos = [];
   const seenAssets = new Set();
@@ -1292,6 +1334,7 @@ function publicImportedRecord(record, userId) {
       preview: storedAssetUrl(record, variant.preview, userId),
       thumbnail: storedAssetUrl(record, variant.thumbnail, userId),
     })),
+    selectedColorVariantId: selectedGarmentVariantId(record),
     modeledImage: storedAssetUrl(record, record.modeledImage, userId),
     modeledLooks: modeledLooksForRecord(record).map((look) => ({
       ...look,
@@ -5958,6 +6001,40 @@ Interpret this correction semantically in whatever language it is written. It ov
     return withLibrary(() => removeImportedModeledLook(itemId, lookId, user));
   }
 
+  function deleteImportedSourcePhoto(itemId, sourcePhotoId, replacementSourcePhotoId, user) {
+    return withLibrary(() => removeImportedSourcePhoto(itemId, sourcePhotoId, replacementSourcePhotoId, user));
+  }
+
+  async function removeImportedSourcePhoto(itemId, sourcePhotoId, replacementSourcePhotoId, user) {
+    const records = await loadImported();
+    const index = records.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
+    if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+    const removal = recordWithoutSourcePhoto(records[index], sourcePhotoId, replacementSourcePhotoId);
+    if (removal.invalidReplacement) {
+      throw apiError("The replacement original photo is no longer associated with this garment.", 409, "source_photo_replacement_stale");
+    }
+    if (!removal.removed) throw apiError("Original photo not found.", 404, "source_photo_not_found");
+
+    records[index] = {
+      ...removal.record,
+      updatedAt: new Date().toISOString(),
+    };
+    await saveImported(records);
+
+    const retained = new Set(records.flatMap(importedRecordAssets).map((asset) => asset.split("?")[0]));
+    const removedAssets = [removal.removed.image, removal.removed.preview]
+      .filter((asset) => asset && !retained.has(asset.split("?")[0]));
+    const cleanup = await Promise.allSettled(removedAssets.map((asset) => rm(
+      path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+      { force: true },
+    )));
+    if (cleanup.some((result) => result.status === "rejected")) {
+      console.warn(`[wardrobe] Original photo ${sourcePhotoId} was detached from "${records[index].name}", but an unused stored asset could not be removed.`);
+    }
+    console.info(`[wardrobe] Deleted original photo ${sourcePhotoId} from "${records[index].name}"; ${sourcePhotosForRecord(records[index]).length} source photo(s) and ${modeledLooksForRecord(records[index]).length} modeled look(s) remain.`);
+    return records[index];
+  }
+
   async function removeImportedModeledLook(itemId, lookId, user) {
     const records = await loadImported();
     const index = records.findIndex((candidate) => candidate.id === itemId && candidate.userId === user.id);
@@ -7646,6 +7723,26 @@ Interpret this correction semantically in whatever language it is written. It ov
         return json(res, 200, publicImportedRecord(record, user.id));
       }
       const garmentVariantMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/variants$/i);
+      const garmentVariantSelectionMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/variants\/selection$/i);
+      if (garmentVariantSelectionMatch && req.method === "PATCH") {
+        const input = await body(req, 8 * 1024);
+        const selected = typeof input.variantId === "string" ? input.variantId : null;
+        const saved = await withLibrary(async () => {
+          const records = await loadImported();
+          const index = records.findIndex((record) => record.id === garmentVariantSelectionMatch[1] && record.userId === user.id);
+          if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+          if (selected && !garmentColorVariants(records[index]).some((variant) => variant.id === selected)) {
+            throw apiError("That garment color version could not be found.", 404, "garment_variant_not_found");
+          }
+          records[index] = {
+            ...records[index],
+            selectedColorVariantId: selected,
+          };
+          await saveImported(records);
+          return records[index];
+        });
+        return json(res, 200, publicImportedRecord(saved, user.id));
+      }
       if (garmentVariantMatch && req.method === "POST") {
         const input = await body(req, 18 * 1024 * 1024);
         const image = decodeImage(input);
@@ -7692,6 +7789,20 @@ Interpret this correction semantically in whatever language it is written. It ov
       const modeledLookMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/modeled\/([a-z0-9-]{1,80})$/i);
       if (modeledLookMatch && req.method === "DELETE") {
         const record = await deleteImportedModeledLook(modeledLookMatch[1], modeledLookMatch[2], user);
+        return json(res, 200, publicImportedRecord(record, user.id));
+      }
+      const sourcePhotoMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/sources\/([a-z0-9-]{1,100})$/i);
+      if (sourcePhotoMatch && req.method === "DELETE") {
+        const input = await body(req, 8 * 1024);
+        const replacementSourcePhotoId = typeof input.replacementSourcePhotoId === "string"
+          ? input.replacementSourcePhotoId
+          : null;
+        const record = await deleteImportedSourcePhoto(
+          sourcePhotoMatch[1],
+          sourcePhotoMatch[2],
+          replacementSourcePhotoId,
+          user,
+        );
         return json(res, 200, publicImportedRecord(record, user.id));
       }
       if (wardrobeItemMatch && !wardrobeItemMatch[2] && req.method === "PATCH") {

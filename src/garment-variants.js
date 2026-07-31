@@ -45,6 +45,15 @@ export function garmentColorVariants(value = {}) {
   });
 }
 
+export function selectedGarmentVariantId(value = {}) {
+  const selected = typeof value.selectedColorVariantId === "string"
+    ? value.selectedColorVariantId
+    : null;
+  return selected && garmentColorVariants(value).some((variant) => variant.id === selected)
+    ? selected
+    : null;
+}
+
 export function garmentVersionLayout(part, versionCount, hasHeroImage = true) {
   if (!hasHeroImage || !GARMENT_VERSION_FAN_PARTS.has(part) || !Number.isInteger(versionCount)) return "carousel";
   if (versionCount > 1 && versionCount <= GARMENT_VERSION_FAN_MAX) return "fan";

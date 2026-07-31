@@ -8,6 +8,7 @@ import {
   garmentVersionLayout,
   garmentVersionFanSlot,
   normalizeVariantThreshold,
+  selectedGarmentVariantId,
   supportsGarmentVersionFan,
 } from "../src/garment-variants.js";
 
@@ -41,6 +42,16 @@ test("keeps each recolor threshold within the supported range", () => {
   assert.equal(normalizeVariantThreshold(0), GARMENT_VARIANT_THRESHOLD_MIN);
   assert.equal(normalizeVariantThreshold(999), GARMENT_VARIANT_THRESHOLD_MAX);
   assert.equal(normalizeVariantThreshold(127.6), 128);
+});
+
+test("keeps a saved color-version selection only while that version exists", () => {
+  const record = {
+    selectedColorVariantId: "cognac",
+    colorVariants: [{ id: "cognac", image: "/cognac.png" }],
+  };
+  assert.equal(selectedGarmentVariantId(record), "cognac");
+  assert.equal(selectedGarmentVariantId({ ...record, selectedColorVariantId: "missing" }), null);
+  assert.equal(selectedGarmentVariantId({ ...record, selectedColorVariantId: null }), null);
 });
 
 test("uses fan, vertical stack, and carousel layouts at the requested version counts", () => {

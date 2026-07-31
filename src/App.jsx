@@ -45,6 +45,7 @@ import {
   garmentColorVariants,
   garmentVersionFanSlot,
   garmentVersionLayout,
+  selectedGarmentVariantId,
 } from "./garment-variants.js";
 import {
   preferredStoreOptions,
@@ -88,6 +89,7 @@ import { withWardrobeUser } from "./user-scope.js";
 import { collectOriginalPhotoLibrary } from "./original-photo-library.js";
 import {
   GARMENT_MEDIA_GENERATED,
+  GARMENT_MEDIA_ORIGINAL,
   garmentMediaId,
   garmentMediaPreloadSources,
   garmentMediaPreviewSource,
@@ -222,6 +224,12 @@ function itemColorVersions(item) {
     secondaryColor: item.secondaryColor || null,
     original: true,
   }, ...garmentColorVariants(item)];
+}
+
+function itemSelectedColorVersionIndex(item, versions = itemColorVersions(item)) {
+  const selectedId = selectedGarmentVariantId(item);
+  const index = selectedId ? versions.findIndex((version) => version.id === selectedId) : 0;
+  return index >= 0 ? index : 0;
 }
 
 function modeledLookSource(look) {
@@ -1510,7 +1518,9 @@ function ItemViewer({
   onAcceptGarmentRegeneration,
   onDiscardGarmentRegeneration,
   onCreateVariant,
+  onSelectColorVersion,
   onDeleteModeled,
+  onDeleteSourcePhoto,
   onReorderMedia,
   onDirtyChange,
   blockedSwitchSignal,
@@ -1521,6 +1531,7 @@ function ItemViewer({
 }) {
   const deleteLookButtonRef = useRef(null);
   const deleteCancelButtonRef = useRef(null);
+  const sourceDeleteCancelButtonRef = useRef(null);
   const deleteGarmentButtonRef = useRef(null);
   const deleteGarmentCancelButtonRef = useRef(null);
   const sourcePhotoButtonRef = useRef(null);
@@ -1561,6 +1572,8 @@ function ItemViewer({
   const [generatingModeledFor, setGeneratingModeledFor] = useState(null);
   const [deletingModeled, setDeletingModeled] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState(null);
+  const [sourceDeleteCandidate, setSourceDeleteCandidate] = useState(null);
+  const [deletingSourcePhoto, setDeletingSourcePhoto] = useState(false);
   const [garmentDeleteOpen, setGarmentDeleteOpen] = useState(false);
   const [deletingGarment, setDeletingGarment] = useState(false);
   const [nameEditing, setNameEditing] = useState(false);
@@ -1570,11 +1583,14 @@ function ItemViewer({
   const [originalHeroPosition, setOriginalHeroPosition] = useState(() => originalPhotoPosition(item));
   const type = tr(TYPE_MAP[item.part]?.singular || "Wardrobe item");
   const colorVersions = useMemo(() => itemColorVersions(item), [item]);
-  const [colorVersionIndex, setColorVersionIndex] = useState(0);
+  const [colorVersionIndex, setColorVersionIndex] = useState(() => itemSelectedColorVersionIndex(item, colorVersions));
   const activeColorVersionIndex = Math.min(colorVersionIndex, Math.max(0, colorVersions.length - 1));
   const activeColorVersion = colorVersions[activeColorVersionIndex] || colorVersions[0];
   const modeledLooks = useMemo(() => itemModeledLooks(item), [item]);
   const sourcePhotos = useMemo(() => itemSourcePhotos(item), [item]);
+  const sourceDeleteAlternatives = sourceDeleteCandidate
+    ? sourcePhotos.filter((photo) => photo.id !== sourceDeleteCandidate.photo.id)
+    : [];
   const garmentMedia = useMemo(() => orderedGarmentMedia({
     sourcePhotos,
     modeledLooks,
@@ -1750,6 +1766,11 @@ function ItemViewer({
             setGarmentDeleteOpen(false);
             requestAnimationFrame(() => deleteGarmentButtonRef.current?.focus({ preventScroll: true }));
           }
+        } else if (sourceDeleteCandidate) {
+          if (!deletingSourcePhoto) {
+            setSourceDeleteCandidate(null);
+            requestAnimationFrame(() => deleteLookButtonRef.current?.focus({ preventScroll: true }));
+          }
         } else if (deleteCandidate) {
           if (!deletingModeled) {
             setDeleteCandidate(null);
@@ -1779,11 +1800,15 @@ function ItemViewer({
       document.removeEventListener("keydown", onKeyDown);
       clearTimeout(shakeTimerRef.current);
     };
-  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, garmentDeleteOpen, garmentRegenerationOpen, generatingModeled, mediaPreviewOpen, modeledSettingsOpen, modeledVariantPickerOpen, requestClose, sampling, sourcePhotoOpen, variantStudioOpen]);
+  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, deletingSourcePhoto, garmentDeleteOpen, garmentRegenerationOpen, generatingModeled, mediaPreviewOpen, modeledSettingsOpen, modeledVariantPickerOpen, requestClose, sampling, sourceDeleteCandidate, sourcePhotoOpen, variantStudioOpen]);
 
   useEffect(() => {
     if (deleteCandidate) deleteCancelButtonRef.current?.focus({ preventScroll: true });
   }, [deleteCandidate]);
+
+  useEffect(() => {
+    if (sourceDeleteCandidate) sourceDeleteCancelButtonRef.current?.focus({ preventScroll: true });
+  }, [sourceDeleteCandidate]);
 
   useEffect(() => {
     if (garmentDeleteOpen) deleteGarmentCancelButtonRef.current?.focus({ preventScroll: true });
@@ -1855,6 +1880,8 @@ function ItemViewer({
     setDraggedMediaId(null);
     setMediaOrderBusy(false);
     setDeleteCandidate(null);
+    setSourceDeleteCandidate(null);
+    setDeletingSourcePhoto(false);
     setGarmentDeleteOpen(false);
     setDeletingGarment(false);
     setVariantStudioOpen(false);
@@ -1879,7 +1906,7 @@ function ItemViewer({
   }, [activeMediaId]);
 
   useLayoutEffect(() => {
-    setColorVersionIndex(0);
+    setColorVersionIndex(itemSelectedColorVersionIndex(item));
   }, [item.id]);
 
   useLayoutEffect(() => {
@@ -2019,11 +2046,25 @@ function ItemViewer({
     setModeledVariantPickerOpen(true);
   };
 
+  const selectColorVersion = async (index, versions = colorVersions) => {
+    const normalizedIndex = Math.max(0, Math.min(index, versions.length - 1));
+    const previousIndex = activeColorVersionIndex;
+    setColorVersionIndex(normalizedIndex);
+    try {
+      await onSelectColorVersion(item.id, versions[normalizedIndex]?.id || null);
+    } catch (requestError) {
+      setColorVersionIndex(previousIndex);
+      setViewerToast({
+        title: tr("Could not save the selected color version"),
+        message: readableError(requestError),
+      });
+    }
+  };
+
   const rotateColorVersion = (direction) => {
     if (colorVersions.length < 2) return;
-    setColorVersionIndex((current) => (
-      (Math.min(current, colorVersions.length - 1) + direction + colorVersions.length) % colorVersions.length
-    ));
+    const nextIndex = (activeColorVersionIndex + direction + colorVersions.length) % colorVersions.length;
+    void selectColorVersion(nextIndex);
   };
 
   const rotateGarmentMedia = (direction) => {
@@ -2110,6 +2151,63 @@ function ItemViewer({
       setDeleteCandidate(null);
     } finally {
       setDeletingModeled(false);
+    }
+  };
+
+  const requestDeleteSourcePhoto = () => {
+    if (activeMedia?.kind !== GARMENT_MEDIA_ORIGINAL || deletingSourcePhoto || generatingModeled) return;
+    if (isDirty) {
+      setViewerToast({
+        title: tr("Save this garment first"),
+        message: tr("Save your changes before deleting an original photo."),
+      });
+      nudgeUnsaved(false);
+      return;
+    }
+    const remaining = sourcePhotos.filter((photo) => photo.id !== activeMedia.sourceId);
+    setSourceDeleteCandidate({
+      photo: activeMedia.data,
+      index: activeMediaIndex,
+      replacementSourcePhotoId: remaining[0]?.id || null,
+    });
+  };
+
+  const closeSourceDeleteConfirmation = () => {
+    if (deletingSourcePhoto) return;
+    setSourceDeleteCandidate(null);
+    requestAnimationFrame(() => deleteLookButtonRef.current?.focus({ preventScroll: true }));
+  };
+
+  const deleteSourcePhoto = async () => {
+    if (!sourceDeleteCandidate || deletingSourcePhoto) return;
+    setDeletingSourcePhoto(true);
+    setViewerToast(null);
+    try {
+      const updated = await onDeleteSourcePhoto(
+        item.id,
+        sourceDeleteCandidate.photo.id,
+        sourceDeleteCandidate.replacementSourcePhotoId,
+      );
+      const nextMedia = orderedGarmentMedia({
+        sourcePhotos: itemSourcePhotos(updated),
+        modeledLooks: itemModeledLooks(updated),
+        mediaOrder: updated.mediaOrder,
+      });
+      if (nextMedia.length) {
+        setActiveMediaId(nextMedia[Math.min(sourceDeleteCandidate.index, nextMedia.length - 1)]?.id || nextMedia[0].id);
+      } else {
+        setMediaPreviewOpen(null);
+        setActiveMediaId(null);
+      }
+      setSourceDeleteCandidate(null);
+    } catch (requestError) {
+      setViewerToast({
+        title: tr("Could not delete the original photo"),
+        message: readableError(requestError),
+      });
+      setSourceDeleteCandidate(null);
+    } finally {
+      setDeletingSourcePhoto(false);
     }
   };
 
@@ -2430,7 +2528,7 @@ function ItemViewer({
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={(event) => {
                   event.stopPropagation();
-                  setColorVersionIndex(index);
+                  void selectColorVersion(index);
                 }}
               />
             ))}
@@ -2540,7 +2638,7 @@ function ItemViewer({
 
   return (
     <>
-    <div className="viewer-entry" data-tutorial="garment-panel" aria-hidden={deleteCandidate || garmentDeleteOpen || sourcePhotoOpen || mediaPreviewOpen || colorEditorOpen || variantStudioOpen || modeledVariantPickerOpen ? "true" : undefined}>
+    <div className="viewer-entry" data-tutorial="garment-panel" aria-hidden={deleteCandidate || sourceDeleteCandidate || garmentDeleteOpen || sourcePhotoOpen || mediaPreviewOpen || colorEditorOpen || variantStudioOpen || modeledVariantPickerOpen ? "true" : undefined}>
     <aside className={`viewer editing${hasHeroImage ? " has-hero-image" : ""}${shaking ? " shake" : ""}`} aria-label={tr("Selected wardrobe item")}>
       <button className="viewer-icon-close" type="button" onClick={requestClose} aria-label={tr("Close viewer")}>
         <X size={24} weight="light" aria-hidden="true" />
@@ -2595,15 +2693,19 @@ function ItemViewer({
                 </button>
               </div>
             )}
-            {hasModeledImage && (
+            {(hasModeledImage || (activeMedia?.kind === GARMENT_MEDIA_ORIGINAL && item.id.startsWith("import-"))) && (
               <button
                 ref={deleteLookButtonRef}
                 className="modeled-look-delete"
                 type="button"
-                disabled={deletingModeled || generatingModeled}
-                onClick={requestDeleteModeledLook}
-                aria-label={tr(deletingModeled ? "Deleting…" : "Delete look")}
-                title={tr(deletingModeled ? "Deleting…" : "Delete look")}
+                disabled={deletingModeled || deletingSourcePhoto || generatingModeled}
+                onClick={hasModeledImage ? requestDeleteModeledLook : requestDeleteSourcePhoto}
+                aria-label={tr(hasModeledImage
+                  ? deletingModeled ? "Deleting…" : "Delete look"
+                  : deletingSourcePhoto ? "Deleting photo…" : "Delete original photo")}
+                title={tr(hasModeledImage
+                  ? deletingModeled ? "Deleting…" : "Delete look"
+                  : deletingSourcePhoto ? "Deleting photo…" : "Delete original photo")}
               >
                 <Trash size={15} aria-hidden="true" />
               </button>
@@ -2711,7 +2813,8 @@ function ItemViewer({
         onClose={() => setVariantStudioOpen(false)}
         onCreate={async (input) => {
           const updated = await onCreateVariant(item.id, input);
-          setColorVersionIndex(itemColorVersions(updated).length - 1);
+          const updatedVersions = itemColorVersions(updated);
+          await selectColorVersion(updatedVersions.length - 1, updatedVersions);
         }}
       />
     )}
@@ -3253,6 +3356,83 @@ function ItemViewer({
             <button className="look-delete-dialog__confirm" type="button" onClick={deleteModeledLook} disabled={deletingModeled}>
               <Trash size={15} aria-hidden="true" />
               {tr(deletingModeled ? "Deleting…" : "Delete look")}
+            </button>
+          </div>
+        </section>
+      </div>
+    )}
+    {sourceDeleteCandidate && (
+      <div
+        className="look-delete-overlay"
+        role="presentation"
+        onMouseDown={(event) => event.target === event.currentTarget && closeSourceDeleteConfirmation()}
+      >
+        <section
+          className="look-delete-dialog source-delete-dialog"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="source-delete-title"
+          onKeyDown={keepDeleteDialogFocus}
+        >
+          <button
+            className="look-delete-dialog__close"
+            type="button"
+            onClick={closeSourceDeleteConfirmation}
+            disabled={deletingSourcePhoto}
+            aria-label={tr("Cancel deleting this original photo")}
+          >
+            <X size={22} weight="light" aria-hidden="true" />
+          </button>
+          <ProductStage className="look-delete-dialog__image source-delete-dialog__image" animated>
+            <OptimizedImage
+              src={sourceDeleteCandidate.photo.preview || sourceDeleteCandidate.photo.image}
+              alt={tr("Original photo to delete for {name}", { name: draft.name || type })}
+              sizes="(max-width: 520px) calc(100vw - 64px), 540px"
+              breakpoints={[320, 480, 640, 800]}
+              quality={82}
+              priority
+              reveal
+            />
+          </ProductStage>
+          <div className="look-delete-dialog__body source-delete-dialog__body">
+            <p className="look-delete-dialog__eyebrow">{tr("Delete original photo")}</p>
+            <h2 id="source-delete-title">{tr("Remove this original photo?")}</h2>
+            <p>{tr(sourceDeleteAlternatives.length
+              ? "Choose the original photo that should remain the garment's primary source. Your modeled looks will stay saved."
+              : "This is the garment's last original photo. Its modeled looks will stay saved, but future regeneration will need a new source photo.")}</p>
+            {!!sourceDeleteAlternatives.length && (
+              <div className="source-delete-dialog__alternatives" role="radiogroup" aria-label={tr("Replacement original photo")}>
+                {sourceDeleteAlternatives.map((photo, index) => (
+                  <button
+                    key={photo.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={sourceDeleteCandidate.replacementSourcePhotoId === photo.id}
+                    className={sourceDeleteCandidate.replacementSourcePhotoId === photo.id ? "is-selected" : ""}
+                    onClick={() => setSourceDeleteCandidate((current) => ({ ...current, replacementSourcePhotoId: photo.id }))}
+                  >
+                    <OptimizedImage src={photo.preview || photo.image} alt="" sizes="92px" breakpoints={[92, 160]} quality={74} reveal />
+                    <span>{tr("Original {number}", { number: index + 1 })}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="look-delete-dialog__actions">
+            <button
+              ref={sourceDeleteCancelButtonRef}
+              className="secondary-button"
+              type="button"
+              onClick={closeSourceDeleteConfirmation}
+              disabled={deletingSourcePhoto}
+            >
+              {tr("Cancel")}
+            </button>
+            <button className="look-delete-dialog__confirm" type="button" onClick={deleteSourcePhoto} disabled={deletingSourcePhoto}>
+              <Trash size={15} aria-hidden="true" />
+              {tr(deletingSourcePhoto
+                ? "Deleting photo…"
+                : sourceDeleteAlternatives.length ? "Delete photo" : "Leave without an original photo")}
             </button>
           </div>
         </section>
@@ -6420,6 +6600,16 @@ export function App() {
     return updated;
   };
 
+  const selectColorVersion = async (id, variantId) => {
+    if (!id.startsWith("import-")) return null;
+    const updated = await profileApi(`/api/import/wardrobe/${id}/variants/selection?user=${encodeURIComponent(currentUserId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ variantId }),
+    });
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    return updated;
+  };
+
   const generateModeledLook = async (id, variantId = null, context = {}) => {
     const generated = await profileApi(`/api/import/wardrobe/${id}/modeled?user=${encodeURIComponent(currentUserId)}`, {
       method: "POST",
@@ -6458,6 +6648,15 @@ export function App() {
   const deleteModeledLook = async (id, lookId) => {
     const updated = await profileApi(`/api/import/wardrobe/${id}/modeled/${encodeURIComponent(lookId)}?user=${encodeURIComponent(currentUserId)}`, {
       method: "DELETE",
+    });
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    return updated;
+  };
+
+  const deleteSourcePhoto = async (id, sourcePhotoId, replacementSourcePhotoId = null) => {
+    const updated = await profileApi(`/api/import/wardrobe/${id}/sources/${encodeURIComponent(sourcePhotoId)}?user=${encodeURIComponent(currentUserId)}`, {
+      method: "DELETE",
+      body: JSON.stringify({ replacementSourcePhotoId }),
     });
     setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
     return updated;
@@ -6854,7 +7053,9 @@ export function App() {
           onAcceptGarmentRegeneration={acceptGarmentRegeneration}
           onDiscardGarmentRegeneration={discardGarmentRegeneration}
           onCreateVariant={createColorVariant}
+          onSelectColorVersion={selectColorVersion}
           onDeleteModeled={deleteModeledLook}
+          onDeleteSourcePhoto={deleteSourcePhoto}
           onReorderMedia={reorderGarmentMedia}
           onDirtyChange={setViewerDirty}
           blockedSwitchSignal={blockedSwitchSignal}

@@ -10,9 +10,13 @@ const SESSION_SECRET = "garment-media-order-test-session-secret";
 const ITEM_ID = "import-00000000-0000-4000-8000-000000000021";
 
 function mockRequest(ids) {
-  const request = Readable.from([Buffer.from(JSON.stringify({ ids }))]);
-  request.url = `/api/import/wardrobe/${ITEM_ID}/media-order`;
-  request.method = "PATCH";
+  return mockJsonRequest(`/api/import/wardrobe/${ITEM_ID}/media-order`, "PATCH", { ids });
+}
+
+function mockJsonRequest(url, method, input = {}) {
+  const request = Readable.from([Buffer.from(JSON.stringify(input))]);
+  request.url = url;
+  request.method = method;
   request.headers = {
     "content-type": "application/json",
     cookie: `wardrobe_session=${createSessionToken(SESSION_SECRET, "default")}`,
@@ -82,6 +86,117 @@ test("saves one complete mixed order for original and generated garment photos",
     await api.handler(mockRequest(["source:source-one"]), staleResponse, () => {});
     assert.equal(staleResponse.statusCode, 409);
     assert.equal(staleResponse.json().code, "garment_media_order_stale");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("saves the last selected garment color version", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "wardrobe-selected-variant-api-"));
+  const dataDir = path.join(root, "data");
+  const api = wardrobeImportApi({
+    env: {
+      WARDROBE_DATA_DIR: dataDir,
+      GOOGLE_CLIENT_ID: "test-client",
+      GOOGLE_CLIENT_SECRET: "test-client-secret",
+      WARDROBE_SESSION_SECRET: SESSION_SECRET,
+    },
+  });
+
+  try {
+    await api.initialize(root);
+    await writeFile(path.join(dataDir, "library.json"), JSON.stringify([{
+      id: ITEM_ID,
+      userId: "default",
+      name: "Linen shirt",
+      part: "upperbody",
+      color: "#eee8dc",
+      image: "/api/import/library/shirt.png",
+      colorVariants: [{ id: "navy", image: "/api/import/library/shirt-navy.png" }],
+    }], null, 2));
+
+    const selectResponse = mockResponse();
+    await api.handler(mockJsonRequest(
+      `/api/import/wardrobe/${ITEM_ID}/variants/selection`,
+      "PATCH",
+      { variantId: "navy" },
+    ), selectResponse, () => {});
+    assert.equal(selectResponse.statusCode, 200);
+    assert.equal(selectResponse.json().selectedColorVariantId, "navy");
+
+    const stored = JSON.parse(await readFile(path.join(dataDir, "library.json"), "utf8"));
+    assert.equal(stored[0].selectedColorVariantId, "navy");
+
+    const originalResponse = mockResponse();
+    await api.handler(mockJsonRequest(
+      `/api/import/wardrobe/${ITEM_ID}/variants/selection`,
+      "PATCH",
+      { variantId: null },
+    ), originalResponse, () => {});
+    assert.equal(originalResponse.statusCode, 200);
+    assert.equal(originalResponse.json().selectedColorVariantId, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("deletes an original photo, chooses a remaining primary source, and preserves modeled looks", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "wardrobe-source-delete-api-"));
+  const dataDir = path.join(root, "data");
+  const api = wardrobeImportApi({
+    env: {
+      WARDROBE_DATA_DIR: dataDir,
+      GOOGLE_CLIENT_ID: "test-client",
+      GOOGLE_CLIENT_SECRET: "test-client-secret",
+      WARDROBE_SESSION_SECRET: SESSION_SECRET,
+    },
+  });
+
+  try {
+    await api.initialize(root);
+    await writeFile(path.join(dataDir, "library.json"), JSON.stringify([{
+      id: ITEM_ID,
+      userId: "default",
+      name: "Merged shirt",
+      part: "upperbody",
+      color: "#eee8dc",
+      image: "/api/import/library/shirt.png",
+      sourcePhotos: [
+        { id: "source-one", image: "/api/import/library/source-one.png", boundingBox: { x: 1, y: 2, width: 300, height: 400 } },
+        { id: "source-two", image: "/api/import/library/source-two.png", boundingBox: { x: 5, y: 6, width: 350, height: 450 } },
+      ],
+      modeledLooks: [{ id: "look-one", image: "/api/import/library/look-one.png" }],
+      mediaOrder: ["source:source-one", "modeled:look-one", "source:source-two"],
+    }], null, 2));
+
+    const response = mockResponse();
+    await api.handler(mockJsonRequest(
+      `/api/import/wardrobe/${ITEM_ID}/sources/source-one`,
+      "DELETE",
+      { replacementSourcePhotoId: "source-two" },
+    ), response, () => {});
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json().sourcePhotos.map((photo) => photo.id), ["source-two"]);
+    assert.equal(response.json().originalImage, "/api/import/library/source-two.png?user=default");
+    assert.deepEqual(response.json().modeledLooks.map((look) => look.id), ["look-one"]);
+    assert.deepEqual(response.json().mediaOrder, ["modeled:look-one", "source:source-two"]);
+
+    const stored = JSON.parse(await readFile(path.join(dataDir, "library.json"), "utf8"));
+    assert.deepEqual(stored[0].sourcePhotos.map((photo) => photo.id), ["source-two"]);
+    assert.deepEqual(stored[0].modeledLooks.map((look) => look.id), ["look-one"]);
+    assert.deepEqual(stored[0].boundingBox, { x: 5, y: 6, width: 350, height: 450 });
+
+    const lastResponse = mockResponse();
+    await api.handler(mockJsonRequest(
+      `/api/import/wardrobe/${ITEM_ID}/sources/source-two`,
+      "DELETE",
+      { replacementSourcePhotoId: null },
+    ), lastResponse, () => {});
+    assert.equal(lastResponse.statusCode, 200);
+    assert.deepEqual(lastResponse.json().sourcePhotos, []);
+    assert.equal(lastResponse.json().originalImage, null);
+    assert.deepEqual(lastResponse.json().modeledLooks.map((look) => look.id), ["look-one"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
