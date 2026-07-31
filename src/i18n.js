@@ -1092,6 +1092,7 @@ const pt = {
   "Could not delete the style look": "Não foi possível eliminar o visual",
   "Selected {type}": "{type} selecionada",
   "Open enlarged garment image": "Abrir imagem ampliada da peça",
+  "Open garment image and regeneration options": "Abrir imagem da peça e opções de regeneração",
   "Open enlarged modeled look": "Abrir visual com modelo ampliado",
   "Enlarged garment image for {name}": "Imagem ampliada da peça {name}",
   "Close enlarged image": "Fechar imagem ampliada",

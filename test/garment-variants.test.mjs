@@ -5,6 +5,7 @@ import {
   GARMENT_VARIANT_THRESHOLD_MAX,
   GARMENT_VARIANT_THRESHOLD_MIN,
   garmentColorVariants,
+  garmentVersionLayout,
   garmentVersionFanSlot,
   normalizeVariantThreshold,
   supportsGarmentVersionFan,
@@ -42,19 +43,28 @@ test("keeps each recolor threshold within the supported range", () => {
   assert.equal(normalizeVariantThreshold(127.6), 128);
 });
 
-test("offers the color-version fan only for tops and one-pieces with media", () => {
+test("uses fan, vertical stack, and carousel layouts at the requested version counts", () => {
+  assert.equal(garmentVersionLayout("upperbody", 2, true), "fan");
+  assert.equal(garmentVersionLayout("upperbody", 3, true), "fan");
+  assert.equal(garmentVersionLayout("upperbody", 4, true), "stack");
+  assert.equal(garmentVersionLayout("upperbody", 5, true), "stack");
+  assert.equal(garmentVersionLayout("upperbody", 6, true), "carousel");
+  assert.equal(garmentVersionLayout("wholebody_up", 3, true), "carousel");
+  assert.equal(garmentVersionLayout("wholebody", 3, false), "carousel");
+
   assert.equal(supportsGarmentVersionFan("upperbody", 3, true), true);
   assert.equal(supportsGarmentVersionFan("wholebody", 2, true), true);
   assert.equal(supportsGarmentVersionFan("wholebody_up", 3, true), false);
   assert.equal(supportsGarmentVersionFan("upperbody", 1, true), false);
-  assert.equal(supportsGarmentVersionFan("upperbody", 4, true), true);
+  assert.equal(supportsGarmentVersionFan("upperbody", 4, true), false);
   assert.equal(supportsGarmentVersionFan("upperbody", 5, true), false);
   assert.equal(supportsGarmentVersionFan("upperbody", 3, false), false);
 });
 
-test("fans two to four versions symmetrically around the vertical center", () => {
+test("positions expanded versions symmetrically around the center", () => {
   assert.deepEqual(Array.from({ length: 2 }, (_, index) => garmentVersionFanSlot(index, 2)), [-0.5, 0.5]);
   assert.deepEqual(Array.from({ length: 3 }, (_, index) => garmentVersionFanSlot(index, 3)), [-1, 0, 1]);
   assert.deepEqual(Array.from({ length: 4 }, (_, index) => garmentVersionFanSlot(index, 4)), [-1.5, -0.5, 0.5, 1.5]);
+  assert.deepEqual(Array.from({ length: 5 }, (_, index) => garmentVersionFanSlot(index, 5)), [-2, -1, 0, 1, 2]);
   assert.equal(garmentVersionFanSlot(-1, 3), 0);
 });

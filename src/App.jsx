@@ -44,7 +44,7 @@ import {
   GARMENT_VARIANT_THRESHOLD_MIN,
   garmentColorVariants,
   garmentVersionFanSlot,
-  supportsGarmentVersionFan,
+  garmentVersionLayout,
 } from "./garment-variants.js";
 import {
   preferredStoreOptions,
@@ -1597,8 +1597,12 @@ function ItemViewer({
   const activeSourceCrop = activeSourcePhoto?.boundingBox || item.boundingBox || null;
   const hasOriginalImage = sourcePhotos.length > 0;
   const hasHeroImage = garmentMedia.length > 0;
-  const hasVersionFan = supportsGarmentVersionFan(draft.part || item.part, colorVersions.length, hasHeroImage)
-    && !sampling;
+  const versionLayout = sampling
+    ? "carousel"
+    : garmentVersionLayout(draft.part || item.part, colorVersions.length, hasHeroImage);
+  const hasVersionFan = versionLayout === "fan";
+  const hasVersionStack = versionLayout === "stack";
+  const hasVersionSpread = hasVersionFan || hasVersionStack;
   const garmentRegenerationCandidate = item.garmentRegenerationCandidate || null;
   const regenerationPrimaryValid = Boolean(normalizeHexColor(garmentRegenerationForm.color));
   const regenerationSecondaryValid = !garmentRegenerationForm.secondaryColor
@@ -2358,26 +2362,27 @@ function ItemViewer({
 
   const garmentArtwork = (
     <div
-      className={`viewer-art${hasHeroImage ? " viewer-art-floating" : ""}${sampling ? " sampling" : ""}${hasVersionFan ? " has-version-fan" : ""}`}
+      className={`viewer-art${hasHeroImage ? " viewer-art-floating" : ""}${sampling ? " sampling" : ""}${hasVersionFan ? " has-version-fan" : ""}${hasVersionStack ? " has-version-stack" : ""}`}
       style={hasHeroImage ? { "--piece-rotation": pieceRotation } : undefined}
       ref={garmentArtworkButtonRef}
-      role={!sampling ? (hasVersionFan ? "group" : "button") : undefined}
-      tabIndex={!sampling && !hasVersionFan ? 0 : -1}
-      aria-label={!sampling ? tr(hasVersionFan ? "Garment color versions" : "Open enlarged garment image") : undefined}
+      role={!sampling ? (hasVersionSpread ? "group" : "button") : undefined}
+      tabIndex={!sampling && !hasVersionSpread ? 0 : -1}
+      aria-label={!sampling ? tr(hasVersionSpread ? "Garment color versions" : "Open enlarged garment image") : undefined}
       onKeyDown={(event) => {
-        if (!sampling && !hasVersionFan && (event.key === "Enter" || event.key === " ")) {
+        if (!sampling && !hasVersionSpread && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
           openMediaPreview("garment");
         }
       }}
     >
-      {hasVersionFan ? (
+      {hasVersionSpread ? (
         <>
-          <div className="garment-version-fan" aria-hidden="true">
+          <div className={`garment-version-fan${hasVersionStack ? " is-stack" : ""}`} aria-hidden="true">
             {colorVersions.map((version, index) => {
               const slot = garmentVersionFanSlot(index, colorVersions.length);
-              const fanStep = colorVersions.length === 2 ? 24 : colorVersions.length === 3 ? 13 : 10;
+              const fanStep = colorVersions.length === 2 ? 24 : 13;
               const horizontalStep = colorVersions.length === 2 ? 20 : 10;
+              const stackStep = colorVersions.length === 4 ? 32 : 27;
               return (
                 <div
                   key={version.id || "original"}
@@ -2387,6 +2392,7 @@ function ItemViewer({
                     "--fan-x": `${slot * horizontalStep}px`,
                     "--fan-rank": Math.abs(slot),
                     "--fan-layer": 80 - Math.abs(slot),
+                    "--stack-y": `${slot * stackStep}px`,
                   }}
                 >
                   <GarmentColorPreview
@@ -2408,7 +2414,7 @@ function ItemViewer({
             })}
           </div>
           <div
-            className="garment-version-fan__targets"
+            className={`garment-version-fan__targets${hasVersionStack ? " is-stack" : ""}`}
             style={{ "--fan-count": colorVersions.length }}
             onMouseLeave={() => setHoveredColorVersionIndex(null)}
           >
@@ -2434,8 +2440,22 @@ function ItemViewer({
           </div>
         </>
       ) : activeGarmentPreview}
+      {hasVersionSpread && (
+        <button
+          className="garment-version-open"
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            openMediaPreview("garment");
+          }}
+          aria-label={tr("Open garment image and regeneration options")}
+          title={tr("Open garment image and regeneration options")}
+        >
+          <MagnifyingGlass size={14} aria-hidden="true" />
+        </button>
+      )}
       {colorVersions.length > 1 && (
-        <div className={`garment-version-nav${hasVersionFan ? " is-fan-fallback" : ""}`} aria-label={tr("Garment color versions")}>
+        <div className={`garment-version-nav${hasVersionSpread ? " is-fan-fallback" : ""}`} aria-label={tr("Garment color versions")}>
           <button type="button" onClick={(event) => { event.stopPropagation(); rotateColorVersion(-1); }} aria-label={tr("Previous garment version")}><CaretLeft size={18} /></button>
           <span>{tr("{current} of {total}", { current: activeColorVersionIndex + 1, total: colorVersions.length })}</span>
           <button type="button" onClick={(event) => { event.stopPropagation(); rotateColorVersion(1); }} aria-label={tr("Next garment version")}><CaretRight size={18} /></button>

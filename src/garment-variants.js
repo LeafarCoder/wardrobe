@@ -4,7 +4,8 @@ export const GARMENT_VARIANT_THRESHOLD_MIN = 40;
 export const GARMENT_VARIANT_THRESHOLD_MAX = 160;
 export const GARMENT_VARIANT_THRESHOLD_DEFAULT = 100;
 export const GARMENT_VERSION_FAN_PARTS = new Set(["upperbody", "wholebody"]);
-export const GARMENT_VERSION_FAN_MAX = 4;
+export const GARMENT_VERSION_FAN_MAX = 3;
+export const GARMENT_VERSION_STACK_MAX = 5;
 
 export function normalizeVariantThreshold(value) {
   if (value == null || value === "") return GARMENT_VARIANT_THRESHOLD_DEFAULT;
@@ -44,12 +45,15 @@ export function garmentColorVariants(value = {}) {
   });
 }
 
+export function garmentVersionLayout(part, versionCount, hasHeroImage = true) {
+  if (!hasHeroImage || !GARMENT_VERSION_FAN_PARTS.has(part) || !Number.isInteger(versionCount)) return "carousel";
+  if (versionCount > 1 && versionCount <= GARMENT_VERSION_FAN_MAX) return "fan";
+  if (versionCount > GARMENT_VERSION_FAN_MAX && versionCount <= GARMENT_VERSION_STACK_MAX) return "stack";
+  return "carousel";
+}
+
 export function supportsGarmentVersionFan(part, versionCount, hasHeroImage = true) {
-  return hasHeroImage
-    && GARMENT_VERSION_FAN_PARTS.has(part)
-    && Number.isInteger(versionCount)
-    && versionCount > 1
-    && versionCount <= GARMENT_VERSION_FAN_MAX;
+  return garmentVersionLayout(part, versionCount, hasHeroImage) === "fan";
 }
 
 export function garmentVersionFanSlot(index, versionCount) {
