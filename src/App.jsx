@@ -22,7 +22,7 @@ import { ModeledLookDialog } from "./ModeledLookDialog.jsx";
 import { ModeledLookHoverVideo } from "./ModeledLookHoverVideo.jsx";
 import { ModeledVideoDialog } from "./ModeledVideoDialog.jsx";
 import { modeledLookContextDetails } from "./modeled-look-context.js";
-import { latestCompletedModeledVideo } from "./video-generation.js";
+import { isPortraitModeledMedia, latestCompletedModeledVideo } from "./video-generation.js";
 import { imageFallbackToast, withoutFallbackNotice } from "./image-fallback-notice.js";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { OriginalPhotoGallery } from "./OriginalPhotoGallery.jsx";
@@ -1676,6 +1676,7 @@ function ItemViewer({
   const [modeledSettingsOpen, setModeledSettingsOpen] = useState(false);
   const [modeledVideoOpen, setModeledVideoOpen] = useState(false);
   const [modeledVideoHoverSurface, setModeledVideoHoverSurface] = useState(null);
+  const [activeModeledMediaPortrait, setActiveModeledMediaPortrait] = useState(false);
   const [garmentRegenerationOpen, setGarmentRegenerationOpen] = useState(false);
   const [garmentRegenerationBusy, setGarmentRegenerationBusy] = useState(false);
   const [garmentRegenerationError, setGarmentRegenerationError] = useState("");
@@ -1725,6 +1726,7 @@ function ItemViewer({
   const activeModeledLook = activeMedia?.kind === GARMENT_MEDIA_GENERATED ? activeMedia.data : null;
   const activeModeledVideo = useMemo(() => latestCompletedModeledVideo(activeModeledLook), [activeModeledLook]);
   const isActiveMediaGenerated = activeMedia?.kind === GARMENT_MEDIA_GENERATED;
+  const hasPortraitModeledVideo = Boolean(activeModeledVideo && activeModeledMediaPortrait);
   const modeledSettingsRecorded = Boolean(activeModeledLook && Object.hasOwn(activeModeledLook, "context"));
   const activeModeledSettings = useMemo(
     () => modeledLookContextDetails(activeModeledLook?.context),
@@ -2041,6 +2043,7 @@ function ItemViewer({
 
   useEffect(() => {
     setModeledSettingsOpen(false);
+    setActiveModeledMediaPortrait(false);
   }, [activeMediaId]);
 
   useLayoutEffect(() => {
@@ -2944,7 +2947,7 @@ function ItemViewer({
         <>
           {garmentIdentityHeader}
           <div
-            className="modeled-hero"
+            className={`modeled-hero${hasPortraitModeledVideo ? " has-portrait-video" : ""}`}
             onMouseEnter={() => activeModeledVideo && setModeledVideoHoverSurface("panel")}
             onMouseLeave={() => setModeledVideoHoverSurface((surface) => surface === "panel" ? null : surface)}
           >
@@ -2958,7 +2961,12 @@ function ItemViewer({
               src={activeMedia.preview || activeMedia.image}
               alt={tr("{name} photo {current} of {total}", { name: draft.name || type, current: activeMediaIndex + 1, total: garmentMedia.length })}
               style={!isActiveMediaGenerated ? { objectPosition: originalHeroPosition } : undefined}
-              onLoad={!isActiveMediaGenerated ? measureOriginalHero : undefined}
+              onLoad={isActiveMediaGenerated
+                ? (event) => setActiveModeledMediaPortrait(isPortraitModeledMedia(
+                  event.currentTarget.naturalWidth,
+                  event.currentTarget.naturalHeight,
+                ))
+                : measureOriginalHero}
               role="button"
               tabIndex={0}
               aria-label={tr("Open enlarged garment photos")}

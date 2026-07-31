@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   estimateVideoCost,
+  isPortraitModeledMedia,
   latestCompletedModeledVideo,
   modeledVideoPrompt,
   normalizeModeledVideoSettings,
@@ -9,6 +10,13 @@ import {
   reverseModeledVideoTime,
   videoModel,
 } from "../src/video-generation.js";
+
+test("recognizes portrait modeled media from its intrinsic dimensions", () => {
+  assert.equal(isPortraitModeledMedia(900, 1600), true);
+  assert.equal(isPortraitModeledMedia(1200, 1200), false);
+  assert.equal(isPortraitModeledMedia(1600, 900), false);
+  assert.equal(isPortraitModeledMedia(0, 1600), false);
+});
 
 test("recommends the least expensive flexible video model", () => {
   const model = videoModel(RECOMMENDED_VIDEO_MODEL);

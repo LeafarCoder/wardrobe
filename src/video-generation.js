@@ -220,6 +220,15 @@ export function latestCompletedModeledVideo(look = {}) {
     .at(-1) || null;
 }
 
+export function isPortraitModeledMedia(width, height) {
+  const normalizedWidth = Number(width);
+  const normalizedHeight = Number(height);
+  return Number.isFinite(normalizedWidth)
+    && Number.isFinite(normalizedHeight)
+    && normalizedWidth > 0
+    && normalizedHeight > normalizedWidth;
+}
+
 export function reverseModeledVideoTime(currentTime, elapsedSeconds) {
   const current = Number.isFinite(Number(currentTime)) ? Math.max(0, Number(currentTime)) : 0;
   const elapsed = Number.isFinite(Number(elapsedSeconds)) ? Math.max(0, Math.min(Number(elapsedSeconds), 0.08)) : 0;

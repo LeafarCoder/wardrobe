@@ -2594,6 +2594,7 @@ button { font: inherit; }
 
 .viewer.has-hero-image {
   padding: 0;
+  container-type: inline-size;
 }
 
 .modeled-hero {
@@ -2617,6 +2618,16 @@ button { font: inherit; }
   transition:
     opacity 140ms ease-out,
     object-position 220ms ease;
+}
+
+.modeled-hero.has-portrait-video {
+  flex-basis: calc(150cqi + 40px);
+  height: calc(150cqi + 40px);
+}
+
+.modeled-hero.has-portrait-video .modeled-hero-photo,
+.modeled-hero.has-portrait-video .modeled-hover-video--panel {
+  height: 150cqi;
 }
 
 .modeled-hero-photo.is-enlargeable {
