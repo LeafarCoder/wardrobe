@@ -9,6 +9,7 @@ import {
   garmentVersionLayout,
   garmentVersionFanSlot,
   garmentVersionOrder,
+  garmentVersionSpreadAngle,
   garmentVersionSpreadMetrics,
   isCompleteGarmentVersionOrder,
   moveGarmentVersion,
@@ -103,7 +104,10 @@ test("positions expanded versions symmetrically around the center", () => {
   assert.equal(garmentVersionFanSlot(-1, 3), 0);
 });
 
-test("keeps four and five version spreads compact in fixed-width slots", () => {
-  assert.deepEqual(garmentVersionSpreadMetrics(4), { scale: 0.42, stepPx: 42 });
-  assert.deepEqual(garmentVersionSpreadMetrics(5), { scale: 0.35, stepPx: 36 });
+test("keeps four and five version spreads large, separated, and independently tilted", () => {
+  assert.deepEqual(garmentVersionSpreadMetrics(4), { scale: 0.68, stepPx: 62 });
+  assert.deepEqual(garmentVersionSpreadMetrics(5), { scale: 0.62, stepPx: 58 });
+  assert.deepEqual(Array.from({ length: 4 }, (_, index) => garmentVersionSpreadAngle(index, 4)), [-2, 1, -1, 2]);
+  assert.deepEqual(Array.from({ length: 5 }, (_, index) => garmentVersionSpreadAngle(index, 5)), [-2, 1.5, 0, -1.5, 2]);
+  assert.equal(garmentVersionSpreadAngle(5, 5), 0);
 });

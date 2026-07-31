@@ -115,6 +115,13 @@ export function garmentVersionFanSlot(index, versionCount) {
 
 export function garmentVersionSpreadMetrics(versionCount) {
   return versionCount === 4
-    ? { scale: 0.42, stepPx: 42 }
-    : { scale: 0.35, stepPx: 36 };
+    ? { scale: 0.68, stepPx: 62 }
+    : { scale: 0.62, stepPx: 58 };
+}
+
+export function garmentVersionSpreadAngle(index, versionCount) {
+  const angles = versionCount === 4
+    ? [-2, 1, -1, 2]
+    : [-2, 1.5, 0, -1.5, 2];
+  return angles[index] ?? 0;
 }

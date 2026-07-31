@@ -47,6 +47,7 @@ import {
   garmentVersionFanSlot,
   garmentVersionLayout,
   garmentVersionOrder,
+  garmentVersionSpreadAngle,
   garmentVersionSpreadMetrics,
   moveGarmentVersion,
   selectedGarmentVariantId,
@@ -2501,6 +2502,7 @@ function ItemViewer({
       "--fan-rank": Math.abs(slot),
       "--fan-layer": 80 - Math.abs(slot),
       "--spread-x": `${slot * spread.stepPx}px`,
+      "--spread-angle": `${garmentVersionSpreadAngle(index, colorVersions.length)}deg`,
       "--spread-scale": spread.scale,
     };
   };

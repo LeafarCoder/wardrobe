@@ -4287,7 +4287,7 @@ button { font: inherit; }
 .viewer-art-floating.has-version-spread:hover,
 .viewer-art-floating.has-version-spread:focus-within {
   z-index: 130;
-  transform: translateY(-2px) rotate(var(--piece-rotation));
+  transform: translateY(-2px);
 }
 
 .viewer-art-floating.sampling {
@@ -4371,6 +4371,7 @@ button { font: inherit; }
   transition-delay: 0ms;
   transform:
     translateX(var(--spread-x))
+    rotate(var(--spread-angle))
     scale(var(--spread-scale));
 }
 
@@ -4380,8 +4381,8 @@ button { font: inherit; }
   filter: drop-shadow(0 7px 7px rgba(39, 31, 23, .16));
   transform:
     translateX(var(--spread-x))
-    translateY(-7px)
-    scale(calc(var(--spread-scale) + .045));
+    rotate(var(--spread-angle))
+    scale(calc(var(--spread-scale) + .035));
 }
 
 .garment-version-fan__visual canvas {
@@ -4404,6 +4405,7 @@ button { font: inherit; }
   inset: 0;
   transform:
     translateX(var(--spread-x))
+    rotate(var(--spread-angle))
     scale(var(--spread-scale));
   transform-origin: 50% 50%;
 }
