@@ -3,6 +3,12 @@ import { normalizeHexColor } from "./garment-recolor.js";
 export const GARMENT_VARIANT_THRESHOLD_MIN = 40;
 export const GARMENT_VARIANT_THRESHOLD_MAX = 160;
 export const GARMENT_VARIANT_THRESHOLD_DEFAULT = 100;
+export const GARMENT_VARIANT_SOFTNESS_MIN = 0;
+export const GARMENT_VARIANT_SOFTNESS_MAX = 100;
+export const GARMENT_VARIANT_SOFTNESS_DEFAULT = 35;
+export const GARMENT_VARIANT_STRENGTH_MIN = 0;
+export const GARMENT_VARIANT_STRENGTH_MAX = 100;
+export const GARMENT_VARIANT_STRENGTH_DEFAULT = 100;
 export const GARMENT_VERSION_FAN_PARTS = new Set(["upperbody", "wholebody"]);
 export const GARMENT_VERSION_FAN_MAX = 3;
 export const GARMENT_VERSION_SPREAD_MAX = 5;
@@ -13,6 +19,21 @@ export function normalizeVariantThreshold(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return GARMENT_VARIANT_THRESHOLD_DEFAULT;
   return Math.round(Math.max(GARMENT_VARIANT_THRESHOLD_MIN, Math.min(GARMENT_VARIANT_THRESHOLD_MAX, number)));
+}
+
+function normalizeVariantPercentage(value, fallback) {
+  if (value == null || value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.round(Math.max(0, Math.min(100, number)));
+}
+
+export function normalizeVariantSoftness(value) {
+  return normalizeVariantPercentage(value, GARMENT_VARIANT_SOFTNESS_DEFAULT);
+}
+
+export function normalizeVariantStrength(value) {
+  return normalizeVariantPercentage(value, GARMENT_VARIANT_STRENGTH_DEFAULT);
 }
 
 export function garmentColorVariants(value = {}) {
@@ -41,6 +62,10 @@ export function garmentColorVariants(value = {}) {
       secondaryColor,
       primaryThreshold: normalizeVariantThreshold(variant.primaryThreshold),
       secondaryThreshold: normalizeVariantThreshold(variant.secondaryThreshold),
+      primarySoftness: normalizeVariantSoftness(variant.primarySoftness),
+      secondarySoftness: normalizeVariantSoftness(variant.secondarySoftness),
+      primaryStrength: normalizeVariantStrength(variant.primaryStrength),
+      secondaryStrength: normalizeVariantStrength(variant.secondaryStrength),
       createdAt: typeof variant.createdAt === "string" ? variant.createdAt : null,
     }];
   });

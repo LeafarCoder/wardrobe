@@ -34,6 +34,10 @@ export function GarmentColorPreview({
   secondaryTargetColor,
   primaryThreshold = 100,
   secondaryThreshold = 100,
+  primarySoftness = 35,
+  secondarySoftness = 35,
+  primaryStrength = 100,
+  secondaryStrength = 100,
   context = {},
   className = "",
   onClick,
@@ -83,9 +87,13 @@ export function GarmentColorPreview({
             normalizedAlternate || "",
             normalizedTarget || "",
             primaryThreshold,
+            primarySoftness,
+            primaryStrength,
             normalizedSecondarySource || "",
             normalizedSecondaryTarget || "",
             secondaryThreshold,
+            secondarySoftness,
+            secondaryStrength,
             contextKey,
           ].join("|");
           let recolored = RECOLOR_CACHE.get(key);
@@ -96,6 +104,8 @@ export function GarmentColorPreview({
                 ...JSON.parse(contextKey),
                 channel: "primary",
                 threshold: primaryThreshold,
+                softness: primarySoftness,
+                strength: primaryStrength,
               });
             }
             if (normalizedSecondarySource && normalizedSecondaryTarget && normalizedSecondarySource !== normalizedSecondaryTarget) {
@@ -103,6 +113,8 @@ export function GarmentColorPreview({
                 ...JSON.parse(contextKey),
                 channel: "secondary",
                 threshold: secondaryThreshold,
+                softness: secondarySoftness,
+                strength: secondaryStrength,
               });
             }
             rememberRecolor(key, recolored);
@@ -122,7 +134,7 @@ export function GarmentColorPreview({
     return () => {
       cancelled = true;
     };
-  }, [alternateColor, contextKey, primaryThreshold, secondarySourceColor, secondaryTargetColor, secondaryThreshold, sourceColor, src, targetColor]);
+  }, [alternateColor, contextKey, primarySoftness, primaryStrength, primaryThreshold, secondarySoftness, secondarySourceColor, secondaryStrength, secondaryTargetColor, secondaryThreshold, sourceColor, src, targetColor]);
 
   return (
     <canvas

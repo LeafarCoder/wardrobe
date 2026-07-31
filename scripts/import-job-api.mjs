@@ -42,6 +42,8 @@ import {
   garmentColorVariants,
   garmentVersionOrder,
   isCompleteGarmentVersionOrder,
+  normalizeVariantSoftness,
+  normalizeVariantStrength,
   normalizeVariantThreshold,
   selectedGarmentVariantId,
 } from "../src/garment-variants.js";
@@ -6175,14 +6177,26 @@ Interpret this correction semantically in whatever language it is written. It ov
               candidate.metadata.color,
               variant.primaryColor,
               candidate.metadata.secondaryColor,
-              { ...context, channel: "primary", threshold: variant.primaryThreshold },
+              {
+                ...context,
+                channel: "primary",
+                threshold: variant.primaryThreshold,
+                softness: variant.primarySoftness,
+                strength: variant.primaryStrength,
+              },
             );
             recolorGarmentPixels(
               pixels,
               candidate.metadata.secondaryColor,
               variant.secondaryColor,
               candidate.metadata.color,
-              { ...context, channel: "secondary", threshold: variant.secondaryThreshold },
+              {
+                ...context,
+                channel: "secondary",
+                threshold: variant.secondaryThreshold,
+                softness: variant.secondarySoftness,
+                strength: variant.secondaryStrength,
+              },
             );
             const regeneratedName = `${itemId}-variant-${variant.id}-regenerated-${randomUUID()}.png`;
             const regeneratedBytes = await sharp(Buffer.from(pixels.buffer, pixels.byteOffset, pixels.byteLength), {
@@ -8908,6 +8922,10 @@ Interpret this correction semantically in whatever language it is written. It ov
             secondaryColor,
             primaryThreshold: normalizeVariantThreshold(input.primaryThreshold),
             secondaryThreshold: normalizeVariantThreshold(input.secondaryThreshold),
+            primarySoftness: normalizeVariantSoftness(input.primarySoftness),
+            secondarySoftness: normalizeVariantSoftness(input.secondarySoftness),
+            primaryStrength: normalizeVariantStrength(input.primaryStrength),
+            secondaryStrength: normalizeVariantStrength(input.secondaryStrength),
             createdAt: new Date().toISOString(),
           };
           records[index] = {

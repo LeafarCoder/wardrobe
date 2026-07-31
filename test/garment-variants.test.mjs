@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  GARMENT_VARIANT_SOFTNESS_DEFAULT,
+  GARMENT_VARIANT_STRENGTH_DEFAULT,
   GARMENT_VARIANT_THRESHOLD_DEFAULT,
   GARMENT_VARIANT_THRESHOLD_MAX,
   GARMENT_VARIANT_THRESHOLD_MIN,
@@ -13,6 +15,8 @@ import {
   garmentVersionSpreadMetrics,
   isCompleteGarmentVersionOrder,
   moveGarmentVersion,
+  normalizeVariantSoftness,
+  normalizeVariantStrength,
   normalizeVariantThreshold,
   selectedGarmentVariantId,
   supportsGarmentVersionFan,
@@ -39,6 +43,10 @@ test("normalizes saved garment color versions without duplicating the wardrobe i
     secondaryColor: "#f2e2b8",
     primaryThreshold: 145,
     secondaryThreshold: 65,
+    primarySoftness: GARMENT_VARIANT_SOFTNESS_DEFAULT,
+    secondarySoftness: GARMENT_VARIANT_SOFTNESS_DEFAULT,
+    primaryStrength: GARMENT_VARIANT_STRENGTH_DEFAULT,
+    secondaryStrength: GARMENT_VARIANT_STRENGTH_DEFAULT,
     createdAt: "2026-07-25T12:00:00.000Z",
   }]);
 });
@@ -48,6 +56,14 @@ test("keeps each recolor threshold within the supported range", () => {
   assert.equal(normalizeVariantThreshold(0), GARMENT_VARIANT_THRESHOLD_MIN);
   assert.equal(normalizeVariantThreshold(999), GARMENT_VARIANT_THRESHOLD_MAX);
   assert.equal(normalizeVariantThreshold(127.6), 128);
+});
+
+test("normalizes color mask softness and strength percentages", () => {
+  assert.equal(normalizeVariantSoftness(null), GARMENT_VARIANT_SOFTNESS_DEFAULT);
+  assert.equal(normalizeVariantSoftness(-20), 0);
+  assert.equal(normalizeVariantSoftness(140), 100);
+  assert.equal(normalizeVariantStrength(null), GARMENT_VARIANT_STRENGTH_DEFAULT);
+  assert.equal(normalizeVariantStrength(47.6), 48);
 });
 
 test("keeps a saved color-version selection only while that version exists", () => {

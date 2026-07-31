@@ -169,6 +169,43 @@ test("still allows a pale shoe upper to change when pale material is the selecte
   assert.ok(pixels[6] > pixels[4], "the shaded upper should also receive the selected blue");
 });
 
+test("uses a saved neutral secondary shoe color as a protected material boundary", () => {
+  const pixels = new Uint8ClampedArray([
+    187, 184, 183, 255,
+    150, 148, 147, 255,
+    221, 220, 221, 255,
+    238, 238, 238, 255,
+  ]);
+  const protectedPixels = [...pixels.slice(8)];
+
+  recolorGarmentPixels(pixels, "#bbb8b7", "#304b65", "#dddCDD", {
+    name: "Grey sneakers",
+    part: "shoes",
+    threshold: 100,
+    softness: 35,
+    strength: 100,
+  });
+
+  assert.ok(pixels[2] > pixels[0], "the primary grey upper should become blue");
+  assert.ok(pixels[6] > pixels[4], "a darker upper shade should retain the target hue");
+  assert.deepEqual([...pixels.slice(8)], protectedPixels, "the lighter secondary material should remain unchanged");
+});
+
+test("makes color range and strength materially affect the recolor mask", () => {
+  const original = [110, 105, 100, 255];
+  const narrow = new Uint8ClampedArray(original);
+  const wide = new Uint8ClampedArray(original);
+  const zeroStrength = new Uint8ClampedArray([187, 184, 183, 255]);
+
+  recolorGarmentPixels(narrow, "#bbb8b7", "#304b65", null, { threshold: 40, softness: 20 });
+  recolorGarmentPixels(wide, "#bbb8b7", "#304b65", null, { threshold: 160, softness: 20 });
+  recolorGarmentPixels(zeroStrength, "#bbb8b7", "#304b65", null, { strength: 0 });
+
+  assert.deepEqual([...narrow], original, "minimum range should protect a more distant neutral shade");
+  assert.ok(wide[2] > wide[0], "maximum range should include the same neutral shade");
+  assert.deepEqual([...zeroStrength], [187, 184, 183, 255], "zero strength should leave selected pixels unchanged");
+});
+
 test("offers five distinct local preview colors", () => {
   const suggestions = garmentVariationColors("#355c7d", "#7a3d49", 5);
   assert.equal(suggestions.length, 5);

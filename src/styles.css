@@ -5072,9 +5072,15 @@ button { font: inherit; }
   box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--ink);
 }
 
+.variant-controls {
+  display: grid;
+  gap: 22px;
+  margin-top: 30px;
+}
+
 .variant-threshold {
   display: block;
-  margin-top: 30px;
+  margin: 0;
 }
 
 .variant-threshold > span {

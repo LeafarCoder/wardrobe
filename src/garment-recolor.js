@@ -206,7 +206,10 @@ function neutralSimilarity(pixel, source) {
     return clamp(leatherAndShadowReach * hardwareProtection);
   }
   const lightnessDistance = Math.abs(pixel.lightness - source.lightness);
-  const lightnessWeight = 1 - smoothstep(0.28, 0.68, lightnessDistance);
+  // Neutral colors have no reliable hue signal, so lightness must do the
+  // separating. Keeping a broad flat maximum here made every grey material
+  // equally eligible (for example, a sneaker upper, laces, and sole).
+  const lightnessWeight = 1 - smoothstep(0.04, 0.44, lightnessDistance);
   const neutralWeight = 1 - smoothstep(0.065, 0.19, pixel.chroma);
   return clamp(lightnessWeight * neutralWeight);
 }
@@ -230,6 +233,11 @@ function isShadeOfSameMaterial(source, alternate, context = {}) {
   if (!source || !alternate) return false;
   const lightnessDifference = Math.abs(source.lightness - alternate.lightness);
   const chromaDifference = Math.abs(source.chroma - alternate.chroma);
+
+  // A saved primary and secondary footwear color normally identify distinct
+  // construction materials. In particular, do not collapse a grey upper and
+  // a light-grey sole/lace color into one neutral mask.
+  if (isFootwearContext(context)) return false;
   if (source.chroma < 0.035 && alternate.chroma < 0.035) {
     return lightnessDifference < 0.28;
   }
@@ -281,6 +289,20 @@ function recoloredPixel(pixel, source, target) {
   return lchToLab({ lightness, chroma, hue: target.hue });
 }
 
+function recolorMaskWeight(similarity, context = {}) {
+  const thresholdValue = Number(context.threshold);
+  const threshold = clamp(Number.isFinite(thresholdValue) ? thresholdValue : 100, 40, 160);
+  const softnessValue = Number(context.softness);
+  const softness = clamp(Number.isFinite(softnessValue) ? softnessValue : 35, 0, 100) / 100;
+  const reach = (threshold - 40) / 120;
+
+  // Reach controls which similarities qualify, rather than merely changing
+  // their exponent. This makes the two ends of the control visibly different.
+  const cutoff = 0.82 - (reach * 0.64);
+  const transition = 0.018 + (softness * 0.30);
+  return smoothstep(cutoff - (transition / 2), cutoff + (transition / 2), similarity);
+}
+
 export function recolorGarmentPixels(pixels, sourceColor, targetColor, alternateColor = null, context = {}) {
   if (!(pixels instanceof Uint8ClampedArray)) {
     throw new TypeError("Garment pixels must be a Uint8ClampedArray.");
@@ -295,11 +317,9 @@ export function recolorGarmentPixels(pixels, sourceColor, targetColor, alternate
     const original = rgbToOklab(pixels[index], pixels[index + 1], pixels[index + 2]);
     const pixel = labToLch(original);
     const baseWeight = selectionWeight(pixel, source, alternate, context);
-    const threshold = clamp(Number(context.threshold) || 100, 40, 160);
-    const exponent = threshold >= 100
-      ? 1 - (((threshold - 100) / 60) * 0.58)
-      : 1 + (((100 - threshold) / 60) * 1.25);
-    const weight = clamp(Math.pow(baseWeight, exponent));
+    const strengthValue = Number(context.strength);
+    const strength = clamp(Number.isFinite(strengthValue) ? strengthValue : 100, 0, 100) / 100;
+    const weight = recolorMaskWeight(baseWeight, context) * strength;
     if (weight < 0.015) continue;
     const replacement = recoloredPixel(pixel, source, target);
     const blended = {

@@ -40,6 +40,12 @@ import {
   selectedCareInstructions,
 } from "./garment-care.js";
 import {
+  GARMENT_VARIANT_SOFTNESS_DEFAULT,
+  GARMENT_VARIANT_SOFTNESS_MAX,
+  GARMENT_VARIANT_SOFTNESS_MIN,
+  GARMENT_VARIANT_STRENGTH_DEFAULT,
+  GARMENT_VARIANT_STRENGTH_MAX,
+  GARMENT_VARIANT_STRENGTH_MIN,
   GARMENT_VARIANT_THRESHOLD_DEFAULT,
   GARMENT_VARIANT_THRESHOLD_MAX,
   GARMENT_VARIANT_THRESHOLD_MIN,
@@ -1266,9 +1272,13 @@ function VariantColorPane({
   alternateColor,
   value,
   threshold,
+  softness,
+  strength,
   garment,
   onChange,
   onThresholdChange,
+  onSoftnessChange,
+  onStrengthChange,
   disabled = false,
 }) {
   const variations = useMemo(
@@ -1298,22 +1308,56 @@ function VariantColorPane({
           </button>
         ))}
       </div>
-      <label className="variant-threshold">
-        <span>
-          <span>{tr("Color reach")}</span>
-          <strong>{threshold}%</strong>
-        </span>
-        <input
-          type="range"
-          min={GARMENT_VARIANT_THRESHOLD_MIN}
-          max={GARMENT_VARIANT_THRESHOLD_MAX}
-          step="5"
-          value={threshold}
-          disabled={disabled}
-          onChange={(event) => onThresholdChange(Number(event.target.value))}
-        />
-        <small>{tr("Lower values protect nearby colors. Higher values include more shades and textured pixels.")}</small>
-      </label>
+      <div className="variant-controls">
+        <label className="variant-threshold">
+          <span>
+            <span>{tr("Color range")}</span>
+            <strong>{threshold}%</strong>
+          </span>
+          <input
+            type="range"
+            min={GARMENT_VARIANT_THRESHOLD_MIN}
+            max={GARMENT_VARIANT_THRESHOLD_MAX}
+            step="5"
+            value={threshold}
+            disabled={disabled}
+            onChange={(event) => onThresholdChange(Number(event.target.value))}
+          />
+          <small>{tr("Controls which pixels match the saved source color.")}</small>
+        </label>
+        <label className="variant-threshold">
+          <span>
+            <span>{tr("Edge softness")}</span>
+            <strong>{softness}%</strong>
+          </span>
+          <input
+            type="range"
+            min={GARMENT_VARIANT_SOFTNESS_MIN}
+            max={GARMENT_VARIANT_SOFTNESS_MAX}
+            step="5"
+            value={softness}
+            disabled={disabled}
+            onChange={(event) => onSoftnessChange(Number(event.target.value))}
+          />
+          <small>{tr("Blends the edge between changed and protected pixels.")}</small>
+        </label>
+        <label className="variant-threshold">
+          <span>
+            <span>{tr("Color strength")}</span>
+            <strong>{strength}%</strong>
+          </span>
+          <input
+            type="range"
+            min={GARMENT_VARIANT_STRENGTH_MIN}
+            max={GARMENT_VARIANT_STRENGTH_MAX}
+            step="5"
+            value={strength}
+            disabled={disabled}
+            onChange={(event) => onStrengthChange(Number(event.target.value))}
+          />
+          <small>{tr("Controls how much of the new color is applied while retaining texture.")}</small>
+        </label>
+      </div>
       {disabled && <p>{tr("Add a saved secondary color before creating a secondary-color version.")}</p>}
     </section>
   );
@@ -1326,6 +1370,10 @@ function GarmentVariantStudio({ item, garment, onClose, onCreate }) {
   const [secondaryColor, setSecondaryColor] = useState(item.secondaryColor || null);
   const [primaryThreshold, setPrimaryThreshold] = useState(GARMENT_VARIANT_THRESHOLD_DEFAULT);
   const [secondaryThreshold, setSecondaryThreshold] = useState(GARMENT_VARIANT_THRESHOLD_DEFAULT);
+  const [primarySoftness, setPrimarySoftness] = useState(GARMENT_VARIANT_SOFTNESS_DEFAULT);
+  const [secondarySoftness, setSecondarySoftness] = useState(GARMENT_VARIANT_SOFTNESS_DEFAULT);
+  const [primaryStrength, setPrimaryStrength] = useState(GARMENT_VARIANT_STRENGTH_DEFAULT);
+  const [secondaryStrength, setSecondaryStrength] = useState(GARMENT_VARIANT_STRENGTH_DEFAULT);
   const [rendering, setRendering] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1345,6 +1393,10 @@ function GarmentVariantStudio({ item, garment, onClose, onCreate }) {
         secondaryColor,
         primaryThreshold,
         secondaryThreshold,
+        primarySoftness,
+        secondarySoftness,
+        primaryStrength,
+        secondaryStrength,
       });
       onClose();
     } catch (requestError) {
@@ -1372,9 +1424,13 @@ function GarmentVariantStudio({ item, garment, onClose, onCreate }) {
             alternateColor={item.secondaryColor}
             value={primaryColor}
             threshold={primaryThreshold}
+            softness={primarySoftness}
+            strength={primaryStrength}
             garment={garment}
             onChange={setPrimaryColor}
             onThresholdChange={setPrimaryThreshold}
+            onSoftnessChange={setPrimarySoftness}
+            onStrengthChange={setPrimaryStrength}
           />
           <ProductStage className="variant-studio__garment" animated>
             <GarmentColorPreview
@@ -1386,6 +1442,10 @@ function GarmentVariantStudio({ item, garment, onClose, onCreate }) {
               secondaryTargetColor={secondaryColor}
               primaryThreshold={primaryThreshold}
               secondaryThreshold={secondaryThreshold}
+              primarySoftness={primarySoftness}
+              secondarySoftness={secondarySoftness}
+              primaryStrength={primaryStrength}
+              secondaryStrength={secondaryStrength}
               context={garment}
               onRenderingChange={setRendering}
               onRendered={(canvas) => { renderedCanvas.current = canvas; }}
@@ -1399,9 +1459,13 @@ function GarmentVariantStudio({ item, garment, onClose, onCreate }) {
             alternateColor={item.color}
             value={secondaryColor}
             threshold={secondaryThreshold}
+            softness={secondarySoftness}
+            strength={secondaryStrength}
             garment={{ ...garment, channel: "secondary" }}
             onChange={setSecondaryColor}
             onThresholdChange={setSecondaryThreshold}
+            onSoftnessChange={setSecondarySoftness}
+            onStrengthChange={setSecondaryStrength}
             disabled={!item.secondaryColor}
           />
         </div>
