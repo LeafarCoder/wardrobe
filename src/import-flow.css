@@ -1314,3 +1314,138 @@ button.import-source-option:focus-visible,
   .import-status.is-processing::before,
   .import-spinner { animation: none !important; }
 }
+.garment-mask-editor {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.garment-mask-editor > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.garment-mask-editor > header p,
+.garment-mask-editor > header h2 {
+  margin: 0;
+}
+
+.garment-mask-editor > header p {
+  color: var(--muted, #746f68);
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.garment-mask-editor > header h2 {
+  margin-top: 4px;
+  font-size: 22px;
+  font-weight: 500;
+}
+
+.garment-mask-editor__workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 260px);
+  gap: 18px;
+  align-items: start;
+}
+
+.garment-mask-editor__stage {
+  position: relative;
+  display: grid;
+  min-height: 420px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(55, 50, 43, .14);
+  border-radius: 16px;
+  background-color: #ddd;
+  background-image:
+    linear-gradient(45deg, #c7c7c7 25%, transparent 25%),
+    linear-gradient(-45deg, #c7c7c7 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #c7c7c7 75%),
+    linear-gradient(-45deg, transparent 75%, #c7c7c7 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+.garment-mask-editor__stage canvas {
+  display: block;
+  width: 100%;
+  max-height: min(62vh, 720px);
+  object-fit: contain;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.garment-mask-editor__stage > span {
+  position: absolute;
+  z-index: 1;
+  max-width: 70%;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(250, 248, 244, .92);
+  text-align: center;
+}
+
+.garment-mask-editor aside {
+  display: grid;
+  gap: 16px;
+}
+
+.garment-mask-editor aside label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 10px;
+  color: #393631;
+  font-size: 13px;
+}
+
+.garment-mask-editor aside label input,
+.garment-mask-editor aside label small {
+  grid-column: 1 / -1;
+}
+
+.garment-mask-editor aside small {
+  color: var(--muted, #746f68);
+  line-height: 1.35;
+}
+
+.garment-mask-editor__tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.garment-mask-editor__tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 38px;
+  border: 1px solid rgba(55, 50, 43, .18);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+}
+
+.garment-mask-editor__tools button.is-selected {
+  border-color: #25221e;
+  background: #25221e;
+  color: #fff;
+}
+
+@media (max-width: 760px) {
+  .garment-mask-editor {
+    padding: 18px;
+  }
+
+  .garment-mask-editor__workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .garment-mask-editor__stage {
+    min-height: 300px;
+  }
+}

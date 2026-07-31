@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import {
+  applyGarmentMask,
   buildGarmentPrompt,
   centerTransparentGarment,
   cropDetailDiagnostics,
@@ -16,6 +17,43 @@ import {
   processChromaBackground,
   writeImageVariant,
 } from "../scripts/import-job-api.mjs";
+
+test("applies an editable grayscale mask as real PNG transparency", async () => {
+  const source = await sharp({
+    create: { width: 7, height: 7, channels: 4, background: { r: 244, g: 241, b: 235, alpha: 1 } },
+  }).png().toBuffer();
+  const maskPixels = Buffer.alloc(7 * 7);
+  for (let y = 2; y <= 4; y += 1) {
+    for (let x = 2; x <= 4; x += 1) maskPixels[(y * 7) + x] = 255;
+  }
+  const mask = await sharp(maskPixels, { raw: { width: 7, height: 7, channels: 1 } }).png().toBuffer();
+  const output = await applyGarmentMask(source, mask, { threshold: 128, edge: 0, feather: 0 });
+  const { data } = await sharp(output).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+
+  assert.equal(data[3], 0);
+  assert.equal(data[(((3 * 7) + 3) * 4) + 3], 255);
+});
+
+test("contracts and feathers a manual garment mask to suppress pale edge fringe", async () => {
+  const source = await sharp({
+    create: { width: 9, height: 9, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } },
+  }).png().toBuffer();
+  const maskPixels = Buffer.alloc(9 * 9);
+  for (let y = 2; y <= 6; y += 1) {
+    for (let x = 2; x <= 6; x += 1) maskPixels[(y * 9) + x] = 255;
+  }
+  const mask = await sharp(maskPixels, { raw: { width: 9, height: 9, channels: 1 } }).png().toBuffer();
+  const contracted = await applyGarmentMask(source, mask, { threshold: 128, edge: -1, feather: 0 });
+  const softened = await applyGarmentMask(source, mask, { threshold: 128, edge: -1, feather: 1 });
+  const contractedPixels = await sharp(contracted).ensureAlpha().raw().toBuffer();
+  const softenedPixels = await sharp(softened).ensureAlpha().raw().toBuffer();
+  const alphaAt = (pixels, x, y) => pixels[(((y * 9) + x) * 4) + 3];
+
+  assert.equal(alphaAt(contractedPixels, 2, 4), 0);
+  assert.equal(alphaAt(contractedPixels, 3, 4), 255);
+  assert.ok(alphaAt(softenedPixels, 3, 4) > 0);
+  assert.ok(alphaAt(softenedPixels, 3, 4) < 255);
+});
 
 test("centers the visible alpha bounds without resizing the garment canvas", async () => {
   const garment = await sharp({
@@ -224,6 +262,51 @@ test("removes a neutral studio background when the image model ignores the chrom
   assert.ok(alphaAt(Math.floor(info.width / 2), Math.floor(info.height / 2)) > 240);
 });
 
+test("removes an opaque outer background even when an accessory loop is already transparent", async () => {
+  const size = 256;
+  const raw = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const index = ((y * size) + x) * 4;
+      const backgroundTone = 238 - Math.round((y / (size - 1)) * 14);
+      raw[index] = backgroundTone;
+      raw[index + 1] = backgroundTone + 2;
+      raw[index + 2] = backgroundTone + 5;
+      raw[index + 3] = 255;
+
+      const bagBody = y >= 150 && y <= 220 && Math.abs(x - 128) <= 74 - Math.floor((y - 150) * .38);
+      const leftStrap = y >= 38 && y < 165 && Math.abs(x - (82 + ((y - 38) * .35))) <= 5;
+      const rightStrap = y >= 38 && y < 165 && Math.abs(x - (174 - ((y - 38) * .35))) <= 5;
+      if (bagBody || leftStrap || rightStrap) {
+        raw[index] = 24;
+        raw[index + 1] = 42;
+        raw[index + 2] = 68;
+      }
+
+      const insideLoop = y >= 48 && y < 145 && x > 92 + ((y - 48) * .25) && x < 164 - ((y - 48) * .25);
+      if (insideLoop) {
+        raw[index] = 0;
+        raw[index + 1] = 0;
+        raw[index + 2] = 0;
+        raw[index + 3] = 0;
+      }
+    }
+  }
+  const source = await sharp(raw, { raw: { width: size, height: size, channels: 4 } }).png().toBuffer();
+
+  const result = await processChromaBackground(source, "#00ff00", {
+    protectedColors: ["#182a44"],
+  });
+  const { data, info } = await sharp(result.bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const alphaAt = (x, y) => data[(((y * info.width) + x) * 4) + 3];
+
+  assert.equal(result.edgeFallbackApplied, true);
+  assert.equal(result.transparency.borderTransparentRatio, 1);
+  assert.equal(alphaAt(0, 0), 0);
+  assert.equal(alphaAt(Math.floor(info.width / 2), Math.floor(info.height * .35)), 0);
+  assert.ok(alphaAt(Math.floor(info.width / 2), Math.floor(info.height * .68)) > 240);
+});
+
 test("asks the generator for transparency and explicitly rejects neutral substitute backgrounds", () => {
   const prompt = buildGarmentPrompt({
     name: "Wristwatch",
@@ -236,7 +319,9 @@ test("asks the generator for transparency and explicitly rejects neutral substit
   assert.match(prompt, /Every pixel outside the product silhouette.*must have alpha 0/i);
   assert.match(prompt, /White, off-white, beige, cream, gray.*is still an opaque background and is forbidden/i);
   assert.match(prompt, /four corners/i);
-  assert.match(prompt, /enclosed gaps between handles, arms, legs, or accessories/i);
+  assert.match(prompt, /inside of bag handles and shoulder-strap loops/i);
+  assert.match(prompt, /holes in hoop or ring earrings/i);
+  assert.match(prompt, /true transparency rather than a sampled, blurred, white, or studio-colored fill/i);
   assert.match(prompt, /checked programmatically and will be rejected if its canvas remains opaque/i);
 });
 

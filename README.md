@@ -25,6 +25,16 @@ cp .env.example .env
 npm run dev
 ```
 
+To enable the local background-mask editor, install its Python 3.12 runtime once and point Wardrobe at it:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+echo 'REMBG_PYTHON=.venv/bin/python' >> .env
+```
+
+The segmentation model runs locally through ONNX. It uses CPU/RAM rather than LLM tokens or image-generation credits; its weights are downloaded on first use. Railway detects the included Python version and requirements files automatically.
+
 ⚠️ The importer stays disabled until you add the API key for your selected provider to `.env`. A user needs at least one profile reference photo only when they request a modeled look.
 
 Open [localhost:5173](http://localhost:5173).

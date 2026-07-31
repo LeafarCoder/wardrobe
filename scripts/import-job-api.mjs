@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
 import {
   copyFile as fsCopyFile,
@@ -1858,6 +1859,8 @@ function publicJob(job) {
     stage.assetUrl = storedAssetUrl(job, stage.assetUrl, copy.userId);
     stage.failedAssetUrl = storedAssetUrl(job, stage.failedAssetUrl, copy.userId);
     stage.cleanupPreviewUrl = storedAssetUrl(job, stage.cleanupPreviewUrl, copy.userId);
+    stage.maskSourceUrl = storedAssetUrl(job, stage.maskSourceUrl, copy.userId);
+    stage.maskUrl = storedAssetUrl(job, stage.maskUrl, copy.userId);
   }
   if (copy.duplicateReview?.candidate) {
     copy.duplicateReview.candidate.image = withUser(copy.duplicateReview.candidate.image, copy.userId);
@@ -2608,7 +2611,7 @@ Color control — mandatory: The saved primary color is ${primary}. Make it the 
 
 Composition: Centered straight-on product view. Keep the entire product inside the frame with generous, even padding on every side. No cropping or truncation.
 
-Background transparency — mandatory output contract: Return a PNG with real transparency. Every pixel outside the product silhouette, including the four corners, the space around sleeves and straps, and enclosed gaps between handles, arms, legs, or accessories, must have alpha 0. White, off-white, beige, cream, gray, or a visually plain studio canvas is still an opaque background and is forbidden. Do not leave rectangular panels, pale patches, halos, paper texture, cutout residue, floor, wall, vignette, gradient, reflection, or shadow around or behind the product.
+Background transparency — mandatory output contract: Return a PNG with real transparency. Every pixel outside the product silhouette, including the four corners, the space around sleeves and straps, and every enclosed negative-space opening, must have alpha 0. This explicitly includes the inside of bag handles and shoulder-strap loops, holes in hoop or ring earrings, belt and buckle openings, spaces between chain links, and gaps between arms, legs, straps, or product parts. These openings must show true transparency rather than a sampled, blurred, white, or studio-colored fill. White, off-white, beige, cream, gray, or a visually plain studio canvas is still an opaque background and is forbidden. Do not leave rectangular panels, pale patches, halos, paper texture, cutout residue, floor, wall, vignette, gradient, reflection, or shadow around or behind the product.
 
 Never draw a checkerboard. The gray-and-white checkered squares that image editors display behind a cut-out are how software visualizes alpha; they are not how alpha is stored. Painting those squares, in any color, size, or opacity, produces a fully opaque image, is not transparency, and is rejected.
 
@@ -3062,6 +3065,29 @@ function removeConnectedEdgeBackground(data, info, {
   return true;
 }
 
+function borderTransparencyStats(data, info, alphaThreshold = 8) {
+  const alphaAt = (x, y) => data[(((y * info.width) + x) * 4) + 3];
+  let pixels = 0;
+  let transparentPixels = 0;
+  for (let x = 0; x < info.width; x += 1) {
+    for (const y of [0, info.height - 1]) {
+      pixels += 1;
+      if (alphaAt(x, y) <= alphaThreshold) transparentPixels += 1;
+    }
+  }
+  for (let y = 1; y < info.height - 1; y += 1) {
+    for (const x of [0, info.width - 1]) {
+      pixels += 1;
+      if (alphaAt(x, y) <= alphaThreshold) transparentPixels += 1;
+    }
+  }
+  return {
+    pixels,
+    transparentPixels,
+    ratio: pixels ? transparentPixels / pixels : 0,
+  };
+}
+
 export async function processChromaBackground(bytes, key, options = {}) {
   const tolerance = cleanupTolerance(options.tolerance);
   const feather = 80;
@@ -3102,7 +3128,11 @@ export async function processChromaBackground(bytes, key, options = {}) {
   for (let index = 3; index < data.length; index += 4) {
     if (data[index] <= 8) transparentPixels += 1;
   }
-  const edgeFallbackApplied = transparentPixels / (info.width * info.height) < .02
+  const initialBorderTransparency = borderTransparencyStats(data, info);
+  const edgeFallbackApplied = (
+    transparentPixels / (info.width * info.height) < .02
+    || initialBorderTransparency.ratio < GARMENT_MINIMUM_BORDER_TRANSPARENT_RATIO
+  )
     ? removeConnectedEdgeBackground(data, info, options)
     : false;
   for (let index = 0; index < data.length; index += 4) {
@@ -3129,21 +3159,7 @@ export async function processChromaBackground(bytes, key, options = {}) {
   // outer ring of a real cutout is transparent. A garment left standing on its
   // source photo keeps an opaque ring even when gaps inside the silhouette make
   // the overall ratio look healthy.
-  const alphaAt = (x, y) => data[(((y * info.width) + x) * 4) + 3];
-  let borderPixels = 0;
-  let borderTransparentPixels = 0;
-  for (let x = 0; x < info.width; x += 1) {
-    for (const y of [0, info.height - 1]) {
-      borderPixels += 1;
-      if (alphaAt(x, y) <= 8) borderTransparentPixels += 1;
-    }
-  }
-  for (let y = 1; y < info.height - 1; y += 1) {
-    for (const x of [0, info.width - 1]) {
-      borderPixels += 1;
-      if (alphaAt(x, y) <= 8) borderTransparentPixels += 1;
-    }
-  }
+  const borderTransparency = borderTransparencyStats(data, info);
   const keyedOutput = await sharp(data, { raw: info }).png().toBuffer();
   const framedOutput = await frameTransparentGarment(keyedOutput);
   const { data: framedData, info: framedInfo } = await sharp(framedOutput).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -3169,7 +3185,7 @@ export async function processChromaBackground(bytes, key, options = {}) {
     transparentRatio: keyedPixels ? keyedTransparentPixels / keyedPixels : 0,
     translucentPixels: keyedTranslucentPixels,
     translucentRatio: keyedPixels ? keyedTranslucentPixels / keyedPixels : 0,
-    borderTransparentRatio: borderPixels ? borderTransparentPixels / borderPixels : 0,
+    borderTransparentRatio: borderTransparency.ratio,
     // Kept for diagnostics only; never use these to judge whether the model
     // actually produced a cutout.
     framedTransparentPixels: transparentOutputPixels,
@@ -3185,12 +3201,100 @@ export async function processChromaBackground(bytes, key, options = {}) {
 export const GARMENT_MINIMUM_TRANSPARENT_RATIO = 0.08;
 export const GARMENT_MINIMUM_BORDER_TRANSPARENT_RATIO = 0.6;
 
+function maskControlInteger(value, fallback, minimum, maximum) {
+  const parsed = Math.round(Number(value));
+  return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
+}
+
+function slidingMaskExtreme(source, width, height, radius, maximum) {
+  if (!radius) return Buffer.from(source);
+  const horizontal = Buffer.alloc(source.length);
+  const output = Buffer.alloc(source.length);
+  const compare = maximum ? Math.max : Math.min;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let value = maximum ? 0 : 255;
+      for (let sample = Math.max(0, x - radius); sample <= Math.min(width - 1, x + radius); sample += 1) {
+        value = compare(value, source[(y * width) + sample]);
+      }
+      horizontal[(y * width) + x] = value;
+    }
+  }
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let value = maximum ? 0 : 255;
+      for (let sample = Math.max(0, y - radius); sample <= Math.min(height - 1, y + radius); sample += 1) {
+        value = compare(value, horizontal[(sample * width) + x]);
+      }
+      output[(y * width) + x] = value;
+    }
+  }
+  return output;
+}
+
+export async function applyGarmentMask(sourceBytes, maskBytes, options = {}) {
+  const source = await sharp(sourceBytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const threshold = maskControlInteger(options.threshold, 128, 1, 254);
+  const edge = maskControlInteger(options.edge, 0, -8, 8);
+  const feather = maskControlInteger(options.feather, 1, 0, 8);
+  const resizedMask = await sharp(maskBytes)
+    .resize(source.info.width, source.info.height, { fit: "fill" })
+    .removeAlpha()
+    .grayscale()
+    .raw()
+    .toBuffer();
+  let alpha = Buffer.alloc(resizedMask.length);
+  const transition = Math.max(2, feather * 10);
+  for (let index = 0; index < resizedMask.length; index += 1) {
+    const low = threshold - transition;
+    const high = threshold + transition;
+    const normalized = high === low ? (resizedMask[index] >= threshold ? 1 : 0) : (resizedMask[index] - low) / (high - low);
+    alpha[index] = Math.round(255 * Math.max(0, Math.min(1, normalized)));
+  }
+  if (edge) {
+    alpha = slidingMaskExtreme(alpha, source.info.width, source.info.height, Math.abs(edge), edge > 0);
+  }
+  if (feather > 0) {
+    alpha = await sharp(alpha, {
+      raw: { width: source.info.width, height: source.info.height, channels: 1 },
+    }).blur(Math.max(.3, feather)).extractChannel(0).raw().toBuffer();
+  }
+  for (let pixel = 0, index = 0; pixel < alpha.length; pixel += 1, index += 4) {
+    source.data[index + 3] = Math.round((source.data[index + 3] * alpha[pixel]) / 255);
+    if (source.data[index + 3] <= 4) {
+      source.data[index] = 0;
+      source.data[index + 1] = 0;
+      source.data[index + 2] = 0;
+      source.data[index + 3] = 0;
+    }
+  }
+  return sharp(source.data, { raw: source.info }).png().toBuffer();
+}
+
 export function garmentCutoutTransparencyFailure(transparency = {}) {
   const transparentRatio = Number(transparency.transparentRatio) || 0;
   const borderTransparentRatio = Number(transparency.borderTransparentRatio) || 0;
   if (transparentRatio < GARMENT_MINIMUM_TRANSPARENT_RATIO) return "opaque-canvas";
   if (borderTransparentRatio < GARMENT_MINIMUM_BORDER_TRANSPARENT_RATIO) return "opaque-border";
   return null;
+}
+
+export async function garmentTransparencyStats(bytes) {
+  const { data, info } = await sharp(bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  let transparentPixels = 0;
+  let translucentPixels = 0;
+  for (let index = 3; index < data.length; index += 4) {
+    if (data[index] <= 8) transparentPixels += 1;
+    else if (data[index] < 247) translucentPixels += 1;
+  }
+  const pixels = info.width * info.height;
+  return {
+    transparentPixels,
+    transparentRatio: pixels ? transparentPixels / pixels : 0,
+    translucentPixels,
+    translucentRatio: pixels ? translucentPixels / pixels : 0,
+    borderTransparentRatio: borderTransparencyStats(data, info).ratio,
+  };
 }
 
 export async function removeChromaBackground(bytes, key, options = {}) {
@@ -3335,6 +3439,13 @@ function stageState() {
     cleanupPreviewUrl: null,
     cleanupTolerance: 46,
     cleanupDiagnostics: null,
+    maskSourceUrl: null,
+    maskUrl: null,
+    maskModel: null,
+    maskWarning: null,
+    maskThreshold: 128,
+    maskEdge: 0,
+    maskFeather: 1,
     error: null,
     prompt: null,
     model: null,
@@ -4293,6 +4404,44 @@ export function wardrobeImportApi(options = {}) {
     }
   }
 
+  const runRembgMask = (source, destination) => new Promise((resolve, reject) => {
+    const python = String(setting("REMBG_PYTHON", "python3")).trim() || "python3";
+    const model = String(setting("REMBG_MODEL", "isnet-general-use")).trim() || "isnet-general-use";
+    const script = path.join(root, "scripts", "rembg-mask.py");
+    const child = spawn(python, [script, source, destination, "--model", model], {
+      cwd: root,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let detail = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(apiError("Background segmentation took too long. Try again or use another generated image.", 504, "garment_segmentation_timeout"));
+    }, maskControlInteger(setting("REMBG_TIMEOUT_MS", 120000), 120000, 15000, 300000));
+    child.stderr.on("data", (chunk) => {
+      detail = `${detail}${chunk}`.slice(-4000);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(apiError(
+        "Local background removal is not available on this server. Install requirements-rembg.txt and restart Wardrobe.",
+        503,
+        "rembg_unavailable",
+        error,
+      ));
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve(model);
+      reject(apiError(
+        /not installed/i.test(detail)
+          ? "Local background removal is not installed on this server. Install requirements-rembg.txt and restart Wardrobe."
+          : `Local background removal failed${detail.trim() ? `: ${detail.trim().split("\n").at(-1)}` : "."}`,
+        503,
+        "rembg_unavailable",
+      ));
+    });
+  });
+
   async function stat(file, ...args) {
     try {
       return await fsStat(file, ...args);
@@ -4495,6 +4644,8 @@ export function wardrobeImportApi(options = {}) {
           stage?.assetUrl,
           stage?.failedAssetUrl,
           stage?.cleanupPreviewUrl,
+          stage?.maskSourceUrl,
+          stage?.maskUrl,
           ...importGenerationCandidates(stage || {}).map((candidate) => candidate.assetUrl),
         ].filter(Boolean);
         return urls.map((value) => path.basename(new URL(value, "http://localhost").pathname));
@@ -9810,6 +9961,85 @@ Interpret this correction semantically in whatever language it is written. It ov
           error: null,
           updatedAt: new Date().toISOString(),
         };
+        await saveJob(job);
+        return json(res, 200, publicJob(job));
+      }
+      const maskAction = action.match(/^stages\/garment\/mask-(start|apply)$/);
+      if (maskAction && req.method === "POST") {
+        const stage = job.stages.garment;
+        if (!["review", "failed"].includes(stage.status)) {
+          throw apiError("The garment mask can be edited only while its image is under review.", 409, "garment_mask_not_editable");
+        }
+        const selectedCandidate = selectedImportGenerationCandidate(stage);
+        const sourceUrl = selectedCandidate?.assetUrl || stage.failedAssetUrl || stage.assetUrl;
+        if (!sourceUrl) throw apiError("No generated garment image is available for masking.", 409, "garment_mask_source_missing");
+        const sourceName = path.basename(new URL(sourceUrl, "http://localhost").pathname);
+        const sourceFile = path.join(jobsDir, job.id, sourceName);
+        if (maskAction[1] === "start") {
+          await readFile(sourceFile);
+          const maskName = `garment-${stage.attempts}-mask-${randomUUID()}.png`;
+          const maskFile = path.join(jobsDir, job.id, maskName);
+          const model = await runRembgMask(sourceFile, maskFile);
+          const normalizedMask = await sharp(maskFile).removeAlpha().grayscale().png().toBuffer();
+          await atomicFile(maskFile, normalizedMask);
+          stage.maskSourceUrl = sourceUrl;
+          stage.maskUrl = `${ASSET_ROOT}/${job.id}/${maskName}`;
+          stage.maskModel = model;
+          stage.maskWarning = null;
+          stage.maskThreshold = 128;
+          stage.maskEdge = 0;
+          stage.maskFeather = 1;
+          stage.updatedAt = new Date().toISOString();
+          await saveJob(job);
+          return json(res, 200, publicJob(job));
+        }
+        const input = await body(req);
+        const decodedMask = decodeImage({ imageDataUrl: input.maskDataUrl });
+        const maskMetadata = await sharp(decodedMask.data).metadata();
+        if ((maskMetadata.width || 0) > 4096 || (maskMetadata.height || 0) > 4096) {
+          throw apiError("The edited mask is too large.", 413, "garment_mask_too_large");
+        }
+        const threshold = maskControlInteger(input.threshold, 128, 1, 254);
+        const edge = maskControlInteger(input.edge, 0, -8, 8);
+        const feather = maskControlInteger(input.feather, 1, 0, 8);
+        const source = await readFile(sourceFile);
+        const output = await applyGarmentMask(source, decodedMask.data, { threshold, edge, feather });
+        const transparency = await garmentTransparencyStats(output);
+        const failure = garmentCutoutTransparencyFailure(transparency);
+        if (failure) {
+          throw apiError(
+            failure === "opaque-border"
+              ? "The edited mask still leaves background around the garment. Remove more of the outer canvas before applying it."
+              : "The edited mask has not removed enough background yet.",
+            422,
+            "garment_background_not_transparent",
+          );
+        }
+        const editId = randomUUID();
+        const editedMaskName = `garment-${stage.attempts}-mask-edited-${editId}.png`;
+        const outputName = `garment-${stage.attempts}-masked-${editId}.png`;
+        const outputUrl = `${ASSET_ROOT}/${job.id}/${outputName}`;
+        await Promise.all([
+          atomicFile(path.join(jobsDir, job.id, editedMaskName), decodedMask.data),
+          atomicFile(path.join(jobsDir, job.id, outputName), output),
+        ]);
+        job.stages.garment = appendImportGenerationCandidate(stage, {
+          id: `garment-${stage.attempts}-masked-${editId}`,
+          assetUrl: outputUrl,
+          model: stage.model,
+          fallbackUsed: stage.fallbackUsed,
+          attempt: stage.attempts,
+          generatedAt: new Date().toISOString(),
+        });
+        job.stages.garment.status = "review";
+        job.stages.garment.decision = null;
+        job.stages.garment.error = null;
+        job.stages.garment.maskSourceUrl = sourceUrl;
+        job.stages.garment.maskUrl = `${ASSET_ROOT}/${job.id}/${editedMaskName}`;
+        job.stages.garment.maskThreshold = threshold;
+        job.stages.garment.maskEdge = edge;
+        job.stages.garment.maskFeather = feather;
+        job.stages.garment.updatedAt = new Date().toISOString();
         await saveJob(job);
         return json(res, 200, publicJob(job));
       }

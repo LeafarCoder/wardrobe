@@ -1,0 +1,2 @@
+# Local computer-vision background removal. No LLM calls or token billing.
+rembg[cpu]>=2.0.67,<3

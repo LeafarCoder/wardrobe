@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowCounterClockwise, ArrowsLeftRight, Camera, Check, Clipboard, CoatHanger, Crop, Dress, FolderOpen, Handbag, ImageSquare, Pants, Plus, Sneaker, SpinnerGap, Trash, TShirt, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, ArrowsLeftRight, Camera, Check, Clipboard, CoatHanger, Crop, Dress, Eraser, FolderOpen, Handbag, ImageSquare, Pants, Plus, Sneaker, SpinnerGap, Trash, TShirt, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
 import { formatNumber, getLocale, tr } from "./i18n.js";
 import { aiModelLabel } from "./ai-preferences.js";
 import {
@@ -14,6 +14,7 @@ import {
 import { hasFileDrag } from "./import-drag.js";
 import { LightSelect } from "./LightSelect.jsx";
 import { garmentReviewImages } from "./import-review.js";
+import { GarmentMaskEditor } from "./GarmentMaskEditor.jsx";
 import { imageFallbackToast } from "./image-fallback-notice.js";
 import { notifyOpenRouterKeyRequired } from "./openrouter-key.js";
 import { ProductStage } from "./ProductStage.jsx";
@@ -816,7 +817,7 @@ function GarmentClarificationEditor({ part, value, onChange }) {
   );
 }
 
-function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt, busy, onAction, onCropSave, onSelectCandidate }) {
+function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt, busy, onAction, onCropSave, onSelectCandidate, onEditMask }) {
   const asset = job.stages[stage]?.assetUrl;
   const isCrop = stage === "crop";
   const isGarment = stage === "garment";
@@ -957,6 +958,11 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
         <div className="import-actions">
           <button className="import-button" disabled={busy} onClick={() => onAction("reject")}><Trash size={14} /> {tr("Reject")}</button>
           {!isCrop && <button className="import-button" disabled={busy || (isGarment && (!draft.name.trim() || !primaryValid || !secondaryValid))} onClick={() => onAction("regenerate", regenPrompt)}><ArrowCounterClockwise size={14} /> {tr("Regenerate")}</button>}
+          {isGarment && (
+            <button className="import-button" disabled={busy} onClick={onEditMask}>
+              <Eraser size={14} /> {tr(selectedHasOpaqueBackground ? "Fix background" : "Edit background mask")}
+            </button>
+          )}
           {isGarment && suggestedModel && (
             <button className="import-button" disabled={busy || !draft.name.trim() || !primaryValid || !secondaryValid} onClick={() => onAction("regenerate", regenPrompt, { useSuggestedModel: true })}>
               <ArrowsLeftRight size={14} /> {tr("Try with {model}", { model: aiModelLabel(suggestedModel) })}
@@ -986,7 +992,7 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
   );
 }
 
-function CleanupEditor({ job, tolerance, setTolerance, busy, onPreview, onAccept }) {
+function CleanupEditor({ job, tolerance, setTolerance, busy, onPreview, onAccept, onEditMask }) {
   const stage = job.stages.garment;
   const contaminated = stage.cleanupDiagnostics?.contaminatedPixels;
   const previewTimer = useRef(null);
@@ -1012,6 +1018,7 @@ function CleanupEditor({ job, tolerance, setTolerance, busy, onPreview, onAccept
       {Number.isFinite(contaminated) && <p className="import-card__detail">{tr("The automated check sees {count} tinted edge {unit}. If the preview looks clean, you can still use it.", { count: formatNumber(contaminated), unit: tr(contaminated === 1 ? "pixel" : "pixels") })}</p>}
       <div className="import-actions">
         <button className="import-button" disabled={busy} onClick={() => onPreview(tolerance)}><ArrowCounterClockwise size={14} /> {tr("Preview cleanup")}</button>
+        <button className="import-button" disabled={busy} onClick={onEditMask}><Eraser size={14} /> {tr("Create editable mask")}</button>
         <button className="import-button import-button--primary" disabled={busy} onClick={onAccept}><Check size={14} weight="bold" /> {tr("Use this cleanup")}</button>
       </div>
     </div>
@@ -1027,6 +1034,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
   const [drafts, setDrafts] = useState({});
   const [regenerationPrompts, setRegenerationPrompts] = useState({});
   const [cleanupTolerances, setCleanupTolerances] = useState({});
+  const [maskEditorJobId, setMaskEditorJobId] = useState(null);
   const [dragging, setDragging] = useState(false);
   const [open, setOpen] = useState(false);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
@@ -1445,6 +1453,46 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
     finally { setBusyId(null); }
   };
 
+  const startMaskEditor = async (job) => {
+    setBusyId(job.id);
+    try {
+      const updated = await api(`${API}/${job.id}/stages/garment/mask-start`, {
+        method: "POST",
+        body: "{}",
+      }, userId);
+      setJobs((current) => current.map((item) => item.id === job.id ? updated : item));
+      setMaskEditorJobId(job.id);
+    } catch (requestError) {
+      showError(requestError, "Could not create the background selection");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const applyMask = async (job, mask) => {
+    setBusyId(job.id);
+    try {
+      const updated = await api(`${API}/${job.id}/stages/garment/mask-apply`, {
+        method: "POST",
+        body: JSON.stringify(mask),
+      }, userId);
+      setJobs((current) => current.map((item) => item.id === job.id ? updated : item));
+      setMaskEditorJobId(null);
+      setSelectedReviewId(job.id);
+      setSelectedReviewStage("garment");
+      setToast({
+        id: Date.now(),
+        tone: "complete",
+        title: tr("Background removed"),
+        message: tr("The edited mask is ready for review. No image-generation credits were used."),
+      });
+    } catch (requestError) {
+      showError(requestError, "Could not apply the background mask");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const deleteJob = async (job) => {
     setBusyId(job.id);
     try {
@@ -1577,7 +1625,40 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
                   onMerge={() => performDuplicate(duplicateReviewJob, "merge")}
                   onKeep={() => performDuplicate(duplicateReviewJob, "keep")}
                 />
-              ) : reviewJob && reviewStage ? <ReviewEditor job={reviewJob} stage={reviewStage} draft={drafts[reviewJob.id] || defaultDraft(reviewJob)} setDraft={(draft) => setDrafts((current) => ({ ...current, [reviewJob.id]: draft }))} regenPrompt={regenerationPrompts[`${reviewJob.id}:${reviewStage}`] || ""} setRegenPrompt={(prompt) => setRegenerationPrompts((current) => ({ ...current, [`${reviewJob.id}:${reviewStage}`]: prompt }))} busy={busyId === reviewJob.id} onAction={(action, prompt, actionOptions) => perform(reviewJob, reviewStage, action, prompt, actionOptions)} onCropSave={(boundingBox) => saveCrop(reviewJob, boundingBox)} onSelectCandidate={(candidateId) => selectGarmentCandidate(reviewJob, candidateId)} /> : reviewJob && hasCleanupFailure(reviewJob) ? <CleanupEditor job={reviewJob} tolerance={cleanupTolerances[reviewJob.id] ?? reviewJob.stages.garment.cleanupTolerance ?? 46} setTolerance={(tolerance) => setCleanupTolerances((current) => ({ ...current, [reviewJob.id]: tolerance }))} busy={busyId === reviewJob.id} onPreview={(tolerance) => performCleanup(reviewJob, "preview", tolerance)} onAccept={() => performCleanup(reviewJob, "accept")} /> : null}
+              ) : reviewJob && maskEditorJobId === reviewJob.id && reviewJob.stages.garment?.maskUrl ? (
+                <GarmentMaskEditor
+                  sourceUrl={reviewJob.stages.garment.maskSourceUrl}
+                  maskUrl={reviewJob.stages.garment.maskUrl}
+                  model={reviewJob.stages.garment.maskModel}
+                  busy={busyId === reviewJob.id}
+                  onCancel={() => setMaskEditorJobId(null)}
+                  onApply={(mask) => applyMask(reviewJob, mask)}
+                />
+              ) : reviewJob && reviewStage ? (
+                <ReviewEditor
+                  job={reviewJob}
+                  stage={reviewStage}
+                  draft={drafts[reviewJob.id] || defaultDraft(reviewJob)}
+                  setDraft={(draft) => setDrafts((current) => ({ ...current, [reviewJob.id]: draft }))}
+                  regenPrompt={regenerationPrompts[`${reviewJob.id}:${reviewStage}`] || ""}
+                  setRegenPrompt={(prompt) => setRegenerationPrompts((current) => ({ ...current, [`${reviewJob.id}:${reviewStage}`]: prompt }))}
+                  busy={busyId === reviewJob.id}
+                  onAction={(action, prompt, actionOptions) => perform(reviewJob, reviewStage, action, prompt, actionOptions)}
+                  onCropSave={(boundingBox) => saveCrop(reviewJob, boundingBox)}
+                  onSelectCandidate={(candidateId) => selectGarmentCandidate(reviewJob, candidateId)}
+                  onEditMask={() => reviewJob.stages.garment?.maskUrl ? setMaskEditorJobId(reviewJob.id) : startMaskEditor(reviewJob)}
+                />
+              ) : reviewJob && hasCleanupFailure(reviewJob) ? (
+                <CleanupEditor
+                  job={reviewJob}
+                  tolerance={cleanupTolerances[reviewJob.id] ?? reviewJob.stages.garment.cleanupTolerance ?? 46}
+                  setTolerance={(tolerance) => setCleanupTolerances((current) => ({ ...current, [reviewJob.id]: tolerance }))}
+                  busy={busyId === reviewJob.id}
+                  onPreview={(tolerance) => performCleanup(reviewJob, "preview", tolerance)}
+                  onAccept={() => performCleanup(reviewJob, "accept")}
+                  onEditMask={() => reviewJob.stages.garment?.maskUrl ? setMaskEditorJobId(reviewJob.id) : startMaskEditor(reviewJob)}
+                />
+              ) : null}
               <ImportQueueBoard
                 jobs={jobs}
                 drafts={drafts}
