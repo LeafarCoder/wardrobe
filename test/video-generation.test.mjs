@@ -5,6 +5,7 @@ import {
   isPortraitModeledMedia,
   latestCompletedModeledVideo,
   modeledVideoPrompt,
+  normalizeModeledVideoClip,
   normalizeModeledVideoSettings,
   RECOMMENDED_VIDEO_MODEL,
   reverseModeledVideoTime,
@@ -36,6 +37,17 @@ test("selects the newest completed clip for silent hover playback", () => {
     ],
   })?.id, "three");
   assert.equal(latestCompletedModeledVideo({ videoClips: [{ status: "pending" }] }), null);
+});
+
+test("preserves a lightweight hover derivative on normalized clips", () => {
+  const clip = normalizeModeledVideoClip({
+    id: "clip-one",
+    status: "completed",
+    video: "/full.mp4",
+    hoverVideo: "/hover.mp4",
+  });
+  assert.equal(clip.video, "/full.mp4");
+  assert.equal(clip.hoverVideo, "/hover.mp4");
 });
 
 test("steps completed hover clips backward without crossing the first frame", () => {

@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
+import { promisify } from "node:util";
+import ffmpegPath from "ffmpeg-static";
 import sharp from "sharp";
 import { createSessionToken, wardrobeImportApi } from "../scripts/import-job-api.mjs";
 
 const SESSION_SECRET = "modeled-video-test-session-secret";
 const ITEM_ID = "import-00000000-0000-4000-8000-000000000099";
 const LOOK_ID = "look-one";
+const execFileAsync = promisify(execFile);
 
 function mockRequest(url, method = "GET", input = null) {
   const chunks = input === null ? [] : [Buffer.from(JSON.stringify(input))];
@@ -48,7 +52,7 @@ test("submits, polls, downloads, and persists a modeled-look video", async () =>
   const dataDir = path.join(root, "data");
   const importedDir = path.join(dataDir, "imported");
   const calls = [];
-  const videoBytes = Buffer.from("test-mp4-video-content");
+  let videoBytes;
   const api = wardrobeImportApi({
     env: {
       WARDROBE_DATA_DIR: dataDir,
@@ -87,6 +91,12 @@ test("submits, polls, downloads, and persists a modeled-look video", async () =>
 
   try {
     await api.initialize(root);
+    const providerVideo = path.join(root, "provider-video.mp4");
+    await execFileAsync(ffmpegPath, [
+      "-y", "-f", "lavfi", "-i", "color=c=#233f58:s=90x160:d=0.4",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", providerVideo,
+    ]);
+    videoBytes = await readFile(providerVideo);
     const modeledImage = await sharp({
       create: { width: 90, height: 160, channels: 3, background: "#c6b7aa" },
     }).png().toBuffer();
@@ -149,9 +159,22 @@ test("submits, polls, downloads, and persists a modeled-look video", async () =>
     assert.equal(completed.status, "completed");
     assert.equal(completed.cost, 0.20736);
     assert.match(completed.video.split("?")[0], new RegExp(`${clipId}\\.mp4$`));
+    assert.match(completed.hoverVideo.split("?")[0], new RegExp(`${clipId}-hover\\.mp4$`));
     const savedName = path.basename(completed.video.split("?")[0]);
+    const hoverName = path.basename(completed.hoverVideo.split("?")[0]);
     assert.deepEqual(await readFile(path.join(importedDir, savedName)), videoBytes);
     await stat(path.join(importedDir, savedName));
+    const hoverDetails = await stat(path.join(importedDir, hoverName));
+    assert.ok(hoverDetails.size > 0);
+
+    const rangeRequest = mockRequest(completed.hoverVideo);
+    rangeRequest.headers.range = "bytes=0-31";
+    const rangeResponse = mockResponse();
+    await api.handler(rangeRequest, rangeResponse, () => {});
+    assert.equal(rangeResponse.statusCode, 206);
+    assert.equal(rangeResponse.getHeader("accept-ranges"), "bytes");
+    assert.equal(rangeResponse.getHeader("content-length"), 32);
+    assert.match(rangeResponse.getHeader("content-range"), /^bytes 0-31\//);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { reverseModeledVideoTime } from "./video-generation.js";
+import { warmedVideoSource, warmVideo } from "./video-preload.js";
 
 export function ModeledLookHoverVideo({ src, active, className = "" }) {
   const videoRef = useRef(null);
   const reverseFrameRef = useRef(null);
   const activeRef = useRef(Boolean(active));
   const [visible, setVisible] = useState(false);
+  const [playbackSrc, setPlaybackSrc] = useState(null);
 
   activeRef.current = Boolean(active);
 
@@ -50,19 +52,26 @@ export function ModeledLookHoverVideo({ src, active, className = "" }) {
   };
 
   useEffect(() => {
-    const video = videoRef.current;
-    cancelReverse();
-    setVisible(false);
-    if (!video || !src) return undefined;
-    video.pause();
-    video.currentTime = 0;
-    video.load();
-    return cancelReverse;
+    setPlaybackSrc(src ? warmedVideoSource(src) || src : null);
+    if (!src) return undefined;
+    void warmVideo(src);
+    return undefined;
   }, [src]);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !src) return undefined;
+    cancelReverse();
+    setVisible(false);
+    if (!video || !playbackSrc) return undefined;
+    video.pause();
+    video.currentTime = 0;
+    video.load();
+    return cancelReverse;
+  }, [playbackSrc]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !playbackSrc) return undefined;
     cancelReverse();
     if (!active) {
       setVisible(false);
@@ -81,13 +90,13 @@ export function ModeledLookHoverVideo({ src, active, className = "" }) {
       video.removeEventListener("canplay", start);
       cancelReverse();
     };
-  }, [active, src]);
+  }, [active, playbackSrc]);
 
   return (
     <video
       ref={videoRef}
       className={`modeled-hover-video${visible ? " is-visible" : ""}${className ? ` ${className}` : ""}`}
-      src={src}
+      src={playbackSrc || undefined}
       muted
       playsInline
       preload="auto"

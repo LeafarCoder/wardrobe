@@ -24,6 +24,7 @@ import { ModeledLookHoverVideo } from "./ModeledLookHoverVideo.jsx";
 import { ModeledVideoDialog } from "./ModeledVideoDialog.jsx";
 import { modeledLookContextDetails } from "./modeled-look-context.js";
 import { isPortraitModeledMedia, latestCompletedModeledVideo } from "./video-generation.js";
+import { warmVideo } from "./video-preload.js";
 import { imageFallbackToast, withoutFallbackNotice } from "./image-fallback-notice.js";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { OriginalPhotoGallery } from "./OriginalPhotoGallery.jsx";
@@ -280,11 +281,15 @@ function preloadImage(src) {
   image.src = src;
 }
 
-function preloadItemPanel(item) {
+function preloadItemPanel(item, { video = false } = {}) {
   [...new Set([
     preferredHeroImage(item),
     item.imagePreview || item.image,
   ].filter(Boolean))].forEach(preloadImage);
+  if (video) {
+    const clip = latestCompletedModeledVideo(itemModeledLooks(item).at(-1));
+    void warmVideo(clip?.hoverVideo || clip?.video);
+  }
 }
 
 function userStorageKey(base, userId) {
@@ -506,7 +511,7 @@ function GalleryItem({
   const warmHero = () => {
     if (prefetchedHero.current) return;
     prefetchedHero.current = true;
-    preloadItemPanel(item);
+    preloadItemPanel(item, { video: true });
   };
 
   return (
@@ -3034,7 +3039,7 @@ function ItemViewer({
             />
             {isActiveMediaGenerated && activeModeledVideo && (
               <ModeledLookHoverVideo
-                src={activeModeledVideo.video}
+                src={activeModeledVideo.hoverVideo || activeModeledVideo.video}
                 active={modeledVideoHoverSurface === "panel"}
                 className="modeled-hover-video--panel"
               />
@@ -3500,7 +3505,7 @@ function ItemViewer({
               )}
               {mediaPreviewOpen === "media" && isActiveMediaGenerated && activeModeledVideo && (
                 <ModeledLookHoverVideo
-                  src={activeModeledVideo.video}
+                  src={activeModeledVideo.hoverVideo || activeModeledVideo.video}
                   active={modeledVideoHoverSurface === "dialog"}
                   className="modeled-hover-video--dialog"
                 />
@@ -7170,7 +7175,7 @@ export function App() {
   useEffect(() => {
     if (loading || !visibleItems.length || navigator.connection?.saveData) return undefined;
     const warmVisibleHeroes = () => {
-      visibleItems.slice(0, 6).forEach(preloadItemPanel);
+      visibleItems.slice(0, 6).forEach((item, index) => preloadItemPanel(item, { video: index < 2 }));
     };
     if ("requestIdleCallback" in window) {
       const idleId = window.requestIdleCallback(warmVisibleHeroes, { timeout: 1800 });

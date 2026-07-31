@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
 import {
   copyFile as fsCopyFile,
@@ -18,6 +18,8 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
+import { promisify } from "node:util";
+import ffmpegPath from "ffmpeg-static";
 import sharp from "sharp";
 import {
   normalizeBrand,
@@ -29,6 +31,7 @@ import {
   profileHeightSummary,
   sizeProfileSummary,
 } from "../src/wardrobe-metadata.js";
+
 import {
   normalizeGarmentFacetList,
   normalizePlannerGarmentVariants,
@@ -116,6 +119,7 @@ import { createDatabasePool, verifyDatabase } from "./db.mjs";
 import { createObjectStorage } from "./object-storage.mjs";
 import { PostgresRepository } from "./postgres-repository.mjs";
 
+const execFileAsync = promisify(execFile);
 const API_ROOT = "/api/import/jobs";
 const ASSET_ROOT = "/api/import/assets";
 const LIBRARY_ASSET_ROOT = "/api/import/library";
@@ -1762,6 +1766,7 @@ function publicImportedRecord(record, userId, { includeVault = false } = {}) {
       videoClips: look.videoClips.map((clip) => ({
         ...clip,
         video: storedAssetUrl(record, clip.video, userId),
+        hoverVideo: storedAssetUrl(record, clip.hoverVideo, userId),
       })),
     })),
     originalImage: storedAssetUrl(record, record.originalImage, userId),
@@ -1794,7 +1799,7 @@ export function importedRecordAssets(record = {}) {
     ...modeledLooksForRecord(record).flatMap((look) => [
       look.image,
       look.preview,
-      ...look.videoClips.map((clip) => clip.video),
+      ...look.videoClips.flatMap((clip) => [clip.video, clip.hoverVideo]),
     ]),
     regenerationCandidate?.image,
     regenerationCandidate?.preview,
@@ -1881,6 +1886,24 @@ function imageMime(fileName) {
     ".webp": "image/webp",
     ".mp4": "video/mp4",
   })[path.extname(fileName).toLowerCase()] || "application/octet-stream";
+}
+
+async function createHoverVideo(sourceFile, targetFile) {
+  if (!ffmpegPath) return false;
+  await execFileAsync(ffmpegPath, [
+    "-y",
+    "-i", sourceFile,
+    "-map_metadata", "-1",
+    "-an",
+    "-vf", "scale=480:-2:force_original_aspect_ratio=decrease:force_divisible_by=2",
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "28",
+    "-pix_fmt", "yuv420p",
+    "-movflags", "+faststart",
+    targetFile,
+  ], { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
+  return true;
 }
 
 export function imageVariantFileName(asset, variant) {
@@ -4623,14 +4646,15 @@ export function wardrobeImportApi(options = {}) {
       record.assetIds = { ...(record.assetIds || {}) };
       for (const asset of importedRecordAssets(record)) {
         const fileName = path.basename(new URL(asset, "http://localhost").pathname);
+        const immutable = fileName.endsWith(".webp") || fileName.endsWith(".mp4");
         const assetId = await registerLocalAsset({
           file: path.join(libraryAssetDir, fileName),
           ownerUserId: record.userId,
           entityType: "garment",
           entityId: record.id,
-          role: fileName.endsWith(".webp") ? "derivative" : "source",
-          mediaKind: fileName.endsWith(".webp") ? "garment-derivative" : "garment-media",
-          cachePolicy: fileName.endsWith(".webp") ? "private-immutable" : "private-no-store",
+          role: fileName.endsWith("-hover.mp4") ? "hover-video" : fileName.endsWith(".webp") ? "derivative" : "source",
+          mediaKind: fileName.endsWith(".mp4") ? "modeled-video" : fileName.endsWith(".webp") ? "garment-derivative" : "garment-media",
+          cachePolicy: immutable ? "private-immutable" : "private-no-store",
         });
         if (assetId) record.assetIds[fileName] = assetId;
       }
@@ -6071,6 +6095,43 @@ export function wardrobeImportApi(options = {}) {
     console.info(`[wardrobe] Image optimization ready for ${records.length} existing wardrobe item${records.length === 1 ? "" : "s"}${changed ? ` (${changed} record${changed === 1 ? "" : "s"} updated)` : ""}.`);
   }
 
+  async function backfillModeledVideoPreviews() {
+    const records = await loadImported();
+    let changed = false;
+    for (let recordIndex = 0; recordIndex < records.length; recordIndex += 1) {
+      const looks = modeledLooksForRecord(records[recordIndex]);
+      let recordChanged = false;
+      for (const look of looks) {
+        for (let clipIndex = 0; clipIndex < look.videoClips.length; clipIndex += 1) {
+          const clip = look.videoClips[clipIndex];
+          if (clip.status !== "completed" || !clip.video || clip.hoverVideo) continue;
+          const sourceName = path.basename(new URL(clip.video, "http://localhost").pathname);
+          const sourceFile = path.join(libraryAssetDir, sourceName);
+          const hoverName = `${path.parse(sourceName).name}-hover.mp4`;
+          const hoverFile = path.join(libraryAssetDir, hoverName);
+          try {
+            await stat(sourceFile);
+            await createHoverVideo(sourceFile, hoverFile);
+            look.videoClips[clipIndex] = normalizeModeledVideoClip({
+              ...clip,
+              hoverVideo: libraryAssetUrl(hoverName),
+            });
+            recordChanged = true;
+            changed = true;
+          } catch (error) {
+            await rm(hoverFile, { force: true }).catch(() => {});
+            console.warn(`[wardrobe:video] Could not backfill ${sourceName}: ${cleanLogValue(error.message)}`);
+          }
+        }
+      }
+      if (recordChanged) records[recordIndex] = recordWithModeledLooks(records[recordIndex], looks);
+    }
+    if (changed) {
+      await saveImported(records);
+      console.info("[wardrobe:video] Hover previews are ready for existing modeled videos.");
+    }
+  }
+
   async function findDuplicateReview(job) {
     const records = await loadImported();
     const best = bestDuplicateCandidate(records, job);
@@ -7059,6 +7120,8 @@ Interpret this correction semantically in whatever language it is written. It ov
           : result.status === "in_progress" ? "in_progress" : "pending";
       let videoUrl = null;
       let videoName = null;
+      let hoverVideoUrl = null;
+      let hoverVideoName = null;
       if (status === "completed") {
         const contentUrl = result.unsigned_urls?.[0]
           || `${provider.baseUrl}/videos/${encodeURIComponent(clip.upstreamJobId)}/content?index=0`;
@@ -7079,6 +7142,18 @@ Interpret this correction semantically in whatever language it is written. It ov
         videoName = `${itemId}-modeled-${lookId}-video-${clipId}.mp4`;
         await atomicFile(path.join(libraryAssetDir, videoName), bytes);
         videoUrl = libraryAssetUrl(videoName);
+        hoverVideoName = `${itemId}-modeled-${lookId}-video-${clipId}-hover.mp4`;
+        try {
+          const created = await createHoverVideo(
+            path.join(libraryAssetDir, videoName),
+            path.join(libraryAssetDir, hoverVideoName),
+          );
+          if (created) hoverVideoUrl = libraryAssetUrl(hoverVideoName);
+        } catch (error) {
+          await rm(path.join(libraryAssetDir, hoverVideoName), { force: true }).catch(() => {});
+          hoverVideoName = null;
+          console.warn(`[wardrobe:video] Hover preview unavailable; using the original clip: ${cleanLogValue(error.message)}`);
+        }
       }
 
       const completedAt = ["completed", "failed"].includes(status) ? new Date().toISOString() : null;
@@ -7098,6 +7173,7 @@ Interpret this correction semantically in whatever language it is written. It ov
             ...looks[lookIndex].videoClips[clipIndex],
             status,
             ...(videoUrl ? { video: videoUrl } : {}),
+            ...(hoverVideoUrl ? { hoverVideo: hoverVideoUrl } : {}),
             cost: Number.isFinite(cost) ? cost : null,
             error: status === "failed"
               ? String(result.error?.message || result.error || `Video generation ${result.status || "failed"}.`)
@@ -7113,6 +7189,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         });
       } catch (error) {
         if (videoName) await rm(path.join(libraryAssetDir, videoName), { force: true }).catch(() => {});
+        if (hoverVideoName) await rm(path.join(libraryAssetDir, hoverVideoName), { force: true }).catch(() => {});
         throw error;
       }
 
@@ -7611,7 +7688,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       const assets = [
         removed.preview,
         removed.image,
-        ...removed.videoClips.map((clip) => clip.video),
+        ...removed.videoClips.flatMap((clip) => [clip.video, clip.hoverVideo]),
       ]
         .filter(Boolean)
         .map((asset) => path.basename(new URL(asset, "http://localhost").pathname));
@@ -8325,7 +8402,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           throw apiError("Private object storage is not configured.", 503, "object_storage_unavailable");
         }
         const assetResult = await databasePool.query(
-          `SELECT id, owner_user_id, object_key, media_kind
+          `SELECT id, owner_user_id, object_key, media_kind, cache_policy
            FROM assets WHERE id = $1::uuid AND deleted_at IS NULL`,
           [privateAssetMatch[1]],
         );
@@ -8341,7 +8418,12 @@ Interpret this correction semantically in whatever language it is written. It ov
         if (!allowed) throw apiError("Wardrobe image not found.", 404, "wardrobe_image_not_found");
         res.statusCode = 302;
         res.setHeader("Location", await objectStorage.signedUrl(asset.object_key, 300));
-        res.setHeader("Cache-Control", "private, no-store");
+        res.setHeader(
+          "Cache-Control",
+          asset.cache_policy === "private-immutable"
+            ? "private, max-age=240"
+            : "private, no-store",
+        );
         return res.end();
       }
       if (url.pathname === EXPORT_ROOT && req.method === "GET") {
@@ -9815,7 +9897,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         return json(res, 200, { deleted: true, id });
       }
       const libraryAssetMatch = url.pathname.match(/^\/api\/import\/library\/([\w.-]+)$/i);
-      if (libraryAssetMatch && req.method === "GET") {
+      if (libraryAssetMatch && ["GET", "HEAD"].includes(req.method)) {
         const requestedAsset = libraryAssetMatch[1];
         const ownedAssets = await libraryAssetIndex();
         const sharedOwnerId = [...ownedAssets.entries()].find(([ownerId, assets]) => (
@@ -9841,10 +9923,10 @@ Interpret this correction semantically in whatever language it is written. It ov
         if (await redirectStoredAsset(res, assetOwnerId, requestedAsset)) return;
         const file = path.join(libraryAssetDir, path.basename(libraryAssetMatch[1]));
         const details = await stat(file);
-        const isOptimized = file.endsWith(".webp");
+        const isOptimized = file.endsWith(".webp") || file.endsWith(".mp4");
         const etag = `"${details.size.toString(16)}-${Math.trunc(details.mtimeMs).toString(16)}"`;
         res.setHeader("Content-Type", imageMime(file));
-        res.setHeader("Content-Length", details.size);
+        res.setHeader("Accept-Ranges", "bytes");
         res.setHeader("ETag", etag);
         res.setHeader(
           "Cache-Control",
@@ -9856,6 +9938,34 @@ Interpret this correction semantically in whatever language it is written. It ov
           res.statusCode = 304;
           return res.end();
         }
+        const requestedRange = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ""));
+        if (requestedRange && details.size > 0) {
+          const suffixLength = requestedRange[1] ? null : Number(requestedRange[2]);
+          const requestedStart = Number(requestedRange[1] || 0);
+          if ((!requestedRange[1] && !suffixLength) || (requestedRange[1] && requestedStart >= details.size)) {
+            res.statusCode = 416;
+            res.setHeader("Content-Range", `bytes */${details.size}`);
+            return res.end();
+          }
+          const start = suffixLength
+            ? Math.max(0, details.size - suffixLength)
+            : requestedStart;
+          const end = suffixLength
+            ? details.size - 1
+            : Math.min(Number(requestedRange[2] || details.size - 1), details.size - 1);
+          if (start > end) {
+            res.statusCode = 416;
+            res.setHeader("Content-Range", `bytes */${details.size}`);
+            return res.end();
+          }
+          res.statusCode = 206;
+          res.setHeader("Content-Range", `bytes ${start}-${end}/${details.size}`);
+          res.setHeader("Content-Length", end - start + 1);
+          if (req.method === "HEAD") return res.end();
+          return res.end((await readFile(file)).subarray(start, end + 1));
+        }
+        res.setHeader("Content-Length", details.size);
+        if (req.method === "HEAD") return res.end();
         return res.end(await readFile(file));
       }
       const assetMatch = url.pathname.match(/^\/api\/import\/assets\/([a-f0-9-]{36})\/([\w.-]+)$/i);
@@ -10372,6 +10482,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         await backfillProfileReferenceAvatars();
         await backfillLibraryVariants();
       }
+      await backfillModeledVideoPreviews();
       for (const job of await listJobs()) {
         if (job.status === "complete") {
           try {

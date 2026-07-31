@@ -251,6 +251,7 @@ export function normalizeModeledVideoClip(value = {}) {
     prompt: typeof value.prompt === "string" ? value.prompt.slice(0, 1600) : "",
     upstreamJobId: typeof value.upstreamJobId === "string" ? value.upstreamJobId.slice(0, 200) : null,
     video: typeof value.video === "string" && value.video ? value.video : null,
+    hoverVideo: typeof value.hoverVideo === "string" && value.hoverVideo ? value.hoverVideo : null,
     cost: Number.isFinite(value.cost) && value.cost >= 0 ? value.cost : null,
     error: typeof value.error === "string" ? value.error.slice(0, 500) : null,
     createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
