@@ -103,6 +103,8 @@ export function GarmentColorPreview({
               recolorGarmentPixels(recolored.data, normalizedSource, normalizedTarget, normalizedSecondarySource || normalizedAlternate, {
                 ...JSON.parse(contextKey),
                 channel: "primary",
+                imageWidth: canvas.width,
+                imageHeight: canvas.height,
                 threshold: primaryThreshold,
                 softness: primarySoftness,
                 strength: primaryStrength,
@@ -112,6 +114,8 @@ export function GarmentColorPreview({
               recolorGarmentPixels(recolored.data, normalizedSecondarySource, normalizedSecondaryTarget, normalizedSource, {
                 ...JSON.parse(contextKey),
                 channel: "secondary",
+                imageWidth: canvas.width,
+                imageHeight: canvas.height,
                 threshold: secondaryThreshold,
                 softness: secondarySoftness,
                 strength: secondaryStrength,

@@ -170,6 +170,11 @@ function isFootwearContext(context = {}) {
     || /\b(shoe|shoes|loafer|loafers|boot|boots|oxford|sneaker|sneakers|footwear|sapato|sapatos|mocassim|mocassins|bota|botas|ténis)\b/.test(contextDescription(context));
 }
 
+function isGemstoneContext(context = {}) {
+  return /\b(agate|amethyst|crystal|crystalline|earring|earrings|gem|gemstone|jade|jasper|jewel|jewelry|jewellery|opal|quartz|stone|turquoise|ágata|ametista|brinco|brincos|cristal|gema|jade|jaspe|joia|joias|opala|quartzo|pedra|turquesa)\b/
+    .test(contextDescription(context));
+}
+
 function chromaticSimilarity(pixel, source) {
   const hueWeight = 0.02 + (0.98 * (1 - smoothstep(24, 92, hueDistance(pixel.hue, source.hue))));
   const chromaPresence = 0.42 + (0.58 * smoothstep(0.003, Math.max(0.022, source.chroma * 0.58), pixel.chroma));
@@ -197,6 +202,20 @@ function materialShadeSimilarity(pixel, source, context = {}) {
     : 0;
   const strength = context.channel === "secondary" ? 0.84 : 0.98;
   return clamp(Math.max(chromaticSurface * tonalDistance, neutralShadow * 0.94, texturedLeather * 0.86) * strength);
+}
+
+function gemstoneShadeSimilarity(pixel, source, context = {}) {
+  if (!isGemstoneContext(context) || context.channel === "secondary") return 0;
+
+  // Translucent stones scatter their saved surface color into warm shadows,
+  // pale inclusions, and low-chroma highlights. Keep those variations in the
+  // stone mask while still using hue to separate nearby metal hardware.
+  const hueFamily = 1 - smoothstep(34, 82, hueDistance(pixel.hue, source.hue));
+  const coloredFacet = hueFamily * (0.5 + (0.5 * smoothstep(0.004, 0.052, pixel.chroma)));
+  const tonalReach = 1 - smoothstep(0.42, 0.76, Math.abs(pixel.lightness - source.lightness));
+  const paleInclusion = smoothstep(source.lightness - 0.08, source.lightness + 0.18, pixel.lightness)
+    * (1 - smoothstep(0.045, 0.13, pixel.chroma));
+  return clamp(Math.max(coloredFacet * tonalReach, paleInclusion * 0.72));
 }
 
 function neutralSimilarity(pixel, source) {
@@ -257,7 +276,11 @@ function combinedSimilarity(pixel, source, context) {
   const direct = source.chroma < 0.055
     ? neutralSimilarity(pixel, source)
     : chromaticSimilarity(pixel, source);
-  return Math.max(direct, materialShadeSimilarity(pixel, source, context));
+  return Math.max(
+    direct,
+    materialShadeSimilarity(pixel, source, context),
+    gemstoneShadeSimilarity(pixel, source, context),
+  );
 }
 
 function selectionWeight(pixel, source, alternate, context) {
@@ -274,7 +297,10 @@ function selectionWeight(pixel, source, alternate, context) {
     channel: context.channel === "secondary" ? "primary" : "secondary",
   });
   const ownership = smoothstep(-0.055, 0.16, protectedSimilarity - alternateSimilarity);
-  return protectedSimilarity * ownership;
+  const gemstoneOwnership = isGemstoneContext(context) && context.channel !== "secondary"
+    ? 1 - smoothstep(68, 80, hueDistance(pixel.hue, source.hue))
+    : 0;
+  return protectedSimilarity * Math.max(ownership, gemstoneOwnership);
 }
 
 function recoloredPixel(pixel, source, target) {
@@ -303,6 +329,63 @@ function recolorMaskWeight(similarity, context = {}) {
   return smoothstep(cutoff - (transition / 2), cutoff + (transition / 2), similarity);
 }
 
+function gemstoneInteriorMask(pixels, source, alternate, context) {
+  const width = Math.round(Number(context.imageWidth));
+  const height = Math.round(Number(context.imageHeight));
+  if (
+    !isGemstoneContext(context)
+    || context.channel === "secondary"
+    || width < 3
+    || height < 3
+    || width * height * 4 !== pixels.length
+  ) return null;
+
+  const selected = new Uint8Array(width * height);
+  const exterior = new Uint8Array(width * height);
+  const queue = new Int32Array(width * height);
+  let queueStart = 0;
+  let queueEnd = 0;
+
+  for (let pixelIndex = 0; pixelIndex < selected.length; pixelIndex += 1) {
+    const offset = pixelIndex * 4;
+    if (pixels[offset + 3] < 8) continue;
+    const pixel = labToLch(rgbToOklab(pixels[offset], pixels[offset + 1], pixels[offset + 2]));
+    const similarity = selectionWeight(pixel, source, alternate, context);
+    selected[pixelIndex] = recolorMaskWeight(similarity, context) >= 0.34 ? 1 : 0;
+  }
+
+  const enqueue = (pixelIndex) => {
+    if (pixelIndex < 0 || pixelIndex >= selected.length || selected[pixelIndex] || exterior[pixelIndex]) return;
+    exterior[pixelIndex] = 1;
+    queue[queueEnd] = pixelIndex;
+    queueEnd += 1;
+  };
+  for (let x = 0; x < width; x += 1) {
+    enqueue(x);
+    enqueue(((height - 1) * width) + x);
+  }
+  for (let y = 1; y < height - 1; y += 1) {
+    enqueue(y * width);
+    enqueue((y * width) + width - 1);
+  }
+  while (queueStart < queueEnd) {
+    const pixelIndex = queue[queueStart];
+    queueStart += 1;
+    const x = pixelIndex % width;
+    if (x > 0) enqueue(pixelIndex - 1);
+    if (x + 1 < width) enqueue(pixelIndex + 1);
+    enqueue(pixelIndex - width);
+    enqueue(pixelIndex + width);
+  }
+
+  const interior = new Uint8Array(width * height);
+  for (let pixelIndex = 0; pixelIndex < interior.length; pixelIndex += 1) {
+    const offset = pixelIndex * 4;
+    interior[pixelIndex] = pixels[offset + 3] >= 8 && !selected[pixelIndex] && !exterior[pixelIndex] ? 1 : 0;
+  }
+  return interior;
+}
+
 export function recolorGarmentPixels(pixels, sourceColor, targetColor, alternateColor = null, context = {}) {
   if (!(pixels instanceof Uint8ClampedArray)) {
     throw new TypeError("Garment pixels must be a Uint8ClampedArray.");
@@ -311,6 +394,7 @@ export function recolorGarmentPixels(pixels, sourceColor, targetColor, alternate
   const target = colorToLch(targetColor);
   const alternate = colorToLch(alternateColor);
   if (!source || !target) return pixels;
+  const gemstoneInterior = gemstoneInteriorMask(pixels, source, alternate, context);
 
   for (let index = 0; index < pixels.length; index += 4) {
     if (pixels[index + 3] < 8) continue;
@@ -319,7 +403,8 @@ export function recolorGarmentPixels(pixels, sourceColor, targetColor, alternate
     const baseWeight = selectionWeight(pixel, source, alternate, context);
     const strengthValue = Number(context.strength);
     const strength = clamp(Number.isFinite(strengthValue) ? strengthValue : 100, 0, 100) / 100;
-    const weight = recolorMaskWeight(baseWeight, context) * strength;
+    const interiorWeight = gemstoneInterior?.[index / 4] ? 0.92 : 0;
+    const weight = Math.max(recolorMaskWeight(baseWeight, context), interiorWeight) * strength;
     if (weight < 0.015) continue;
     const replacement = recoloredPixel(pixel, source, target);
     const blended = {

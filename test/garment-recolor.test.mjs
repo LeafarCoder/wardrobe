@@ -206,6 +206,52 @@ test("makes color range and strength materially affect the recolor mask", () => 
   assert.deepEqual([...zeroStrength], [187, 184, 183, 255], "zero strength should leave selected pixels unchanged");
 });
 
+test("fills gemstone-colored texture variations without recoloring adjacent gold", () => {
+  const width = 7;
+  const height = 7;
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  const setPixel = (x, y, [red, green, blue, alpha = 255]) => {
+    const offset = ((y * width) + x) * 4;
+    pixels.set([red, green, blue, alpha], offset);
+  };
+  for (let y = 2; y <= 4; y += 1) {
+    for (let x = 2; x <= 4; x += 1) setPixel(x, y, [190, 157, 171]);
+  }
+  setPixel(3, 3, [174, 112, 84]); // a warm mineral inclusion inside the stone
+  setPixel(5, 1, [214, 178, 111]);
+  setPixel(5, 2, [184, 151, 83]);
+  setPixel(5, 3, [102, 66, 35]);
+  const originalGold = [
+    ...pixels.slice(((1 * width) + 5) * 4, (((1 * width) + 5) * 4) + 3),
+    ...pixels.slice(((2 * width) + 5) * 4, (((2 * width) + 5) * 4) + 3),
+    ...pixels.slice(((3 * width) + 5) * 4, (((3 * width) + 5) * 4) + 3),
+  ];
+
+  recolorGarmentPixels(pixels, "#bba0b5", "#70536f", "#b89753", {
+    name: "Colored earrings",
+    part: "accessories_up",
+    tags: ["earrings", "gold"],
+    channel: "primary",
+    threshold: 160,
+    softness: 25,
+    imageWidth: width,
+    imageHeight: height,
+  });
+
+  const inclusionOffset = ((3 * width) + 3) * 4;
+  assert.ok(
+    Math.abs(pixels[inclusionOffset] - pixels[inclusionOffset + 2]) < 20
+      && pixels[inclusionOffset + 2] > 100,
+    "an enclosed warm stone inclusion should adopt the selected purple hue",
+  );
+  const recoloredGold = [
+    ...pixels.slice(((1 * width) + 5) * 4, (((1 * width) + 5) * 4) + 3),
+    ...pixels.slice(((2 * width) + 5) * 4, (((2 * width) + 5) * 4) + 3),
+    ...pixels.slice(((3 * width) + 5) * 4, (((3 * width) + 5) * 4) + 3),
+  ];
+  assert.deepEqual(recoloredGold, originalGold, "the exterior gold setting should stay unchanged");
+});
+
 test("offers five distinct local preview colors", () => {
   const suggestions = garmentVariationColors("#355c7d", "#7a3d49", 5);
   assert.equal(suggestions.length, 5);
