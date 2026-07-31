@@ -1,6 +1,7 @@
 export const AI_TASKS = [
   {
     id: "analysisModel",
+    fallbackId: "analysisFallbackModel",
     operation: "analysis",
     label: "Photo analysis",
     description: "Finds every garment, draws its crop box, and suggests its name, category, colors, tags, materials, fit, and seasons.",
@@ -13,6 +14,7 @@ export const AI_TASKS = [
   },
   {
     id: "garmentModel",
+    fallbackId: "garmentFallbackModel",
     operation: "garment",
     label: "Clean garment generation",
     description: "Reconstructs the detected piece as a centered, person-free product cutout.",
@@ -25,13 +27,15 @@ export const AI_TASKS = [
         note: "Lowest price. This route does not offer zero data retention, so the provider may keep your garment images or request data under its own policy.",
         zeroDataRetention: false,
       },
-      { id: "google/gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite Image", badge: "Recommended", pricing: "Input text/images $0.25 / 1M tokens · output images $30 / 1M tokens", note: "Cost-efficient image editing with up to 14 references and zero-data-retention routes." },
+      { id: "bytedance-seed/seedream-4.5", label: "Seedream 4.5", badge: "Recommended", pricing: "Input references included · output $0.04 / image", note: "Predictable low-cost garment reconstruction with multiple reference images and zero-data-retention routes." },
+      { id: "google/gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite Image", badge: "Private alternative", pricing: "Input text/images $0.25 / 1M tokens · output images $30 / 1M tokens", note: "Cost-efficient image editing with up to 14 references and zero-data-retention routes." },
       { id: "google/gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image", badge: "Better detail", pricing: "Input text/images $0.50 / 1M tokens · output images $60 / 1M tokens", note: "Better construction and pattern fidelity, with up to 14 input references." },
       { id: "google/gemini-3-pro-image", label: "Gemini 3 Pro Image", badge: "Highest quality", pricing: "Input $2.00 / 1M image tokens · output $120 / 1M image tokens", note: "Top-tier reconstruction when small accessories or intricate details matter more than price." },
     ],
   },
   {
     id: "modeledModel",
+    fallbackId: "modeledFallbackModel",
     operation: "modeled",
     label: "Modeled look · one reference",
     description: "Creates a styled editorial image using one identity photo and the exact garment.",
@@ -44,6 +48,7 @@ export const AI_TASKS = [
   },
   {
     id: "modeledMultiReferenceModel",
+    fallbackId: "modeledMultiReferenceFallbackModel",
     operation: "modeled-multi",
     label: "Modeled look · two or three references",
     description: "Combines complementary identity photos for a stronger face and body match.",
@@ -56,6 +61,7 @@ export const AI_TASKS = [
   },
   {
     id: "plannerModel",
+    fallbackId: "plannerFallbackModel",
     operation: "planner",
     label: "Trip and event planner",
     description: "Uses wardrobe metadata, destination, dates, climate expectations, and preferences to build outfits and a missing-items list.",
@@ -70,7 +76,7 @@ export const AI_TASKS = [
 ];
 
 export const DEFAULT_AI_PREFERENCES = Object.freeze(Object.fromEntries(
-  AI_TASKS.map((task) => [task.id, ""]),
+  AI_TASKS.flatMap((task) => [[task.id, ""], [task.fallbackId, ""]]),
 ));
 
 export const LEGACY_AI_MODEL_IDS = Object.freeze({
@@ -84,9 +90,14 @@ export function migrateAiModelId(model) {
 
 export function normalizeAiPreferences(value = {}) {
   const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  return Object.fromEntries(AI_TASKS.map((task) => {
+  return Object.fromEntries(AI_TASKS.flatMap((task) => {
     const model = migrateAiModelId(input[task.id]);
-    return [task.id, task.options.some((option) => option.id === model) ? model : ""];
+    const preferred = task.options.some((option) => option.id === model) ? model : "";
+    const fallbackModel = migrateAiModelId(input[task.fallbackId]);
+    const fallback = fallbackModel !== preferred && task.options.some((option) => option.id === fallbackModel)
+      ? fallbackModel
+      : "";
+    return [[task.id, preferred], [task.fallbackId, fallback]];
   }));
 }
 

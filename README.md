@@ -119,15 +119,15 @@ custom domain to be the canonical identifier, and optionally change
 
 | Preset | `OPENROUTER_GARMENT_MODEL` | One reference | Two or three references |
 | --- | --- | --- | --- |
-| Adaptive economy (default) | `black-forest-labs/flux.2-klein-4b` | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-image` |
+| Adaptive economy (default) | `bytedance-seed/seedream-4.5` | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-image` |
 | Private | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-image` |
 | Highest fidelity | `google/gemini-3.1-flash-image` | `google/gemini-3.1-flash-image` | `google/gemini-3-pro-image` |
 
 The garment and modeled stages can use different image models because a clean single-product reconstruction is simpler than preserving both a person's identity and a garment in one scene. Wardrobe also selects the modeled-look model by profile: one identity reference uses `OPENROUTER_MODELED_MODEL`, while two or three references use `OPENROUTER_MODELED_MULTI_REFERENCE_MODEL`. The values below remain the server defaults; each person can override the five AI tasks from **Edit profile → AI & costs**.
 
-The profile selector lists only models compatible with each task: multimodal text-output models for photo analysis, text models for planning, and image-output models for garment reconstruction and modeled looks. Each choice shows the current OpenRouter list price recorded when this release was built. OpenRouter may change prices later, and the exact returned request cost remains authoritative. The retired invalid ID `google/gemini-3.1-flash` is automatically migrated to `google/gemini-3.6-flash` in saved profiles and server environment values.
+The profile selector lists only models compatible with each task: multimodal text-output models for photo analysis, text models for planning, and image-output models for garment reconstruction and modeled looks. Each task has a preferred model and an optional, distinct backup model. Each choice shows the current OpenRouter list price recorded when this release was built. OpenRouter may change prices later, and the exact returned request cost remains authoritative. The retired invalid ID `google/gemini-3.1-flash` is automatically migrated to `google/gemini-3.6-flash` in saved profiles and server environment values.
 
-The default Klein garment route is cheaper, but it is not currently available under OpenRouter Zero Data Retention. `OPENROUTER_ALLOW_NON_ZDR_GARMENT=true` is therefore an explicit, garment-only privacy exception. Wardrobe keeps `OPENROUTER_ZDR=true` for clothing analysis and modeled looks, and refuses to send garment source images to Klein unless that exception is present. Use the Private preset if provider retention is not acceptable.
+Seedream 4.5 is the recommended garment route because its per-image price is predictable and it currently has a zero-data-retention route. Klein remains the lowest-price option, but it is not currently available under OpenRouter Zero Data Retention. `OPENROUTER_ALLOW_NON_ZDR_GARMENT=true` is therefore an explicit, garment-only privacy exception when Klein is selected.
 
 When the primary image model returns a content-policy refusal such as `PROHIBITED_CONTENT` or `IMAGE_SAFETY`, Wardrobe automatically retries the same request with the models in `OPENROUTER_IMAGE_FALLBACK_MODELS`. No image exists to review in that case. If a garment model does return an image but it fails the local resolution or transparency rules, Wardrobe preserves that paid result and pauses for user review; it does not call the fallback until the user explicitly chooses the alternative model. Garment fidelity is confirmed by the side-by-side user review rather than a second paid vision-model call. Authentication, credits, rate limits, networking, and invalid configuration are not hidden by an image fallback. The default alternative is `bytedance-seed/seedream-4.5`, which supports the app's multiple reference images and 3:2 modeled output. It starts at 4K because the current Seed route rejects the smaller concrete dimensions derived from lower resolution tiers for some reference-image requests. Set the fallback-model value to `none` to disable it.
 
@@ -144,12 +144,12 @@ The planner asks OpenRouter for a JSON object and validates the returned structu
 | `OPENROUTER_VISION_MODEL` | `google/gemini-3.1-flash-lite` |
 | `OPENROUTER_PLANNER_MODEL` | `OPENROUTER_VISION_MODEL` |
 | `OPENROUTER_PLANNER_FALLBACK_MODELS` | `google/gemini-2.5-flash-lite` |
-| `OPENROUTER_GARMENT_MODEL` | `black-forest-labs/flux.2-klein-4b` in `.env.example` |
+| `OPENROUTER_GARMENT_MODEL` | `bytedance-seed/seedream-4.5` in `.env.example` |
 | `OPENROUTER_MODELED_MODEL` | `google/gemini-3.1-flash-lite-image` |
 | `OPENROUTER_MODELED_MULTI_REFERENCE_MODEL` | `google/gemini-3.1-flash-image` |
 | `OPENROUTER_IMAGE_FALLBACK_MODELS` | `bytedance-seed/seedream-4.5` |
-| `OPENROUTER_ALLOW_NON_ZDR_GARMENT` | `true` in `.env.example` |
-| `OPENROUTER_GARMENT_PROVIDER` | `black-forest-labs` in `.env.example` |
+| `OPENROUTER_ALLOW_NON_ZDR_GARMENT` | `false` in `.env.example` |
+| `OPENROUTER_GARMENT_PROVIDER` | Automatic |
 | `OPENROUTER_MODELED_PROVIDER` | Automatic |
 | `OPENROUTER_IMAGE_FALLBACK_PROVIDER` | `seed` |
 | `OPENROUTER_IMAGE_RESOLUTION` | `1K` |

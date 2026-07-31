@@ -5149,7 +5149,11 @@ function OpenRouterKeyDialog({ busy, error, saved, onClose, onSave }) {
 
 function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
   const preferences = normalizeAiPreferences(value);
-  const update = (taskId, model) => onChange(normalizeAiPreferences({ ...preferences, [taskId]: model }));
+  const update = (task, field, model) => {
+    const next = { ...preferences, [field]: model };
+    if (field === task.id && model && next[task.fallbackId] === model) next[task.fallbackId] = "";
+    onChange(normalizeAiPreferences(next));
+  };
 
   return (
     <div className="profile-ai-editor">
@@ -5157,7 +5161,7 @@ function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
       <div className="profile-tab-intro">
         <div>
           <h3>{tr("Choose a model for each job")}</h3>
-          <p>{tr("Choose the balance of quality, privacy, and price you prefer. Leave a task on Recommended to use the app’s current choice.")}</p>
+          <p>{tr("Choose the balance of quality, privacy, and price you prefer. Add an optional backup to make another model available when the preferred result needs another try.")}</p>
         </div>
         <span><Sparkle size={15} weight="fill" /> {tr("{count} AI tasks", { count: AI_TASKS.length })}</span>
       </div>
@@ -5174,7 +5178,7 @@ function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
                 <span>{tr("Preferred model")}</span>
                 <LightSelect
                   value={preferences[task.id]}
-                  onChange={(model) => update(task.id, model)}
+                  onChange={(model) => update(task, task.id, model)}
                   options={[
                     { value: "", label: tr("Recommended") },
                     ...task.options.map((option) => ({
@@ -5185,6 +5189,24 @@ function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
                     })),
                   ]}
                   ariaLabel={`${tr(task.label)} · ${tr("Preferred model")}`}
+                  className="profile-ai-model-select"
+                />
+                <span>{tr("Backup model (optional)")}</span>
+                <LightSelect
+                  value={preferences[task.fallbackId]}
+                  onChange={(model) => update(task, task.fallbackId, model)}
+                  options={[
+                    { value: "", label: tr("No backup model") },
+                    ...task.options
+                      .filter((option) => option.id !== preferences[task.id])
+                      .map((option) => ({
+                        value: option.id,
+                        label: `${option.label} · ${tr(option.badge)}`,
+                        meta: option.pricing,
+                        keywords: `${option.id} ${option.badge} ${option.pricing}`,
+                      })),
+                  ]}
+                  ariaLabel={`${tr(task.label)} · ${tr("Backup model (optional)")}`}
                   className="profile-ai-model-select"
                 />
               </div>

@@ -76,6 +76,9 @@ export function readableError(error) {
   if (/(incorrect|invalid).*(api key)|api key.*(incorrect|invalid)|authentication|unauthorized/i.test(message) || error?.status === 401) {
     return tr("The configured AI provider rejected the API key. Check {keyName}, make sure it is active, then restart the app.", { keyName: keyName || tr("the API key in .env") });
   }
+  if (/(?:api )?key.*(?:(?:reached|exceeded).*)?(?:spending limit|budget)|(?:spending limit|budget).*(?:api )?key/i.test(message)) {
+    return tr("This API key has reached its spending limit. Increase the key’s budget or use another key, then try again.");
+  }
   if (/insufficient_quota|quota|billing|credits|payment required/i.test(message) || error?.status === 402) {
     return tr("The configured AI provider account has no available credit. Check its credits and spending limits, then try again.");
   }
@@ -957,7 +960,7 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
           {!isCrop && <button className="import-button" disabled={busy || (isGarment && (!draft.name.trim() || !primaryValid || !secondaryValid))} onClick={() => onAction("regenerate", regenPrompt)}><ArrowCounterClockwise size={14} /> {tr("Regenerate")}</button>}
           {isGarment && suggestedModel && (
             <button className="import-button" disabled={busy || !draft.name.trim() || !primaryValid || !secondaryValid} onClick={() => onAction("regenerate", regenPrompt, { useSuggestedModel: true })}>
-              <ArrowsLeftRight size={14} /> {tr("Try {model}", { model: aiModelLabel(suggestedModel) })}
+              <ArrowsLeftRight size={14} /> {tr("Try with {model}", { model: aiModelLabel(suggestedModel) })}
             </button>
           )}
           <button

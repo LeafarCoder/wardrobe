@@ -17,13 +17,17 @@ test("normalizes independent model choices for every AI task", () => {
     garmentModel: "black-forest-labs/flux.2-klein-4b",
     modeledModel: "google/gemini-3.1-flash-lite-image",
     modeledMultiReferenceModel: "google/gemini-3.1-flash-image",
+    modeledMultiReferenceFallbackModel: "google/gemini-3.1-flash-image",
     plannerModel: "not a model id",
+    plannerFallbackModel: "google/gemini-2.5-flash-lite",
   });
 
   assert.equal(preferences.analysisModel, "google/gemini-3.6-flash");
   assert.equal(preferences.garmentModel, "black-forest-labs/flux.2-klein-4b");
   assert.equal(preferences.modeledMultiReferenceModel, "google/gemini-3.1-flash-image");
+  assert.equal(preferences.modeledMultiReferenceFallbackModel, "");
   assert.equal(preferences.plannerModel, "");
+  assert.equal(preferences.plannerFallbackModel, "google/gemini-2.5-flash-lite");
 });
 
 test("migrates the retired Gemini 3.1 Flash id to a live higher-quality route", () => {
@@ -48,6 +52,7 @@ test("offers only compatible live models for each AI task and includes pricing",
   assert.ok(analysis.options.some((option) => option.id === "google/gemini-3.5-flash"));
   assert.ok(!analysis.options.some((option) => option.id.endsWith("-image")));
   assert.ok(garment.options.some((option) => option.id === "google/gemini-3-pro-image"));
+  assert.equal(garment.options.find((option) => option.badge === "Recommended")?.id, "bytedance-seed/seedream-4.5");
   assert.ok(garment.options.every((option) => option.pricing));
   assert.ok(!planner.options.some((option) => option.id.endsWith("-image")));
   assert.ok(AI_TASKS.every((task) => task.options.every((option) => option.pricing)));
@@ -84,7 +89,9 @@ test("applies personal model choices only to OpenRouter and language to every pr
       garmentModel: "",
       modeledModel: "google/gemini-3.1-flash-image",
       modeledMultiReferenceModel: "",
+      modeledMultiReferenceFallbackModel: "bytedance-seed/seedream-4.5",
       plannerModel: "google/gemini-3.1-flash-lite",
+      plannerFallbackModel: "google/gemini-2.5-flash-lite",
     },
   };
 
@@ -93,7 +100,9 @@ test("applies personal model choices only to OpenRouter and language to every pr
   assert.equal(selected.garmentModel, "default/garment");
   assert.equal(selected.modeledModel, "google/gemini-3.1-flash-image");
   assert.equal(selected.modeledMultiReferenceModel, "default/multi");
+  assert.deepEqual(selected.modeledMultiReferenceFallbackModels, ["bytedance-seed/seedream-4.5"]);
   assert.equal(selected.plannerModel, "google/gemini-3.1-flash-lite");
+  assert.deepEqual(selected.plannerFallbackModels, ["google/gemini-2.5-flash-lite"]);
   assert.equal(selected.responseLanguage, "pt-PT");
   assert.deepEqual(
     providerWithProfilePreferences({ ...base, id: "openai" }, profile),

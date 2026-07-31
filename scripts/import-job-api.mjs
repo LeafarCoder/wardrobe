@@ -148,6 +148,13 @@ export function modeledModelForReferenceCount(provider = {}, referenceCount = 1)
     : provider.modeledModel;
 }
 
+export function modeledFallbackModelsForReferenceCount(provider = {}, referenceCount = 1) {
+  const normalizedCount = Math.max(1, Math.min(3, Number.parseInt(referenceCount, 10) || 1));
+  return normalizedCount >= 2
+    ? provider.modeledMultiReferenceFallbackModels || []
+    : provider.modeledFallbackModels || [];
+}
+
 export function normalizeOpenRouterApiKey(value) {
   const key = String(value ?? "").trim();
   return /^sk-or-[A-Za-z0-9._-]{8,200}$/.test(key) ? key : "";
@@ -201,14 +208,25 @@ export function providerWithProfilePreferences(provider = {}, profile = {}, paye
     ...(provider.id === "openrouter" && payerKey ? { key: payerKey, keyOwner: "profile" } : {}),
   };
   if (provider.id !== "openrouter") return localizedProvider;
+  const rawPreferences = profile.aiPreferences && typeof profile.aiPreferences === "object"
+    ? profile.aiPreferences
+    : {};
   const preferences = normalizeAiPreferences(profile.aiPreferences);
+  const fallbackModels = (field, inherited = []) => Object.hasOwn(rawPreferences, field)
+    ? (preferences[field] ? [preferences[field]] : [])
+    : inherited;
   return {
     ...localizedProvider,
     visionModel: preferences.analysisModel || provider.visionModel,
+    visionFallbackModels: fallbackModels("analysisFallbackModel", provider.visionFallbackModels || []),
     garmentModel: preferences.garmentModel || provider.garmentModel,
+    garmentFallbackModels: fallbackModels("garmentFallbackModel", provider.garmentFallbackModels || provider.imageFallbackModels || []),
     modeledModel: preferences.modeledModel || provider.modeledModel,
+    modeledFallbackModels: fallbackModels("modeledFallbackModel", provider.modeledFallbackModels || provider.imageFallbackModels || []),
     modeledMultiReferenceModel: preferences.modeledMultiReferenceModel || provider.modeledMultiReferenceModel,
+    modeledMultiReferenceFallbackModels: fallbackModels("modeledMultiReferenceFallbackModel", provider.modeledMultiReferenceFallbackModels || provider.imageFallbackModels || []),
     plannerModel: preferences.plannerModel || provider.plannerModel || provider.visionModel,
+    plannerFallbackModels: fallbackModels("plannerFallbackModel", provider.plannerFallbackModels || []),
   };
 }
 
@@ -937,6 +955,9 @@ export function providerResponseError(response, result, { provider, model, opera
   }
   if (response.status === 402 || /insufficient[_ ]credits?|payment required|credit balance/i.test(signal)) {
     return apiError(`The ${label} account has no available credit. Check its credits and spending limits, then try again.`, 402, `${provider.id}_credits_exhausted`);
+  }
+  if (/(?:api )?key.{0,100}(?:(?:limit|budget).{0,40}(?:reached|exceeded|exhausted)|(?:reached|exceeded|exhausted).{0,40}(?:limit|budget))|(?:spend(?:ing)? )?(?:limit|budget).{0,40}(?:api )?key/i.test(signal)) {
+    return apiError(`This ${label} API key has reached its spending limit. Increase the key's budget or use another key, then try again.`, 402, `${provider.id}_key_limit_exceeded`);
   }
   if (/zero.data.retention|\bZDR\b|data polic|no endpoints.*privacy/i.test(signal)) {
     return apiError(`${label} could not find a zero-data-retention route for ${model}. Choose a ZDR-capable model, adjust the account privacy settings, or set OPENROUTER_ZDR=false if you accept provider retention.`, 400, "openrouter_zdr_unavailable");
@@ -3614,6 +3635,48 @@ async function openRouterAnalyze({ provider, model, image, mime, trace = {} }) {
   return parseWardrobeItems(outputText, provider);
 }
 
+function isRetryableAnalysisModelError(error, provider) {
+  return new Set([
+    `${provider.id}_provider_error`,
+    `${provider.id}_unavailable`,
+    `${provider.id}_model_forbidden`,
+    `${provider.id}_model_not_found`,
+    `${provider.id}_empty_analysis`,
+    `${provider.id}_invalid_analysis`,
+  ]).has(String(error?.code || ""));
+}
+
+async function analyzeWithFallback({ analyzeImage, provider, image, mime, trace = {} }) {
+  const candidates = [...new Set([
+    provider.visionModel,
+    ...(provider.visionFallbackModels || []),
+  ].filter(Boolean))];
+  let lastError;
+  for (let index = 0; index < candidates.length; index += 1) {
+    const model = candidates[index];
+    try {
+      return await analyzeImage({
+        provider,
+        model,
+        image,
+        mime,
+        trace: {
+          ...trace,
+          route: index ? "analysis-fallback" : "analysis-primary",
+          attempt: index + 1,
+          ...(index ? { fallbackFrom: candidates[0] } : {}),
+        },
+      });
+    } catch (error) {
+      lastError = error;
+      const fallback = candidates[index + 1];
+      if (!fallback || !isRetryableAnalysisModelError(error, provider)) throw error;
+      console.warn(`[wardrobe:ai] analysis fallback | failed_model=${cleanLogValue(model)} | next_model=${cleanLogValue(fallback)} | reason=${cleanLogValue(error.code || "provider_error")}`);
+    }
+  }
+  throw lastError;
+}
+
 function parseWardrobePlan(outputText, provider, allowedItemIds) {
   if (!outputText) throw apiError(`${provider.label} returned no wardrobe plan.`, 502, `${provider.id}_empty_plan`);
   const cleaned = outputText.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
@@ -4684,7 +4747,7 @@ export function wardrobeImportApi(options = {}) {
         visionModel: migrateAiModelId(setting("OPENROUTER_VISION_MODEL", "google/gemini-3.1-flash-lite")),
         plannerModel: migrateAiModelId(setting("OPENROUTER_PLANNER_MODEL", setting("OPENROUTER_VISION_MODEL", "google/gemini-3.1-flash-lite"))),
         plannerFallbackModels: parseModelList(setting("OPENROUTER_PLANNER_FALLBACK_MODELS", "google/gemini-2.5-flash-lite")).map(migrateAiModelId),
-        garmentModel: migrateAiModelId(setting("OPENROUTER_GARMENT_MODEL", imageModel || "google/gemini-3.1-flash-lite-image")),
+        garmentModel: migrateAiModelId(setting("OPENROUTER_GARMENT_MODEL", imageModel || "bytedance-seed/seedream-4.5")),
         modeledModel: migrateAiModelId(setting("OPENROUTER_MODELED_MODEL", imageModel || "google/gemini-3.1-flash-image")),
         modeledMultiReferenceModel: migrateAiModelId(setting("OPENROUTER_MODELED_MULTI_REFERENCE_MODEL", "google/gemini-3.1-flash-image")),
         imageFallbackModels: parseModelList(setting("OPENROUTER_IMAGE_FALLBACK_MODELS", "bytedance-seed/seedream-4.5")),
@@ -5442,7 +5505,9 @@ export function wardrobeImportApi(options = {}) {
         garment: provider.garmentModel,
         modeled: provider.modeledModel,
         modeledMultiReference: provider.modeledMultiReferenceModel,
-        imageFallbacks: provider.imageFallbackModels,
+        garmentFallbacks: provider.garmentFallbackModels,
+        modeledFallbacks: provider.modeledFallbackModels,
+        modeledMultiReferenceFallbacks: provider.modeledMultiReferenceFallbackModels,
       },
     };
   }
@@ -5954,14 +6019,14 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (input.useSuggestedModel === true && !previousCandidate?.suggestedModel) {
         throw apiError("No alternative image model is available for this result.", 409, "garment_alternative_model_unavailable");
       }
-      const configuredGarmentModels = [provider.garmentModel, ...provider.imageFallbackModels]
+      const configuredGarmentModels = [provider.garmentModel, ...(provider.garmentFallbackModels || [])]
         .filter((model, index, models) => model && models.indexOf(model) === index);
       const requestedModel = input.useSuggestedModel === true ? previousCandidate.suggestedModel : null;
       if (requestedModel && !configuredGarmentModels.includes(requestedModel)) {
         throw apiError("The suggested alternative image model is no longer configured.", 409, "garment_alternative_model_unavailable");
       }
       const garmentModel = requestedModel || provider.garmentModel;
-      const garmentFallbackModels = provider.imageFallbackModels.filter((model) => model !== garmentModel);
+      const garmentFallbackModels = (provider.garmentFallbackModels || []).filter((model) => model !== garmentModel);
       let cleanedCandidate = null;
       const validateImage = async (candidateBytes) => {
         cleanedCandidate = null;
@@ -6337,7 +6402,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         editImage,
         provider,
         model: modeledModel,
-        fallbackModels: provider.imageFallbackModels,
+        fallbackModels: modeledFallbackModelsForReferenceCount(provider, models.length),
         quality: provider.imageQuality,
         ...imageRequest,
         images: [...models, garment, ...(background ? [background.image] : [])],
@@ -6498,7 +6563,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         editImage,
         provider,
         model: modeledModel,
-        fallbackModels: provider.imageFallbackModels,
+        fallbackModels: modeledFallbackModelsForReferenceCount(provider, personReferences.length),
         quality: provider.imageQuality,
         ...imageRequest,
         images: [...personReferences, ...garmentReferences, ...(background ? [background.image] : [])],
@@ -6697,7 +6762,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         editImage,
         provider,
         model: modeledModel,
-        fallbackModels: provider.imageFallbackModels,
+        fallbackModels: modeledFallbackModelsForReferenceCount(provider, personReferences.length),
         quality: provider.imageQuality,
         ...imageRequest,
         images: [...personReferences, ...garmentReferences, ...(background ? [background.image] : [])],
@@ -6983,9 +7048,9 @@ Interpret this correction semantically in whatever language it is written. It ov
         const analyzeImage = provider.id === "openrouter" ? openRouterAnalyze : openAIAnalyze;
         console.info(`[wardrobe] Backfilling original-photo focus for ${group.recordIds.length} wardrobe ${group.recordIds.length === 1 ? "item" : "items"} with ${provider.label} / ${provider.visionModel}...`);
         const image = await prepareProviderImage(group.bytes);
-        const detected = (await analyzeImage({
+        const detected = (await analyzeWithFallback({
+          analyzeImage,
           provider,
-          model: provider.visionModel,
           image: image.data,
           mime: image.mime,
         })).map(normalizeMetadata);
@@ -7047,12 +7112,12 @@ Interpret this correction semantically in whatever language it is written. It ov
         if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
         if (!provider.key) throw apiError("No OpenRouter key is available. Add your own key under AI & costs in your profile.", 503, `${provider.id}_key_missing`);
         const editImage = provider.id === "openrouter" ? openRouterEdit : openAIEdit;
-        const configuredGarmentModels = [provider.garmentModel, ...provider.imageFallbackModels]
+        const configuredGarmentModels = [provider.garmentModel, ...(provider.garmentFallbackModels || [])]
           .filter((model, index, models) => model && models.indexOf(model) === index);
         const garmentModel = stageName === "garment" && configuredGarmentModels.includes(stage.requestedModel)
           ? stage.requestedModel
           : provider.garmentModel;
-        const garmentFallbackModels = provider.imageFallbackModels.filter((model) => model !== garmentModel);
+        const garmentFallbackModels = (provider.garmentFallbackModels || []).filter((model) => model !== garmentModel);
         const sourceFile = stageName === "garment" && current.internal.cropFile ? current.internal.cropFile : current.internal.originalFile;
         const original = { data: await readFile(path.join(dir, sourceFile)), mime: "image/png", name: sourceFile };
         let bytes;
@@ -7213,7 +7278,7 @@ Interpret this correction semantically in whatever language it is written. It ov
             editImage,
             provider,
             model: modeledModel,
-            fallbackModels: provider.imageFallbackModels,
+            fallbackModels: modeledFallbackModelsForReferenceCount(provider, models.length),
             onFallback: recordFallbackNotice,
             quality: provider.imageQuality,
             ...imageRequest,
@@ -9131,9 +9196,9 @@ Interpret this correction semantically in whatever language it is written. It ov
         let detected;
         let providerDetected;
         try {
-          providerDetected = (await analyzeImage({
+          providerDetected = (await analyzeWithFallback({
+            analyzeImage,
             provider,
-            model: provider.visionModel,
             image: analysisImage.data,
             mime: analysisImage.mime,
             trace: { uploadId, sourceFileName },

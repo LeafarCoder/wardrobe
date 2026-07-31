@@ -800,6 +800,27 @@ test("maps an exhausted OpenRouter balance to a human-readable credit error", ()
   assert.match(error.message, /no available credit/i);
 });
 
+test("maps an exhausted per-key budget before the generic forbidden-model error", () => {
+  const error = providerResponseError(
+    { status: 403 },
+    { error: { message: "This API key has exceeded its configured spending limit" } },
+    {
+      provider: {
+        id: "openrouter",
+        label: "OpenRouter",
+        keyEnv: "OPENROUTER_API_KEY",
+      },
+      model: "bytedance-seed/seedream-4.5",
+      operation: "generation",
+    },
+  );
+
+  assert.equal(error.status, 402);
+  assert.equal(error.code, "openrouter_key_limit_exceeded");
+  assert.match(error.message, /API key has reached its spending limit/i);
+  assert.doesNotMatch(error.message, /model|\.env/i);
+});
+
 test("constrains planner response shape without provider state-heavy array bounds", () => {
   const request = openRouterPlannerRequest({
     provider: { zdr: true },
