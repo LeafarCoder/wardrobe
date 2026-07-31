@@ -919,12 +919,6 @@ button.import-source-option:focus-visible,
   text-transform: none;
 }
 .import-editor__opaque-warning svg { flex: 0 0 auto; }
-.import-editor__comparison-guidance {
-  margin: 0;
-  padding: 10px 11px;
-  border-left: 2px solid rgba(36, 35, 31, .32);
-  background: rgba(36, 35, 31, .035);
-}
 .import-candidate-history {
   grid-column: 1 / -1;
   min-width: 0;

@@ -847,7 +847,6 @@ const pt = {
   "Generated garment versions": "Versões geradas da peça",
   "Generated garment version {number}": "Versão gerada {number} da peça",
   "Version {number}": "Versão {number}",
-  "Compare the generated garment with the original crop before adding it. Check the silhouette, construction, colors, pattern, closures, and distinctive details.": "Compare a peça gerada com o recorte original antes de a adicionar. Confirme a silhueta, a construção, as cores, o padrão, os fechos e os detalhes distintivos.",
   "Detected item": "Peça detetada",
   "Garment image": "Imagem da peça",
   "Modeled image": "Imagem com modelo",

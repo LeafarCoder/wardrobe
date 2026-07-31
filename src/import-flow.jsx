@@ -898,7 +898,6 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
         <p className="import-editor__stage">{tr(isCrop ? "Detected item" : isGarment ? "Garment image" : "Modeled image")}</p>
         {isCrop ? <p className="import-card__detail">{tr("Duplicate matching is complete. Check that the box contains only the intended garment, adjust it if needed, then continue.")}</p> : isGarment ? (
           <>
-            <p className="import-card__detail import-editor__comparison-guidance">{tr("Compare the generated garment with the original crop before adding it. Check the silhouette, construction, colors, pattern, closures, and distinctive details.")}</p>
             <div className="import-field"><label htmlFor={`name-${job.id}`}>{tr("Name")}</label><input id={`name-${job.id}`} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></div>
             <div className="import-field">
               <label>{tr("Category")}</label>
