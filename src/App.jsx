@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, DownloadSimple, Dress, Eye, EyeSlash, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, Link, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, CrosshairSimple, DownloadSimple, Dress, Eye, EyeSlash, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, Link, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { BrandIcon } from "./BrandIcon.jsx";
 import { CareIcon } from "./CareIcon.jsx";
@@ -1526,6 +1526,7 @@ function ItemViewer({
   onDelete,
   onGenerateModeled,
   onRegenerateGarment,
+  onCenterGarmentRegeneration,
   onAcceptGarmentRegeneration,
   onDiscardGarmentRegeneration,
   onCreateVariant,
@@ -2470,6 +2471,19 @@ function ItemViewer({
     }
   };
 
+  const centerGarmentRegeneration = async () => {
+    if (garmentRegenerationBusy || !item.garmentRegenerationCandidate) return;
+    setGarmentRegenerationBusy(true);
+    setGarmentRegenerationError("");
+    try {
+      await onCenterGarmentRegeneration(item.id);
+    } catch (requestError) {
+      setGarmentRegenerationError(readableError(requestError));
+    } finally {
+      setGarmentRegenerationBusy(false);
+    }
+  };
+
   const discardGarmentRegeneration = async () => {
     if (garmentRegenerationBusy || !item.garmentRegenerationCandidate) return;
     setGarmentRegenerationBusy(true);
@@ -2992,14 +3006,29 @@ function ItemViewer({
                   <figure>
                     <ProductStage className="garment-regeneration__stage" staticStage>
                       {garmentRegenerationCandidate ? (
-                        <OptimizedImage
-                          key={garmentRegenerationCandidate.id}
-                          src={garmentRegenerationCandidate.preview || garmentRegenerationCandidate.image}
-                          alt={tr("Regenerated candidate for {name}", { name: garmentRegenerationForm.name || type })}
-                          sizes="(max-width: 700px) 90vw, 420px"
-                          priority
-                          reveal
-                        />
+                        <>
+                          <OptimizedImage
+                            key={garmentRegenerationCandidate.preview || garmentRegenerationCandidate.image}
+                            src={garmentRegenerationCandidate.preview || garmentRegenerationCandidate.image}
+                            alt={tr("Regenerated candidate for {name}", { name: garmentRegenerationForm.name || type })}
+                            sizes="(max-width: 700px) 90vw, 420px"
+                            priority
+                            reveal
+                          />
+                          <button
+                            type="button"
+                            className="garment-regeneration__center"
+                            disabled={garmentRegenerationBusy}
+                            onClick={centerGarmentRegeneration}
+                            aria-label={tr(garmentRegenerationBusy ? "Centering…" : "Center garment")}
+                            title={tr("Center garment")}
+                          >
+                            {garmentRegenerationBusy
+                              ? <SpinnerGap className="modeled-request__spinner" size={15} aria-hidden="true" />
+                              : <CrosshairSimple size={15} aria-hidden="true" />}
+                            <span>{tr(garmentRegenerationBusy ? "Centering…" : "Center")}</span>
+                          </button>
+                        </>
                       ) : garmentRegenerationBusy ? (
                         <div className="garment-regeneration__pending" role="status">
                           <SpinnerGap className="modeled-request__spinner" size={28} aria-hidden="true" />
@@ -7341,6 +7370,14 @@ export function App() {
     return record;
   };
 
+  const centerGarmentRegeneration = async (id) => {
+    const updated = await profileApi(`/api/import/wardrobe/${id}/regeneration/center?user=${encodeURIComponent(currentUserId)}`, {
+      method: "POST",
+    });
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    return updated;
+  };
+
   const acceptGarmentRegeneration = async (id) => {
     const updated = await profileApi(`/api/import/wardrobe/${id}/regeneration/accept?user=${encodeURIComponent(currentUserId)}`, {
       method: "POST",
@@ -7828,6 +7865,7 @@ export function App() {
           onDelete={deleteItem}
           onGenerateModeled={generateModeledLook}
           onRegenerateGarment={regenerateGarment}
+          onCenterGarmentRegeneration={centerGarmentRegeneration}
           onAcceptGarmentRegeneration={acceptGarmentRegeneration}
           onDiscardGarmentRegeneration={discardGarmentRegeneration}
           onCreateVariant={createColorVariant}

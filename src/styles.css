@@ -3618,6 +3618,32 @@ button { font: inherit; }
   object-fit: contain;
 }
 
+.garment-regeneration__center {
+  position: absolute;
+  z-index: 3;
+  top: 12px;
+  right: 12px;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid rgba(25, 24, 22, .16);
+  border-radius: 999px;
+  background: rgba(250, 247, 241, .92);
+  box-shadow: 0 5px 16px rgba(43, 37, 29, .12);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.garment-regeneration__center:hover:not(:disabled) { background: #fffdf9; }
+.garment-regeneration__center:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.garment-regeneration__center:disabled { cursor: wait; opacity: .68; }
+
 .garment-regeneration__comparison figcaption {
   display: flex;
   justify-content: space-between;

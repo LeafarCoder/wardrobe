@@ -2847,6 +2847,46 @@ export async function frameTransparentGarment(bytes, canvasSize = 1024, occupanc
     .toBuffer();
 }
 
+export async function centerTransparentGarment(bytes, alphaThreshold = 8) {
+  const { data, info } = await sharp(bytes).rotate().ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  let minX = info.width;
+  let minY = info.height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let index = 0, pixel = 0; index < data.length; index += 4, pixel += 1) {
+    if (data[index + 3] <= alphaThreshold) continue;
+    const x = pixel % info.width;
+    const y = Math.floor(pixel / info.width);
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  if (maxX < minX || maxY < minY) throw new Error("The garment image has no visible pixels to center");
+
+  const width = maxX - minX + 1;
+  const height = maxY - minY + 1;
+  const cutout = await sharp(data, { raw: info })
+    .extract({ left: minX, top: minY, width, height })
+    .png()
+    .toBuffer();
+  return sharp({
+    create: {
+      width: info.width,
+      height: info.height,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  })
+    .composite([{
+      input: cutout,
+      left: Math.floor((info.width - width) / 2),
+      top: Math.floor((info.height - height) / 2),
+    }])
+    .png()
+    .toBuffer();
+}
+
 async function verifyNoChromaSpill(bytes, key) {
   const target = [1, 3, 5].map((offset) => Number.parseInt(key.slice(offset, offset + 2), 16));
   const keyedChannels = target.map((channel, index) => channel > 200 ? index : null).filter((index) => index !== null);
@@ -5804,6 +5844,67 @@ Interpret this correction semantically in whatever language it is written. It ov
     return task;
   }
 
+  async function centerImportedGarmentCandidate(itemId, user) {
+    const records = await loadImported();
+    const record = records.find((candidate) => candidate.id === itemId && candidate.userId === user.id);
+    if (!record) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+    const candidate = garmentRegenerationCandidateForRecord(record);
+    if (!candidate) {
+      throw apiError("This garment has no regenerated candidate to center.", 409, "garment_regeneration_candidate_missing");
+    }
+
+    const sourceName = path.basename(new URL(candidate.image, "http://localhost").pathname);
+    const centeredName = `${itemId}-regeneration-${candidate.id}-centered-${randomUUID()}.png`;
+    const centeredBytes = await centerTransparentGarment(
+      await readFile(path.join(libraryAssetDir, sourceName)),
+    );
+    await atomicFile(path.join(libraryAssetDir, centeredName), centeredBytes);
+    const image = libraryAssetUrl(centeredName);
+    const [preview, thumbnail] = await Promise.all([
+      safeLibraryVariant(image, "preview", `${candidate.metadata.name} centered regeneration candidate`),
+      safeLibraryVariant(image, "thumbnail", `${candidate.metadata.name} centered regeneration candidate thumbnail`),
+    ]);
+    const createdAssets = [image, preview, thumbnail].filter(Boolean);
+
+    const result = await withLibrary(async () => {
+      const latest = await loadImported();
+      const index = latest.findIndex((entry) => entry.id === itemId && entry.userId === user.id);
+      if (index < 0) {
+        throw apiError("The wardrobe item was deleted while its candidate was being centered.", 409, "wardrobe_item_deleted");
+      }
+      const latestCandidate = garmentRegenerationCandidateForRecord(latest[index]);
+      if (!latestCandidate || latestCandidate.id !== candidate.id || latestCandidate.image !== candidate.image) {
+        throw apiError("The regenerated candidate changed before it could be centered. Try again.", 409, "garment_regeneration_candidate_changed");
+      }
+      latest[index] = {
+        ...latest[index],
+        garmentRegenerationCandidate: {
+          ...latestCandidate,
+          image,
+          preview: preview || image,
+          thumbnail: thumbnail || preview || image,
+        },
+      };
+      await saveImported(latest);
+      return latest[index];
+    }).catch(async (error) => {
+      await Promise.all(createdAssets.map((asset) => rm(
+        path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+        { force: true },
+      )));
+      throw error;
+    });
+
+    const retained = new Set(importedRecordAssets(result).map((asset) => asset.split("?")[0]));
+    await Promise.all([candidate.image, candidate.preview, candidate.thumbnail]
+      .filter((asset) => asset && !retained.has(asset.split("?")[0]))
+      .map((asset) => rm(
+        path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+        { force: true },
+      )));
+    return result;
+  }
+
   async function resolveImportedGarmentCandidate(itemId, user, decision) {
     const result = await withLibrary(async () => {
       const records = await loadImported();
@@ -8197,7 +8298,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         });
         return json(res, 200, { item: publicImportedRecord(updated, user.id) });
       }
-      const garmentRegenerationMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/regeneration(?:\/(accept))?$/i);
+      const garmentRegenerationMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/regeneration(?:\/(accept|center))?$/i);
       if (garmentRegenerationMatch && !garmentRegenerationMatch[2] && req.method === "POST") {
         const input = await body(req, 64 * 1024);
         const result = await generateImportedGarmentCandidate(
@@ -8213,6 +8314,10 @@ Interpret this correction semantically in whatever language it is written. It ov
       }
       if (garmentRegenerationMatch?.[2] === "accept" && req.method === "POST") {
         const record = await resolveImportedGarmentCandidate(garmentRegenerationMatch[1], user, "accept");
+        return json(res, 200, publicImportedRecord(record, user.id));
+      }
+      if (garmentRegenerationMatch?.[2] === "center" && req.method === "POST") {
+        const record = await centerImportedGarmentCandidate(garmentRegenerationMatch[1], user);
         return json(res, 200, publicImportedRecord(record, user.id));
       }
       if (garmentRegenerationMatch && !garmentRegenerationMatch[2] && req.method === "DELETE") {

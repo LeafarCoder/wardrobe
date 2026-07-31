@@ -176,3 +176,84 @@ test("accepting or discarding a regenerated candidate preserves the chosen garme
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("centering a regenerated candidate persists the centered asset used for approval", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "wardrobe-regeneration-center-api-"));
+  const dataDir = path.join(root, "data");
+  const importedDir = path.join(dataDir, "imported");
+  const itemId = "import-00000000-0000-4000-8000-000000000003";
+  const api = wardrobeImportApi({
+    env: {
+      WARDROBE_DATA_DIR: dataDir,
+      GOOGLE_CLIENT_ID: "test-client",
+      GOOGLE_CLIENT_SECRET: "test-client-secret",
+      WARDROBE_SESSION_SECRET: SESSION_SECRET,
+    },
+  });
+
+  try {
+    await api.initialize(root);
+    const cutout = await sharp({
+      create: {
+        width: 3,
+        height: 5,
+        channels: 4,
+        background: { r: 225, g: 24, b: 129, alpha: 1 },
+      },
+    }).png().toBuffer();
+    await sharp({
+      create: {
+        width: 12,
+        height: 10,
+        channels: 4,
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      },
+    })
+      .composite([{ input: cutout, left: 1, top: 1 }])
+      .png()
+      .toFile(path.join(importedDir, "off-center-candidate.png"));
+    await writeFile(path.join(dataDir, "library.json"), JSON.stringify([{
+      id: itemId,
+      userId: "default",
+      name: "Current dress",
+      part: "wholebody",
+      color: "#e81881",
+      image: "/api/import/library/current-dress.png",
+      garmentRegenerationCandidate: {
+        id: "candidate-to-center",
+        image: "/api/import/library/off-center-candidate.png",
+        metadata: { name: "Pink dress", part: "wholebody", color: "#e81881" },
+      },
+    }], null, 2));
+
+    const response = mockResponse();
+    await api.handler(mockRequest(`/api/import/wardrobe/${itemId}/regeneration/center`), response, () => {});
+
+    assert.equal(response.statusCode, 200);
+    const candidate = response.json().garmentRegenerationCandidate;
+    assert.notEqual(candidate.image.split("?")[0], "/api/import/library/off-center-candidate.png");
+    const centeredName = path.basename(new URL(candidate.image, "http://localhost").pathname);
+    const { data, info } = await sharp(path.join(importedDir, centeredName))
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const visible = [];
+    for (let y = 0; y < info.height; y += 1) {
+      for (let x = 0; x < info.width; x += 1) {
+        if (data[(((y * info.width) + x) * 4) + 3] > 8) visible.push({ x, y });
+      }
+    }
+    assert.deepEqual({
+      minX: Math.min(...visible.map(({ x }) => x)),
+      maxX: Math.max(...visible.map(({ x }) => x)),
+      minY: Math.min(...visible.map(({ y }) => y)),
+      maxY: Math.max(...visible.map(({ y }) => y)),
+    }, { minX: 4, maxX: 6, minY: 2, maxY: 6 });
+    await assert.rejects(stat(path.join(importedDir, "off-center-candidate.png")), { code: "ENOENT" });
+
+    const stored = JSON.parse(await readFile(path.join(dataDir, "library.json"), "utf8"));
+    assert.equal(stored[0].garmentRegenerationCandidate.image.split("?")[0], candidate.image.split("?")[0]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

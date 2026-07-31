@@ -6,6 +6,7 @@ import path from "node:path";
 import sharp from "sharp";
 import {
   buildGarmentPrompt,
+  centerTransparentGarment,
   cropDetailDiagnostics,
   cropDetectedItem,
   garmentCutoutTransparencyFailure,
@@ -15,6 +16,49 @@ import {
   processChromaBackground,
   writeImageVariant,
 } from "../scripts/import-job-api.mjs";
+
+test("centers the visible alpha bounds without resizing the garment canvas", async () => {
+  const garment = await sharp({
+    create: {
+      width: 12,
+      height: 10,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  })
+    .composite([{
+      input: await sharp({
+        create: {
+          width: 3,
+          height: 5,
+          channels: 4,
+          background: { r: 225, g: 24, b: 129, alpha: 1 },
+        },
+      }).png().toBuffer(),
+      left: 1,
+      top: 1,
+    }])
+    .png()
+    .toBuffer();
+
+  const centered = await centerTransparentGarment(garment);
+  const { data, info } = await sharp(centered).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const visible = [];
+  for (let y = 0; y < info.height; y += 1) {
+    for (let x = 0; x < info.width; x += 1) {
+      if (data[(((y * info.width) + x) * 4) + 3] > 8) visible.push({ x, y });
+    }
+  }
+
+  assert.equal(info.width, 12);
+  assert.equal(info.height, 10);
+  assert.deepEqual({
+    minX: Math.min(...visible.map(({ x }) => x)),
+    maxX: Math.max(...visible.map(({ x }) => x)),
+    minY: Math.min(...visible.map(({ y }) => y)),
+    maxY: Math.max(...visible.map(({ y }) => y)),
+  }, { minX: 4, maxX: 6, minY: 2, maxY: 6 });
+});
 
 test("respects a user-defined crop without adding hidden padding", async () => {
   const source = await sharp({
