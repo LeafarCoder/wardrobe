@@ -163,6 +163,8 @@ test("an owner manages the selected tenant's connections without exposing them t
   const root = await mkdtemp(path.join(os.tmpdir(), "wardrobe-owner-connections-"));
   const dataDir = path.join(root, "data");
   const usersFile = path.join(dataDir, "users.json");
+  const libraryFile = path.join(dataDir, "library.json");
+  const importedDir = path.join(dataDir, "imported");
   const api = wardrobeImportApi({ env: {
     WARDROBE_DATA_DIR: dataDir,
     GOOGLE_CLIENT_ID: "test-client",
@@ -236,6 +238,32 @@ test("an owner manages the selected tenant's connections without exposing them t
     const createdInvite = saved.connectionInvites.find((invite) => invite.id === tenantInvite.json().invite.id);
     assert.equal(createdInvite.requesterUserId, PARTNER_ID);
     assert.equal(createdInvite.recipientUserId, "default");
+
+    const reciprocal = await request(api, `/api/users/connections/invitations/${createdInvite.id}/respond`, "POST", {
+      decision: "accept",
+      permissions: { referenceImages: true, garments: true },
+    });
+    assert.equal(reciprocal.statusCode, 200);
+    assert.equal(reciprocal.json().connection.grantorUserId, "default");
+    assert.equal(reciprocal.json().connection.recipientUserId, PARTNER_ID);
+
+    await mkdir(importedDir, { recursive: true });
+    await writeFile(path.join(importedDir, "owner-shirt.png"), Buffer.from("owner-shared-garment"));
+    await writeFile(libraryFile, JSON.stringify([{
+      id: "owner-shirt",
+      userId: "default",
+      name: "Owner shirt",
+      part: "upperbody",
+      color: "#ede8dd",
+      image: "/api/import/library/owner-shirt.png",
+      thumbnail: "/api/import/library/owner-shirt.png",
+    }], null, 2));
+    const selectedTenantAsset = await request(
+      api,
+      `/api/import/library/owner-shirt.png?user=${PARTNER_ID}`,
+    );
+    assert.equal(selectedTenantAsset.statusCode, 200);
+    assert.equal(selectedTenantAsset.bytes().toString(), "owner-shared-garment");
 
     const forbidden = await request(api, `/api/users/connections?user=${PARTNER_ID}`, "GET", undefined, REQUESTER_ID);
     assert.equal(forbidden.statusCode, 403);

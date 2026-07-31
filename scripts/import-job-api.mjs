@@ -6863,7 +6863,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const allowed = asset && (
           asset.owner_user_id === signedInUser.id
           || (isOwner && profileStore.users.some((profile) => profile.id === asset.owner_user_id))
-          || (permission && connectionCanShare(profileStore.connections, asset.owner_user_id, signedInIdentity.id, permission))
+          || (permission && connectionCanShare(profileStore.connections, asset.owner_user_id, signedInUserId, permission))
         );
         if (!allowed) throw apiError("Wardrobe image not found.", 404, "wardrobe_image_not_found");
         res.statusCode = 302;
@@ -8059,8 +8059,12 @@ Interpret this correction semantically in whatever language it is written. It ov
         const requestedAsset = libraryAssetMatch[1];
         const ownedAssets = await libraryAssetIndex();
         const sharedOwnerId = [...ownedAssets.entries()].find(([ownerId, assets]) => (
-          assets.has(requestedAsset)
-          && connectionCanShare(profileStore.connections, ownerId, signedInIdentity.id, "garments")
+          ownerId !== user.id
+          && assets.has(requestedAsset)
+          && (
+            (isOwner && profileStore.users.some((profile) => profile.id === ownerId))
+            || connectionCanShare(profileStore.connections, ownerId, signedInUserId, "garments")
+          )
         ))?.[0];
         const allowed = ownedAssets.get(user.id)?.has(requestedAsset)
           || Boolean(sharedOwnerId)
