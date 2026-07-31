@@ -97,7 +97,7 @@ export function ModeledLookDialog({
   colorVersions = [],
   backgroundReferences = [],
   people = [],
-  eyebrow = "Create a style look",
+  eyebrow = "Create this look",
   busy,
   onClose,
   onGenerate,
@@ -321,7 +321,7 @@ export function ModeledLookDialog({
           <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>{tr("Cancel")}</button>
           <button className="primary-button" type="button" onClick={submit} disabled={busy}>
             {busy ? <SpinnerGap className="modeled-context__spinner" size={16} aria-hidden="true" /> : <Sparkle size={16} weight="fill" aria-hidden="true" />}
-            {tr(busy ? "Creating style look…" : "Create look")}
+            {tr(busy ? "Creating look…" : "Create this look")}
           </button>
         </footer>
       </section>

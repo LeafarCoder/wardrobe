@@ -6943,13 +6943,6 @@ button { font: inherit; }
 }
 .planner-garment-link:hover,
 .planner-garment-link:focus-within { border-color: var(--ink); outline: none; }
-.planner-pack-list__swatch {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
-  border: 1px solid rgba(25, 25, 25, .18);
-  border-radius: 50%;
-}
 .planner-garment-link__media {
   position: relative;
   align-self: stretch;
@@ -7054,7 +7047,15 @@ button { font: inherit; }
 .planner-garment-link:hover .planner-garment-tooltip,
 .planner-garment-link:focus-visible .planner-garment-tooltip { display: block; }
 .planner-garment-link.is-compact { display: inline-flex; width: auto; }
-.planner-garment-link.is-compact .planner-garment-link__details { padding: 5px 7px; }
+.planner-garment-link.is-compact .planner-garment-link__details { align-items: center; gap: 7px; padding: 3px 7px 3px 3px; }
+.planner-garment-link__thumbnail {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  padding: 2px;
+  background: #f1ece3;
+}
+.planner-garment-link__thumbnail img { width: 100%; height: 100%; display: block; object-fit: contain; }
 .planner-outfits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .planner-outfits article {
   min-width: 0;

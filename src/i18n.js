@@ -1335,6 +1335,8 @@ const pt = {
   "Create another style look": "Criar outro visual",
   "Create a style look": "Criar um visual",
   "Creating style look…": "A criar visual…",
+  "Create this look": "Criar este visual",
+  "Creating look…": "A criar visual…",
   "Direct the new photo": "Dirija a nova fotografia",
   "Choose only what matters. Leave everything blank for a freely composed image.": "Escolha apenas o que importa. Deixe tudo em branco para uma imagem de composição livre.",
   "Close style look options": "Fechar opções do visual",

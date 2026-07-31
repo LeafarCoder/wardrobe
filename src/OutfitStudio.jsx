@@ -626,7 +626,7 @@ export function OutfitStudio({
             </details>
 
             <section className="outfit-presentation">
-              <div className="outfit-section-heading"><div><span>{tr("Modeled look")}</span><h3>{tr("See the outfit worn")}</h3></div><button type="button" className="outfit-generate-button" onClick={beginModeled} disabled={Boolean(busy) || !draft.garments.length}>{busy === "generate" ? <SpinnerGap className="spin" /> : <Sparkle />}{tr("Generate modeled look")}</button></div>
+              <div className="outfit-section-heading"><div><span>{tr("Modeled look")}</span><h3>{tr("See the outfit worn")}</h3></div><button type="button" className="outfit-generate-button" onClick={beginModeled} disabled={Boolean(busy) || !draft.garments.length}>{busy === "generate" ? <SpinnerGap className="spin" /> : <Sparkle />}{tr(busy === "generate" ? "Creating look…" : "Create this look")}</button></div>
               <p className="outfit-presentation-note">{tr("Image direction stays hidden until you choose to generate.")}</p>
               {visibleLook && (
                 <div className="outfit-modeled-gallery">

@@ -2819,11 +2819,11 @@ function ItemViewer({
       type="button"
       disabled={generatingModeled || deletingModeled}
       onClick={requestGenerateModeledLook}
-      aria-label={tr(hasModeledImage ? "Create another style look" : "Create a style look")}
-      title={tr(hasModeledImage ? "Create another style look" : "Create a style look")}
+      aria-label={tr("Create this look")}
+      title={tr("Create this look")}
     >
       {generatingModeled ? <SpinnerGap className="modeled-generate-action__spinner" size={17} /> : <Sparkle size={17} weight="fill" />}
-      <span>{tr(generatingModeled ? "Creating style look…" : hasModeledImage ? "Create another style look" : "Create a style look")}</span>
+      <span>{tr(generatingModeled ? "Creating look…" : "Create this look")}</span>
     </button>
   ) : null;
 
@@ -6066,7 +6066,11 @@ function PlannerGarmentButton({
         </div>
       )}
       <button className="planner-garment-link__details" type="button" onClick={onClick}>
-        {!compact && <span className="planner-pack-list__swatch" style={{ backgroundColor: activeVersion.primaryColor || item.color }} aria-hidden="true" />}
+        {compact && !!preview && (
+          <span className="planner-garment-link__thumbnail" aria-hidden="true">
+            <OptimizedImage src={preview} alt="" sizes="32px" />
+          </span>
+        )}
         <span className="planner-garment-link__copy">
           <strong>{item.name}</strong>
           {!!reason && <small>{reason}</small>}
@@ -6503,7 +6507,7 @@ function WardrobePlanner({
                             {generating
                               ? <SpinnerGap className="modeled-request__spinner" size={15} aria-hidden="true" />
                               : <Sparkle size={15} weight="fill" aria-hidden="true" />}
-                            {tr(generating ? "Creating outfit…" : activeLook ? "Create another image" : "Create modeled look")}
+                            {tr(generating ? "Creating look…" : "Create this look")}
                           </button>
                           {!!outfitErrors[generationKey] && <p className="planner-outfit-error">{outfitErrors[generationKey]}</p>}
                         </article>
