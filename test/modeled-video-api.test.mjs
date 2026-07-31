@@ -90,8 +90,11 @@ test("submits, polls, downloads, and persists a modeled-look video", async () =>
     const modeledImage = await sharp({
       create: { width: 90, height: 160, channels: 3, background: "#c6b7aa" },
     }).png().toBuffer();
+    const garmentImage = await sharp({
+      create: { width: 90, height: 160, channels: 3, background: "#233f58" },
+    }).png().toBuffer();
     await writeFile(path.join(importedDir, "modeled.png"), modeledImage);
-    await writeFile(path.join(importedDir, "garment.png"), modeledImage);
+    await writeFile(path.join(importedDir, "garment.png"), garmentImage);
     await writeFile(path.join(dataDir, "library.json"), JSON.stringify([{
       id: ITEM_ID,
       userId: "default",
@@ -129,8 +132,12 @@ test("submits, polls, downloads, and persists a modeled-look video", async () =>
     assert.equal(submittedPayload.generate_audio, true);
     assert.equal(submittedPayload.frame_images[0].frame_type, "last_frame");
     assert.match(submittedPayload.frame_images[0].image_url.url, /^data:image\/png;base64,/);
+    assert.equal(submittedPayload.input_references.length, 1);
+    assert.match(submittedPayload.input_references[0].image_url.url, /^data:image\/png;base64,/);
+    assert.notEqual(submittedPayload.input_references[0].image_url.url, submittedPayload.frame_images[0].image_url.url);
     assert.match(submittedPayload.prompt, /red umbrella/i);
     assert.match(submittedPayload.prompt, /city traffic/i);
+    assert.match(submittedPayload.prompt, /exact clean garment/i);
 
     const pollResponse = mockResponse();
     await api.handler(mockRequest(

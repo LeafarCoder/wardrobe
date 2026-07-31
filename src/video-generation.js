@@ -187,7 +187,7 @@ export function normalizeModeledVideoSettings(value = {}, preferredModel = RECOM
   };
 }
 
-export function modeledVideoPrompt(settings = {}) {
+export function modeledVideoPrompt(settings = {}, { garmentReference = false } = {}) {
   const normalized = normalizeModeledVideoSettings(settings, settings.model);
   const movement = VIDEO_MOVEMENT_OPTIONS.find((option) => option.id === normalized.movement);
   const objectDirection = movement?.objectDescription && normalized.objectDescription
@@ -203,12 +203,27 @@ export function modeledVideoPrompt(settings = {}) {
     : "The supplied modeled look is the exact opening frame; animate forward smoothly from it.";
   return [
     frameDirection,
+    garmentReference
+      ? "The separate reference image shows the exact clean garment, including details that may be hidden in the modeled frame. Use it only to preserve the garment's construction, front, back, fabric, colors, and trim as the person moves; do not turn the product cutout into a scene or an additional frame."
+      : null,
     movement?.prompt,
     objectDirection,
     customDirection,
     audioDirection,
     "Preserve the subject's identity, face, body proportions, outfit, garment details, colors, setting, and lighting exactly. Use one continuous realistic shot with natural fabric movement, stable anatomy, and no cuts, text, logos, or added people.",
   ].filter(Boolean).join(" ");
+}
+
+export function latestCompletedModeledVideo(look = {}) {
+  return (Array.isArray(look?.videoClips) ? look.videoClips : [])
+    .filter((clip) => clip?.status === "completed" && typeof clip.video === "string" && clip.video)
+    .at(-1) || null;
+}
+
+export function reverseModeledVideoTime(currentTime, elapsedSeconds) {
+  const current = Number.isFinite(Number(currentTime)) ? Math.max(0, Number(currentTime)) : 0;
+  const elapsed = Number.isFinite(Number(elapsedSeconds)) ? Math.max(0, Math.min(Number(elapsedSeconds), 0.08)) : 0;
+  return Math.max(0, current - elapsed);
 }
 
 export function normalizeModeledVideoClip(value = {}) {

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   estimateVideoCost,
+  latestCompletedModeledVideo,
   modeledVideoPrompt,
   normalizeModeledVideoSettings,
   RECOMMENDED_VIDEO_MODEL,
+  reverseModeledVideoTime,
   videoModel,
 } from "../src/video-generation.js";
 
@@ -14,6 +16,24 @@ test("recommends the least expensive flexible video model", () => {
   assert.deepEqual(model.durations, [4, 6, 8, 10]);
   assert.deepEqual(model.resolutions, ["480p", "720p", "1080p"]);
   assert.deepEqual(model.frames, ["first_frame", "last_frame"]);
+});
+
+test("selects the newest completed clip for silent hover playback", () => {
+  assert.equal(latestCompletedModeledVideo({
+    videoClips: [
+      { id: "one", status: "completed", video: "/one.mp4" },
+      { id: "two", status: "failed", video: null },
+      { id: "three", status: "completed", video: "/three.mp4" },
+      { id: "four", status: "pending", video: null },
+    ],
+  })?.id, "three");
+  assert.equal(latestCompletedModeledVideo({ videoClips: [{ status: "pending" }] }), null);
+});
+
+test("steps completed hover clips backward without crossing the first frame", () => {
+  assert.equal(reverseModeledVideoTime(2, 1 / 24), 2 - (1 / 24));
+  assert.equal(reverseModeledVideoTime(0.02, 1 / 24), 0);
+  assert.equal(reverseModeledVideoTime(2, 1), 1.92);
 });
 
 test("estimates duration, resolution, and audio-sensitive video cost", () => {
@@ -72,4 +92,10 @@ test("couples movement and sound directions in the generation prompt", () => {
   assert.match(prompt, /synchronized audio/i);
   assert.match(prompt, /chatting/i);
   assert.match(prompt, /quiet and distant/i);
+});
+
+test("describes the garment as a separate fidelity reference instead of another frame", () => {
+  const prompt = modeledVideoPrompt({ model: RECOMMENDED_VIDEO_MODEL }, { garmentReference: true });
+  assert.match(prompt, /separate reference image shows the exact clean garment/i);
+  assert.match(prompt, /do not turn the product cutout into a scene or an additional frame/i);
 });

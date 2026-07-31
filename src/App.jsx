@@ -19,8 +19,10 @@ import { formatDate, getLocale, LANGUAGE_OPTIONS, setLocale, tr, useLocale } fro
 import { LightSelect, LightTypeahead } from "./LightSelect.jsx";
 import { formatMonthYear, MonthYearPicker } from "./MonthYearPicker.jsx";
 import { ModeledLookDialog } from "./ModeledLookDialog.jsx";
+import { ModeledLookHoverVideo } from "./ModeledLookHoverVideo.jsx";
 import { ModeledVideoDialog } from "./ModeledVideoDialog.jsx";
 import { modeledLookContextDetails } from "./modeled-look-context.js";
+import { latestCompletedModeledVideo } from "./video-generation.js";
 import { imageFallbackToast, withoutFallbackNotice } from "./image-fallback-notice.js";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { OriginalPhotoGallery } from "./OriginalPhotoGallery.jsx";
@@ -1673,6 +1675,7 @@ function ItemViewer({
   const [mediaPreviewOpen, setMediaPreviewOpen] = useState(null);
   const [modeledSettingsOpen, setModeledSettingsOpen] = useState(false);
   const [modeledVideoOpen, setModeledVideoOpen] = useState(false);
+  const [modeledVideoHoverSurface, setModeledVideoHoverSurface] = useState(null);
   const [garmentRegenerationOpen, setGarmentRegenerationOpen] = useState(false);
   const [garmentRegenerationBusy, setGarmentRegenerationBusy] = useState(false);
   const [garmentRegenerationError, setGarmentRegenerationError] = useState("");
@@ -1720,6 +1723,7 @@ function ItemViewer({
   const activeMediaIndex = Math.max(0, garmentMedia.findIndex((media) => media.id === activeMediaId));
   const activeMedia = garmentMedia[activeMediaIndex] || garmentMedia[0] || null;
   const activeModeledLook = activeMedia?.kind === GARMENT_MEDIA_GENERATED ? activeMedia.data : null;
+  const activeModeledVideo = useMemo(() => latestCompletedModeledVideo(activeModeledLook), [activeModeledLook]);
   const isActiveMediaGenerated = activeMedia?.kind === GARMENT_MEDIA_GENERATED;
   const modeledSettingsRecorded = Boolean(activeModeledLook && Object.hasOwn(activeModeledLook, "context"));
   const activeModeledSettings = useMemo(
@@ -2939,7 +2943,11 @@ function ItemViewer({
       {hasHeroImage ? (
         <>
           {garmentIdentityHeader}
-          <div className="modeled-hero">
+          <div
+            className="modeled-hero"
+            onMouseEnter={() => activeModeledVideo && setModeledVideoHoverSurface("panel")}
+            onMouseLeave={() => setModeledVideoHoverSurface((surface) => surface === "panel" ? null : surface)}
+          >
             <OptimizedImage
               key={activeMedia.id}
               ref={(node) => {
@@ -2967,6 +2975,13 @@ function ItemViewer({
               priority
               reveal
             />
+            {isActiveMediaGenerated && activeModeledVideo && (
+              <ModeledLookHoverVideo
+                src={activeModeledVideo.video}
+                active={modeledVideoHoverSurface === "panel"}
+                className="modeled-hover-video--panel"
+              />
+            )}
             {isActiveMediaGenerated && (
               <span className="garment-media-ai-badge" role="img" tabIndex={0} aria-label={tr("AI generated")} data-tooltip={tr("AI generated")}>
                 <Sparkle size={9} weight="fill" aria-hidden="true" />
@@ -3378,7 +3393,13 @@ function ItemViewer({
             </div>
           ) : (
           <div className={`media-preview-dialog__body${mediaPreviewOpen === "media" && garmentMedia.length > 1 ? " has-carousel" : ""}${mediaPreviewOpen === "garment" && colorVersions.length > 1 ? " has-version-gallery" : ""}${mediaPreviewOpen === "garment" && item.id.startsWith("import-") && sourcePhotos.length > 0 ? " has-actions" : ""}`}>
-            <ProductStage className="media-preview-dialog__viewport" interactive animated>
+            <ProductStage
+              className="media-preview-dialog__viewport"
+              interactive
+              animated
+              onMouseEnter={() => activeModeledVideo && setModeledVideoHoverSurface("dialog")}
+              onMouseLeave={() => setModeledVideoHoverSurface((surface) => surface === "dialog" ? null : surface)}
+            >
               {mediaPreviewOpen === "media" ? (
                 <OptimizedImage
                   key={activeMedia.id}
@@ -3406,6 +3427,13 @@ function ItemViewer({
                     materials: draft.materials || item.materials,
                     channel: "primary",
                   }}
+                />
+              )}
+              {mediaPreviewOpen === "media" && isActiveMediaGenerated && activeModeledVideo && (
+                <ModeledLookHoverVideo
+                  src={activeModeledVideo.video}
+                  active={modeledVideoHoverSurface === "dialog"}
+                  className="modeled-hover-video--dialog"
                 />
               )}
               {mediaPreviewOpen === "media" && isActiveMediaGenerated && (

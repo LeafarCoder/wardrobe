@@ -6657,7 +6657,13 @@ Interpret this correction semantically in whatever language it is written. It ov
 
     const imageName = path.basename(new URL(look.image, "http://localhost").pathname);
     const imageBytes = await readFile(path.join(libraryAssetDir, imageName));
-    const prompt = modeledVideoPrompt(settings);
+    const garmentVariant = look.variantId
+      ? garmentColorVariants(record).find((candidate) => candidate.id === look.variantId)
+      : null;
+    const garmentAsset = garmentVariant?.image || record.image;
+    const garmentName = path.basename(new URL(garmentAsset, "http://localhost").pathname);
+    const garmentBytes = await readFile(path.join(libraryAssetDir, garmentName));
+    const prompt = modeledVideoPrompt(settings, { garmentReference: true });
     const requestPayload = {
       model: settings.model,
       prompt,
@@ -6669,6 +6675,10 @@ Interpret this correction semantically in whatever language it is written. It ov
         type: "image_url",
         image_url: { url: `data:image/png;base64,${imageBytes.toString("base64")}` },
         frame_type: settings.frameType,
+      }],
+      input_references: [{
+        type: "image_url",
+        image_url: { url: `data:${imageMime(garmentName)};base64,${garmentBytes.toString("base64")}` },
       }],
     };
     const startedAt = Date.now();
