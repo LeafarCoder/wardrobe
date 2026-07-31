@@ -12,6 +12,7 @@ import {
   modeledModelForReferenceCount,
   openRouterHeaders,
   openRouterImageRequest,
+  openRouterImageResolution,
   openRouterOutfitRequest,
   openRouterOutfitNameRequest,
   openRouterPlannerRequest,
@@ -20,6 +21,7 @@ import {
   parseOutfitRefinement,
   parseOutfitName,
   providerResponseError,
+  isImageResolutionTooSmall,
   WARDROBE_PLAN_SCHEMA,
   wardrobePlanPrompt,
   outfitRefinementPrompt,
@@ -561,6 +563,30 @@ test("keeps normalized dimensions for models that advertise them", () => {
   assert.equal(request.resolution, "1K");
   assert.equal(request.aspect_ratio, "3:2");
   assert.equal("output_format" in request, false);
+});
+
+test("starts Seedream landscape fallbacks at a route-compatible pixel count", () => {
+  assert.equal(
+    openRouterImageResolution("bytedance-seed/seedream-4.5", "1536x1024", "2K", "2K"),
+    "4K",
+  );
+  assert.equal(
+    openRouterImageResolution("bytedance-seed/seedream-4.5", "1024x1024", "2K", "2K"),
+    "2K",
+  );
+  assert.equal(
+    openRouterImageResolution("google/gemini-3.1-flash-image", "1536x1024", "2K", "2K"),
+    "2K",
+  );
+});
+
+test("recognizes Seedream's output-pixel minimum as a retryable resolution error", () => {
+  assert.equal(isImageResolutionTooSmall({
+    error: {
+      message: 'bytedance-seed/seedream-4.5 requires at least 3,686,400 output pixels; size "2048x1366" is 2,797,568.',
+    },
+  }), true);
+  assert.equal(isImageResolutionTooSmall({ error: { message: "The image was rejected by policy." } }), false);
 });
 
 test("maps an exhausted OpenRouter balance to a human-readable credit error", () => {

@@ -2872,7 +2872,20 @@ export function isImageResolutionTooSmall(result) {
     result?.message,
     result?.detail,
   ].filter(Boolean).join(" ");
-  return /(?:image\s+size|parameter\s+[`'"]?size).*?(?:must\s+be\s+)?at\s+least\s+[\d,]+\s+pixels/i.test(detail);
+  return /(?:(?:image\s+size|parameter\s+[`'"]?size).*?(?:must\s+be\s+)?at\s+least\s+[\d,]+\s+pixels|requires?\s+at\s+least\s+[\d,]+\s+(?:output\s+)?pixels)/i.test(detail);
+}
+
+export function openRouterImageResolution(model, size, configuredResolution, fallback = "1K") {
+  const normalized = normalizeOpenRouterResolution(configuredResolution, fallback);
+  // Seedream 4.5 currently rejects its normalized 2K landscape output
+  // (2048x1366) because it falls below the route's 3,686,400-pixel minimum.
+  // Starting at 4K avoids a known failed request; square 2K output is large
+  // enough and can keep the cheaper configured resolution semantics.
+  if (model === "bytedance-seed/seedream-4.5" && size === "1536x1024") {
+    const index = OPENROUTER_RESOLUTION_TIERS.indexOf(normalized);
+    return index < OPENROUTER_RESOLUTION_TIERS.indexOf("4K") ? "4K" : normalized;
+  }
+  return normalized;
 }
 
 function nextOpenRouterResolution(resolution) {
@@ -2921,7 +2934,12 @@ export async function openRouterEdit({ provider, model, prompt, images, size, ba
   const configuredResolution = trace?.fallbackFrom
     ? provider.imageFallbackResolution
     : provider.imageResolution;
-  let resolution = normalizeOpenRouterResolution(configuredResolution, trace?.fallbackFrom ? "2K" : "1K");
+  let resolution = openRouterImageResolution(
+    model,
+    size,
+    configuredResolution,
+    trace?.fallbackFrom ? "4K" : "1K",
+  );
   const supportsNormalizedDimensions = !OPENROUTER_MODELS_WITHOUT_NORMALIZED_DIMENSIONS.has(model);
   let attempted = false;
   assertOpenRouterImagePrivacy(provider, model, operation);
@@ -4166,7 +4184,7 @@ export function wardrobeImportApi(options = {}) {
         imageFallbackModels: parseModelList(setting("OPENROUTER_IMAGE_FALLBACK_MODELS", "bytedance-seed/seedream-4.5")),
         imageQuality: setting("OPENROUTER_IMAGE_QUALITY", "auto"),
         imageResolution: setting("OPENROUTER_IMAGE_RESOLUTION", "1K"),
-        imageFallbackResolution: setting("OPENROUTER_IMAGE_FALLBACK_RESOLUTION", "2K"),
+        imageFallbackResolution: setting("OPENROUTER_IMAGE_FALLBACK_RESOLUTION", "4K"),
         imageProvider: setting("OPENROUTER_IMAGE_PROVIDER"),
         garmentProvider: setting("OPENROUTER_GARMENT_PROVIDER"),
         modeledProvider: setting("OPENROUTER_MODELED_PROVIDER"),
