@@ -4705,22 +4705,25 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
   const referencesChanged = files.length > 0
     || retainedReferenceIds.length !== (user?.referenceImages || []).length;
   const [backgroundFiles, setBackgroundFiles] = useState([]);
+  const [backgroundNames, setBackgroundNames] = useState({});
   const [retainedBackgroundIds, setRetainedBackgroundIds] = useState(
     () => (user?.backgroundReferences || []).map((reference) => reference.id),
   );
   const [backgroundError, setBackgroundError] = useState("");
   const [pendingBackgroundRemovalId, setPendingBackgroundRemovalId] = useState(null);
   const backgroundInputRef = useRef(null);
-  const backgroundPreviews = useMemo(() => backgroundFiles.map((file, index) => ({
-    id: `new-background-${file.name}-${file.lastModified}-${file.size}-${index}`,
-    name: file.name.replace(/\.[^.]+$/, ""),
-    url: URL.createObjectURL(file),
-    file,
+  const backgroundPreviews = useMemo(() => backgroundFiles.map((entry) => ({
+    id: entry.id,
+    url: URL.createObjectURL(entry.file),
+    file: entry.file,
     isNew: true,
   })), [backgroundFiles]);
   const visibleBackgrounds = [
     ...(user?.backgroundReferences || []).filter((reference) => retainedBackgroundIds.includes(reference.id)),
-    ...backgroundPreviews,
+    ...backgroundPreviews.map((reference) => ({
+      ...reference,
+      name: backgroundNames[reference.id] || "",
+    })),
   ];
   const remainingBackgroundSlots = Math.max(0, 8 - visibleBackgrounds.length);
   const backgroundsChanged = backgroundFiles.length > 0
@@ -4777,7 +4780,15 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
   const chooseBackgrounds = (event) => {
     const selected = [...event.target.files].filter((file) => file.type.startsWith("image/"));
     const accepted = selected.slice(0, remainingBackgroundSlots);
-    setBackgroundFiles((current) => [...current, ...accepted]);
+    const entries = accepted.map((file) => ({
+      id: `new-background-${globalThis.crypto?.randomUUID?.() || `${file.name}-${file.lastModified}-${Math.random()}`}`,
+      file,
+    }));
+    setBackgroundFiles((current) => [...current, ...entries]);
+    setBackgroundNames((current) => ({
+      ...current,
+      ...Object.fromEntries(entries.map((entry) => [entry.id, ""])),
+    }));
     setBackgroundError(selected.length > accepted.length
       ? tr("Only {count} more background photos fit in this profile.", { count: remainingBackgroundSlots })
       : "");
@@ -4790,7 +4801,12 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
       return;
     }
     if (reference.isNew) {
-      setBackgroundFiles((current) => current.filter((file) => file !== reference.file));
+      setBackgroundFiles((current) => current.filter((entry) => entry.id !== reference.id));
+      setBackgroundNames((current) => {
+        const next = { ...current };
+        delete next[reference.id];
+        return next;
+      });
     } else {
       setRetainedBackgroundIds((current) => current.filter((id) => id !== reference.id));
     }
@@ -4805,6 +4821,11 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
       setFileError(tr("Add at least one reference photo."));
       return;
     }
+    if (backgroundFiles.some((entry) => !backgroundNames[entry.id]?.trim())) {
+      setActiveTab("references");
+      setBackgroundError(tr("Give each background a name before saving."));
+      return;
+    }
     const referenceImages = files.length
       ? await Promise.all(files.map(async (file) => ({ name: file.name, dataUrl: await fileToDataUrl(file) })))
       : undefined;
@@ -4812,9 +4833,9 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
       ? { referenceImageIds: retainedReferenceIds, referenceImages: referenceImages || [] }
       : {};
     const backgroundReferenceImages = backgroundFiles.length
-      ? await Promise.all(backgroundFiles.map(async (file) => ({
-          name: file.name.replace(/\.[^.]+$/, ""),
-          dataUrl: await fileToDataUrl(file),
+      ? await Promise.all(backgroundFiles.map(async (entry) => ({
+          name: backgroundNames[entry.id].trim(),
+          dataUrl: await fileToDataUrl(entry.file),
         })))
       : undefined;
     const backgroundUpdate = backgroundsChanged
@@ -5050,13 +5071,33 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
                       const pendingRemoval = pendingBackgroundRemovalId === reference.id;
                       return (
                         <article key={reference.id}>
-                          <img src={reference.previewUrl || reference.url} alt="" />
-                          <div><strong>{reference.name}</strong><small>{tr(reference.isNew ? "Added when you save" : "Available in every modeled-look composer")}</small></div>
+                          <img src={reference.previewUrl || reference.url} alt={reference.name || tr("New background")} />
+                          <div>
+                            {reference.isNew ? (
+                              <label>
+                                <span>{tr("Background name")}</span>
+                                <input
+                                  type="text"
+                                  value={reference.name}
+                                  maxLength="120"
+                                  placeholder={tr("For example, back garden")}
+                                  aria-label={tr("Background name")}
+                                  onChange={(event) => {
+                                    setBackgroundNames((current) => ({ ...current, [reference.id]: event.target.value }));
+                                    if (event.target.value.trim()) setBackgroundError("");
+                                  }}
+                                />
+                              </label>
+                            ) : <strong>{reference.name}</strong>}
+                            <small>{tr(reference.isNew ? "Added when you save" : "Available in every modeled-look composer")}</small>
+                          </div>
                           <button
                             type="button"
                             className={pendingRemoval ? "is-confirming" : ""}
                             onClick={() => removeBackground(reference)}
-                            aria-label={pendingRemoval ? tr("Confirm removing {name}", { name: reference.name }) : tr("Remove {name}", { name: reference.name })}
+                            aria-label={pendingRemoval
+                              ? tr("Confirm removing {name}", { name: reference.name || tr("New background") })
+                              : tr("Remove {name}", { name: reference.name || tr("New background") })}
                           >
                             {pendingRemoval ? <Check size={13} weight="bold" /> : <Trash size={13} />}
                             {pendingRemoval && <span>{tr("Confirm")}</span>}

@@ -834,6 +834,10 @@ button { font: inherit; }
 .profile-background-grid small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile-background-grid strong { font-size: 10px; font-weight: 560; }
 .profile-background-grid small { margin-top: 3px; color: var(--muted); font-size: 8px; }
+.profile-background-grid label { display: block; }
+.profile-background-grid label > span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
+.profile-background-grid label > input { width: 100%; min-width: 0; height: 31px; border: 1px solid var(--line); padding: 0 8px; background: rgba(255, 255, 255, .45); color: var(--ink); font: inherit; font-size: 10px; }
+.profile-background-grid label > input:focus { border-color: var(--ink); outline: none; }
 .profile-background-grid article > button { position: absolute; top: 7px; right: 7px; min-width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid rgba(25, 24, 22, .35); padding: 0 6px; background: rgba(248, 245, 239, .94); color: var(--ink); font: inherit; font-size: 9px; cursor: pointer; }
 .profile-background-grid article > button.is-confirming { color: #fff; border-color: var(--accent); background: var(--accent); }
 .profile-background-empty { width: 100%; min-height: 190px; display: grid; place-items: center; align-content: center; gap: 6px; margin-top: 18px; border: 1px dashed var(--line); background: rgba(248, 245, 239, .55); color: var(--ink); font: inherit; cursor: pointer; }

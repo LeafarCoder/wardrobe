@@ -1,53 +1,21 @@
 import {
   Aperture,
-  Armchair,
-  ArrowDown,
-  ArrowDownRight,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  ArrowUpRight,
-  Buildings,
-  Bed,
-  BookOpen,
-  Camera,
   Check,
-  Cloud,
-  CloudFog,
-  CloudLightning,
-  CloudRain,
-  CloudSnow,
   CloudSun,
-  Confetti,
-  Coffee,
-  Eye,
-  FilmSlate,
-  ForkKnife,
-  Heart,
   House,
   ImageSquare,
-  Lightbulb,
-  Mountains,
-  Moon,
   PersonSimple,
   PersonSimpleRun,
-  PersonSimpleTaiChi,
-  PersonSimpleWalk,
   Scissors,
-  Smiley,
-  SmileyMeh,
-  SmileySad,
   SmileyWink,
   Sparkle,
   SpinnerGap,
-  Sun,
   Tree,
   UserFocus,
-  Wind,
-  Waves,
   X,
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { tr } from "./i18n.js";
 import {
   EMPTY_MODELED_LOOK_CONTEXT,
@@ -56,93 +24,29 @@ import {
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import "./modeled-look-dialog.css";
 
-const OPTION_ICONS = {
-  editorial: Aperture,
-  candid: Camera,
-  "street-style": Buildings,
-  cinematic: FilmSlate,
-  minimal: ImageSquare,
-  standing: PersonSimple,
-  walking: PersonSimpleWalk,
-  running: PersonSimpleRun,
-  jumping: PersonSimpleTaiChi,
-  sitting: Armchair,
-  lying: Moon,
-  crouching: PersonSimpleTaiChi,
-  "stairs-up": ArrowUp,
-  "stairs-down": ArrowDown,
-  "long-loose": Scissors,
-  "shoulder-length": Scissors,
-  short: Scissors,
-  ponytail: Scissors,
-  bun: Scissors,
-  braid: Scissors,
-  updo: Scissors,
-  front: ArrowUp,
-  "three-quarter": ArrowUpRight,
-  side: ArrowRight,
-  back: ArrowDown,
-  camera: Eye,
-  forward: ArrowUp,
-  right: ArrowRight,
-  left: ArrowLeft,
-  down: ArrowDownRight,
-  up: ArrowUpRight,
-  "over-shoulder": UserFocus,
-  inside: House,
-  outside: Tree,
-  "living-room": Armchair,
-  fireplace: House,
-  bedroom: Bed,
-  kitchen: House,
-  office: Buildings,
-  restaurant: ForkKnife,
-  "movie-theater": FilmSlate,
-  cafe: Coffee,
-  gallery: ImageSquare,
-  "hotel-lobby": Buildings,
-  library: BookOpen,
-  park: Tree,
-  "grass-park": Tree,
-  forest: Tree,
-  city: Buildings,
-  mountain: Mountains,
-  beach: Waves,
-  garden: Tree,
-  lakeside: Waves,
-  countryside: Tree,
-  rooftop: Buildings,
-  "old-town": Buildings,
-  promenade: Waves,
-  sunny: Sun,
-  "partly-cloudy": CloudSun,
-  cloudy: Cloud,
-  "light-rain": CloudRain,
-  "heavy-rain": CloudRain,
-  thunderstorm: CloudLightning,
-  snowing: CloudSnow,
-  foggy: CloudFog,
-  windy: Wind,
-  neutral: SmileyMeh,
-  smiling: Smiley,
-  smirking: SmileyWink,
-  flirty: Heart,
-  sad: SmileySad,
-  rejoicing: Confetti,
-  yawning: Moon,
-  surprised: Sparkle,
-  thoughtful: Lightbulb,
-  serious: UserFocus,
+const GROUP_ICONS = {
+  Pose: PersonSimpleRun,
+  Hairstyle: Scissors,
+  Expression: SmileyWink,
+  "Body orientation": PersonSimple,
+  "Head orientation": UserFocus,
+  Environment: House,
+  "Interior setting": House,
+  "Open-air setting": Tree,
+  Weather: CloudSun,
+  Style: Aperture,
 };
 
-function ChoiceGroup({ label, options, value, onChange, visual = false }) {
+function ChoiceGroup({ label, options, value, onChange, visual = false, wide = false }) {
+  const GroupIcon = GROUP_ICONS[label];
   return (
-    <fieldset className="modeled-context__group">
-      <legend>{tr(label)}</legend>
+    <fieldset className={`modeled-context__group${wide ? " is-wide" : ""}`}>
+      <legend>
+        {GroupIcon && <GroupIcon size={14} weight="light" aria-hidden="true" />}
+        <span>{tr(label)}</span>
+      </legend>
       <div className={`modeled-context__choices${visual ? " is-visual" : ""}`}>
-        {options.map((option) => {
-          const Icon = OPTION_ICONS[option.id];
-          return (
+        {options.map((option) => (
           <button
             key={option.id}
             type="button"
@@ -151,11 +55,9 @@ function ChoiceGroup({ label, options, value, onChange, visual = false }) {
             onClick={() => onChange(value === option.id ? "" : option.id)}
           >
             {value === option.id && <Check className="modeled-context__selected-check" size={12} weight="bold" aria-hidden="true" />}
-            {Icon && <Icon className="modeled-context__choice-icon" size={visual ? 22 : 14} weight="light" aria-hidden="true" />}
             <span>{tr(option.label)}{visual && option.description && <small>{tr(option.description)}</small>}</span>
           </button>
-          );
-        })}
+        ))}
       </div>
     </fieldset>
   );
@@ -223,7 +125,7 @@ export function ModeledLookDialog({
     }
   };
 
-  return (
+  return createPortal((
     <div
       className="modeled-context-overlay"
       role="presentation"
@@ -270,16 +172,12 @@ export function ModeledLookDialog({
             <summary><span>{tr("Model")}</span><small>{tr("Pose, orientation, hair, and expression")}</small></summary>
             <div className="modeled-context__section-body">
             {!people.length ? (
-              <div className="modeled-context__columns">
-                <div>
-                  <ChoiceGroup label="Pose" options={MODELED_LOOK_CONTEXT_OPTIONS.pose} value={context.pose} onChange={(value) => update("pose", value)} />
-                  <ChoiceGroup label="Hairstyle" options={MODELED_LOOK_CONTEXT_OPTIONS.hairstyle} value={context.hairstyle} onChange={(value) => update("hairstyle", value)} />
-                  <ChoiceGroup label="Expression" options={MODELED_LOOK_CONTEXT_OPTIONS.expression} value={context.expression} onChange={(value) => update("expression", value)} />
-                </div>
-                <div>
-                  <ChoiceGroup label="Body orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.bodyOrientation} value={context.bodyOrientation} onChange={(value) => update("bodyOrientation", value)} />
-                  <ChoiceGroup label="Head orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.headOrientation} value={context.headOrientation} onChange={(value) => update("headOrientation", value)} />
-                </div>
+              <div className="modeled-context__model-grid">
+                <ChoiceGroup wide label="Pose" options={MODELED_LOOK_CONTEXT_OPTIONS.pose} value={context.pose} onChange={(value) => update("pose", value)} />
+                <ChoiceGroup label="Body orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.bodyOrientation} value={context.bodyOrientation} onChange={(value) => update("bodyOrientation", value)} />
+                <ChoiceGroup label="Head orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.headOrientation} value={context.headOrientation} onChange={(value) => update("headOrientation", value)} />
+                <ChoiceGroup wide label="Hairstyle" options={MODELED_LOOK_CONTEXT_OPTIONS.hairstyle} value={context.hairstyle} onChange={(value) => update("hairstyle", value)} />
+                <ChoiceGroup wide label="Expression" options={MODELED_LOOK_CONTEXT_OPTIONS.expression} value={context.expression} onChange={(value) => update("expression", value)} />
               </div>
             ) : (
               <section className="modeled-context__people">
@@ -300,12 +198,12 @@ export function ModeledLookDialog({
                         </span>
                         <div><strong>{person.name}</strong>{person.detail && <small>{person.detail}</small>}</div>
                       </header>
-                      <div className="modeled-context__person-grid">
-                        <ChoiceGroup label="Pose" options={MODELED_LOOK_CONTEXT_OPTIONS.pose} value={direction.pose} onChange={(value) => updatePerson(person.id, "pose", value)} />
-                        <ChoiceGroup label="Hairstyle" options={MODELED_LOOK_CONTEXT_OPTIONS.hairstyle} value={direction.hairstyle} onChange={(value) => updatePerson(person.id, "hairstyle", value)} />
+                      <div className="modeled-context__model-grid modeled-context__person-grid">
+                        <ChoiceGroup wide label="Pose" options={MODELED_LOOK_CONTEXT_OPTIONS.pose} value={direction.pose} onChange={(value) => updatePerson(person.id, "pose", value)} />
                         <ChoiceGroup label="Body orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.bodyOrientation} value={direction.bodyOrientation} onChange={(value) => updatePerson(person.id, "bodyOrientation", value)} />
                         <ChoiceGroup label="Head orientation" options={MODELED_LOOK_CONTEXT_OPTIONS.headOrientation} value={direction.headOrientation} onChange={(value) => updatePerson(person.id, "headOrientation", value)} />
-                        <ChoiceGroup label="Expression" options={MODELED_LOOK_CONTEXT_OPTIONS.expression} value={direction.expression} onChange={(value) => updatePerson(person.id, "expression", value)} />
+                        <ChoiceGroup wide label="Hairstyle" options={MODELED_LOOK_CONTEXT_OPTIONS.hairstyle} value={direction.hairstyle} onChange={(value) => updatePerson(person.id, "hairstyle", value)} />
+                        <ChoiceGroup wide label="Expression" options={MODELED_LOOK_CONTEXT_OPTIONS.expression} value={direction.expression} onChange={(value) => updatePerson(person.id, "expression", value)} />
                       </div>
                       <label className="modeled-context__additional modeled-context__person-direction">
                         <span>{tr("Direction for {name}", { name: person.name })}</span>
@@ -322,7 +220,7 @@ export function ModeledLookDialog({
           <details className="modeled-context__section" open>
             <summary><span>{tr("Scene")}</span><small>{tr("Place, room, weather, and atmosphere")}</small></summary>
             <div className="modeled-context__section-body">
-            <div className="modeled-context__columns">
+            <div className="modeled-context__scene-grid">
               <div>
               <ChoiceGroup label="Environment" options={MODELED_LOOK_CONTEXT_OPTIONS.environmentType} value={context.environmentType} onChange={(value) => update("environmentType", value)} />
               {settingOptions.length > 0 && (
@@ -333,7 +231,9 @@ export function ModeledLookDialog({
                   onChange={(value) => update("setting", value)}
                 />
               )}
-              <ChoiceGroup label="Weather" options={MODELED_LOOK_CONTEXT_OPTIONS.weather} value={context.weather} onChange={(value) => update("weather", value)} />
+              </div>
+              <div>
+                <ChoiceGroup label="Weather" options={MODELED_LOOK_CONTEXT_OPTIONS.weather} value={context.weather} onChange={(value) => update("weather", value)} />
               </div>
             </div>
 
@@ -350,9 +250,11 @@ export function ModeledLookDialog({
                       type="button"
                       className={selected ? "is-selected" : ""}
                       aria-pressed={selected}
+                      aria-label={reference.name || tr("Saved background")}
+                      title={reference.name || tr("Saved background")}
                       onClick={() => update("backgroundReferenceId", selected ? "" : reference.id)}
                     >
-                      <OptimizedImage src={reference.previewUrl || reference.url} alt="" sizes="160px" />
+                      <OptimizedImage src={reference.previewUrl || reference.url} alt="" sizes="128px" />
                       <span>{reference.name}</span>
                       {selected && <Check size={13} weight="bold" aria-hidden="true" />}
                     </button>
@@ -391,5 +293,5 @@ export function ModeledLookDialog({
         </footer>
       </section>
     </div>
-  );
+  ), document.body);
 }
