@@ -224,19 +224,24 @@ The Adidas, Nike, Zara, H&M, and Uniqlo vector paths are bundled from the CC0-li
 
 ## Download and restore your data
 
-Open the wardrobe switcher and choose **Download all data**. Wardrobe creates an authenticated `.tar.gz` backup containing:
+Open the wardrobe switcher and choose **Download all data**. Wardrobe finishes and integrity-checks the backup before the download starts. It uses a Finder/File Explorer-friendly `.zip` on macOS and Windows, and `.tar.gz` on Linux. Both formats contain:
 
 - every user profile and its 1–3 reference photos
 - all clothing metadata, cutouts, original uploads, and modeled images
 - unfinished import jobs, including their review state
 - the local per-person AI usage and cost ledger
 
-The archive does **not** contain `.env`, the shared access password, or OpenRouter/OpenAI keys. Item edits are stored in the portable server database; before downloading, Wardrobe automatically migrates older browser-only edits and deletions for every configured user.
+The archive does **not** contain `.env`, Google OAuth/session secrets, or OpenRouter/OpenAI keys. Item edits are stored in the portable server database; before downloading, Wardrobe automatically migrates older browser-only edits and deletions for every configured user.
 
 To restore the backup into a local checkout:
 
 ```bash
+# macOS or Windows (also opens directly in Finder or File Explorer)
+unzip wardrobe-personal-data-YYYY-MM-DD.zip
+
+# Linux
 tar -xzf wardrobe-personal-data-YYYY-MM-DD.tar.gz
+
 mv data data-before-restore
 cp -R wardrobe-data/data ./data
 cp .env.example .env

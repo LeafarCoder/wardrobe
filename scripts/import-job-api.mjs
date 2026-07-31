@@ -1,8 +1,9 @@
 import { createHash, createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import {
   copyFile as fsCopyFile,
   lstat as fsLstat,
+  mkdtemp,
   mkdir,
   readFile as fsReadFile,
   readdir,
@@ -11,6 +12,7 @@ import {
   stat as fsStat,
   writeFile as fsWriteFile,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -728,6 +730,139 @@ function tarHeader(name, size, modifiedAt = Date.now()) {
 function tarPadding(size) {
   const remainder = size % TAR_BLOCK_SIZE;
   return remainder ? Buffer.alloc(TAR_BLOCK_SIZE - remainder) : null;
+}
+
+const ZIP_SIGNATURE = Object.freeze({
+  localFile: 0x04034b50,
+  dataDescriptor: 0x08074b50,
+  centralFile: 0x02014b50,
+  end: 0x06054b50,
+});
+const ZIP_UTF8_DATA_DESCRIPTOR = 0x0808;
+const ZIP_VERSION = 20;
+const ZIP_UINT16_MAX = 0xffff;
+const ZIP_UINT32_MAX = 0xffffffff;
+const CRC32_TABLE = Object.freeze(Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+  return value >>> 0;
+}));
+
+function updateCrc32(crc, chunk) {
+  let value = crc;
+  for (const byte of chunk) value = CRC32_TABLE[(value ^ byte) & 0xff] ^ (value >>> 8);
+  return value >>> 0;
+}
+
+function zipDateTime(value = Date.now()) {
+  const date = new Date(value);
+  const year = Math.max(1980, Math.min(2107, date.getFullYear()));
+  return {
+    date: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+    time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+  };
+}
+
+async function* archiveEntryChunks(entry) {
+  if (entry.buffer) {
+    yield entry.buffer;
+    return;
+  }
+  for await (const chunk of createReadStream(entry.absolute)) yield chunk;
+}
+
+async function* tarArchive(entries) {
+  for await (const entry of entries) {
+    yield tarHeader(entry.archivePath, entry.size, entry.modifiedAt);
+    for await (const chunk of archiveEntryChunks(entry)) yield chunk;
+    const padding = tarPadding(entry.size);
+    if (padding) yield padding;
+  }
+  yield Buffer.alloc(TAR_BLOCK_SIZE * 2);
+}
+
+// ZIP is stored rather than deflated because wardrobe images are already compressed.
+// Data descriptors let files be streamed while their CRC is calculated; the whole
+// archive is still staged before it is exposed to the browser.
+async function* zipArchive(entries) {
+  const centralEntries = [];
+  let offset = 0;
+  for await (const entry of entries) {
+    const name = Buffer.from(entry.archivePath);
+    if (name.length > ZIP_UINT16_MAX || entry.size > ZIP_UINT32_MAX || offset > ZIP_UINT32_MAX) {
+      throw new Error("This backup is too large for ZIP. Download it as a .tar.gz archive instead.");
+    }
+    const timestamp = zipDateTime(entry.modifiedAt);
+    const localHeader = Buffer.alloc(30 + name.length);
+    localHeader.writeUInt32LE(ZIP_SIGNATURE.localFile, 0);
+    localHeader.writeUInt16LE(ZIP_VERSION, 4);
+    localHeader.writeUInt16LE(ZIP_UTF8_DATA_DESCRIPTOR, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(timestamp.time, 10);
+    localHeader.writeUInt16LE(timestamp.date, 12);
+    localHeader.writeUInt16LE(name.length, 26);
+    name.copy(localHeader, 30);
+    const localOffset = offset;
+    yield localHeader;
+    offset += localHeader.length;
+
+    let crc = ZIP_UINT32_MAX;
+    let actualSize = 0;
+    for await (const chunk of archiveEntryChunks(entry)) {
+      crc = updateCrc32(crc, chunk);
+      actualSize += chunk.length;
+      yield chunk;
+      offset += chunk.length;
+    }
+    if (actualSize !== entry.size) throw new Error(`Backup file changed while it was being read: ${entry.archivePath}`);
+    crc = (crc ^ ZIP_UINT32_MAX) >>> 0;
+    const descriptor = Buffer.alloc(16);
+    descriptor.writeUInt32LE(ZIP_SIGNATURE.dataDescriptor, 0);
+    descriptor.writeUInt32LE(crc, 4);
+    descriptor.writeUInt32LE(actualSize, 8);
+    descriptor.writeUInt32LE(actualSize, 12);
+    yield descriptor;
+    offset += descriptor.length;
+    centralEntries.push({ crc, name, offset: localOffset, size: actualSize, timestamp });
+  }
+
+  if (centralEntries.length > ZIP_UINT16_MAX) throw new Error("This backup contains too many files for ZIP.");
+  const centralOffset = offset;
+  for (const entry of centralEntries) {
+    const header = Buffer.alloc(46 + entry.name.length);
+    header.writeUInt32LE(ZIP_SIGNATURE.centralFile, 0);
+    header.writeUInt16LE((3 << 8) | ZIP_VERSION, 4);
+    header.writeUInt16LE(ZIP_VERSION, 6);
+    header.writeUInt16LE(ZIP_UTF8_DATA_DESCRIPTOR, 8);
+    header.writeUInt16LE(0, 10);
+    header.writeUInt16LE(entry.timestamp.time, 12);
+    header.writeUInt16LE(entry.timestamp.date, 14);
+    header.writeUInt32LE(entry.crc, 16);
+    header.writeUInt32LE(entry.size, 20);
+    header.writeUInt32LE(entry.size, 24);
+    header.writeUInt16LE(entry.name.length, 28);
+    header.writeUInt32LE(entry.offset, 42);
+    entry.name.copy(header, 46);
+    yield header;
+    offset += header.length;
+  }
+  const centralSize = offset - centralOffset;
+  if (offset > ZIP_UINT32_MAX || centralSize > ZIP_UINT32_MAX) {
+    throw new Error("This backup is too large for ZIP. Download it as a .tar.gz archive instead.");
+  }
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(ZIP_SIGNATURE.end, 0);
+  end.writeUInt16LE(centralEntries.length, 8);
+  end.writeUInt16LE(centralEntries.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  yield end;
+}
+
+export function personalDataArchiveFormat(userAgent = "", requested = "") {
+  const format = String(requested).trim().toLowerCase();
+  if (["zip", "tar.gz"].includes(format)) return format;
+  return /(?:X11; Linux|Linux (?:x86_64|i686)|Ubuntu|Fedora)/i.test(String(userAgent)) ? "tar.gz" : "zip";
 }
 
 function upstreamProviderErrorMessage(result = {}) {
@@ -7009,12 +7144,9 @@ Interpret this correction semantically in whatever language it is written. It ov
 
   // A backup must contain the signed-in person's wardrobe and nothing else, so it
   // is assembled from filtered records rather than by walking the whole volume.
-  async function* personalDataArchiveForUser(userId) {
+  async function* personalDataFilesForUser(userId) {
     const yieldBuffer = async function* (archivePath, buffer) {
-      yield tarHeader(archivePath, buffer.length);
-      yield buffer;
-      const padding = tarPadding(buffer.length);
-      if (padding) yield padding;
+      yield { archivePath, buffer, size: buffer.length, modifiedAt: Date.now() };
     };
     const yieldFile = async function* (archivePath, absolute) {
       let details;
@@ -7024,10 +7156,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         return;
       }
       if (!details.isFile()) return;
-      yield tarHeader(archivePath, details.size, details.mtimeMs);
-      for await (const chunk of createReadStream(absolute)) yield chunk;
-      const padding = tarPadding(details.size);
-      if (padding) yield padding;
+      yield { archivePath, absolute, size: details.size, modifiedAt: details.mtimeMs };
     };
 
     const [store, records, ledger, history] = await Promise.all([
@@ -7138,8 +7267,25 @@ Interpret this correction semantically in whatever language it is written. It ov
         );
       }
     }
+  }
 
-    yield Buffer.alloc(TAR_BLOCK_SIZE * 2);
+  async function preparePersonalDataArchive(userId, format) {
+    const directory = await mkdtemp(path.join(tmpdir(), "wardrobe-personal-data-"));
+    const file = path.join(directory, `backup.${format}`);
+    try {
+      const files = personalDataFilesForUser(userId);
+      const output = createWriteStream(file, { flags: "wx", mode: 0o600 });
+      if (format === "zip") {
+        await pipeline(Readable.from(zipArchive(files)), output);
+      } else {
+        await pipeline(Readable.from(tarArchive(files)), createGzip({ level: 6 }), output);
+      }
+      const details = await fsStat(file);
+      return { directory, file, size: details.size };
+    } catch (error) {
+      await fsRm(directory, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   async function handler(req, res, next) {
@@ -7300,17 +7446,20 @@ Interpret this correction semantically in whatever language it is written. It ov
       }
       if (url.pathname === EXPORT_ROOT && req.method === "GET") {
         const date = new Date().toISOString().slice(0, 10);
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "application/gzip");
-        res.setHeader("Content-Disposition", `attachment; filename="wardrobe-personal-data-${date}.tar.gz"`);
-        res.setHeader("Cache-Control", "private, no-store");
-        console.info(`[wardrobe] Creating a personal data backup for ${signedInUser.name}.`);
-        await pipeline(
-          Readable.from(personalDataArchiveForUser(signedInUserId)),
-          createGzip({ level: 6 }),
-          res,
-        );
-        return;
+        const format = personalDataArchiveFormat(req.headers["user-agent"], url.searchParams.get("format"));
+        console.info(`[wardrobe] Creating a ${format} personal data backup for ${signedInUser.name}.`);
+        const archive = await preparePersonalDataArchive(signedInUserId, format);
+        try {
+          res.statusCode = 200;
+          res.setHeader("Content-Type", format === "zip" ? "application/zip" : "application/gzip");
+          res.setHeader("Content-Disposition", `attachment; filename="wardrobe-personal-data-${date}.${format}"`);
+          res.setHeader("Content-Length", archive.size);
+          res.setHeader("Cache-Control", "private, no-store");
+          await pipeline(createReadStream(archive.file), res);
+          return;
+        } finally {
+          await fsRm(archive.directory, { recursive: true, force: true });
+        }
       }
       if (url.pathname === USERS_ROOT && req.method === "GET") {
         // An owner sees every wardrobe so they can switch; everyone else sees
