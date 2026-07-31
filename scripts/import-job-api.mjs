@@ -42,6 +42,7 @@ import {
   normalizeVariantThreshold,
   selectedGarmentVariantId,
 } from "../src/garment-variants.js";
+import { recolorGarmentPixels } from "../src/garment-recolor.js";
 import { normalizeCareInstructions } from "../src/garment-care.js";
 import {
   connectionCanShare,
@@ -5667,8 +5668,68 @@ Interpret this correction semantically in whatever language it is written. It ov
         if (decision === "discard") return { record: records[index], removedAssets: [] };
         throw apiError("This garment has no regenerated candidate to use.", 409, "garment_regeneration_candidate_missing");
       }
+      const existingVariants = garmentColorVariants(records[index]);
+      const rebuiltAssets = [];
+      const rebuiltVariants = [];
+      if (decision === "accept" && existingVariants.length) {
+        const candidateName = path.basename(new URL(candidate.image, "http://localhost").pathname);
+        const { data, info } = await sharp(await readFile(path.join(libraryAssetDir, candidateName)))
+          .rotate()
+          .ensureAlpha()
+          .raw()
+          .toBuffer({ resolveWithObject: true });
+        try {
+          for (const variant of existingVariants) {
+            const pixels = new Uint8ClampedArray(data);
+            const context = {
+              name: candidate.metadata.name,
+              part: candidate.metadata.part,
+              tags: candidate.metadata.tags,
+              materials: records[index].materials,
+            };
+            recolorGarmentPixels(
+              pixels,
+              candidate.metadata.color,
+              variant.primaryColor,
+              candidate.metadata.secondaryColor,
+              { ...context, channel: "primary", threshold: variant.primaryThreshold },
+            );
+            recolorGarmentPixels(
+              pixels,
+              candidate.metadata.secondaryColor,
+              variant.secondaryColor,
+              candidate.metadata.color,
+              { ...context, channel: "secondary", threshold: variant.secondaryThreshold },
+            );
+            const regeneratedName = `${itemId}-variant-${variant.id}-regenerated-${randomUUID()}.png`;
+            const regeneratedBytes = await sharp(Buffer.from(pixels.buffer, pixels.byteOffset, pixels.byteLength), {
+              raw: { width: info.width, height: info.height, channels: 4 },
+            }).png().toBuffer();
+            await atomicFile(path.join(libraryAssetDir, regeneratedName), regeneratedBytes);
+            const image = libraryAssetUrl(regeneratedName);
+            rebuiltAssets.push(image);
+            const [preview, thumbnail] = await Promise.all([
+              safeLibraryVariant(image, "preview", `${candidate.metadata.name} regenerated color version`),
+              safeLibraryVariant(image, "thumbnail", `${candidate.metadata.name} regenerated color version thumbnail`),
+            ]);
+            rebuiltAssets.push(preview, thumbnail);
+            rebuiltVariants.push({ ...variant, image, preview: preview || null, thumbnail: thumbnail || null });
+          }
+        } catch (error) {
+          await Promise.all(rebuiltAssets.filter(Boolean).map((asset) => rm(
+            path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+            { force: true },
+          )));
+          throw error;
+        }
+      }
       const removedAssets = decision === "accept"
-        ? [records[index].image, records[index].imagePreview, records[index].thumbnail]
+        ? [
+          records[index].image,
+          records[index].imagePreview,
+          records[index].thumbnail,
+          ...existingVariants.flatMap((variant) => [variant.image, variant.preview, variant.thumbnail]),
+        ]
         : [candidate.image, candidate.preview, candidate.thumbnail];
       if (decision === "accept") {
         records[index] = {
@@ -5683,13 +5744,22 @@ Interpret this correction semantically in whatever language it is written. It ov
           image: candidate.image,
           imagePreview: candidate.preview || candidate.image,
           thumbnail: candidate.thumbnail || candidate.preview || candidate.image,
+          colorVariants: rebuiltVariants,
           garmentRegenerationCandidate: null,
           updatedAt: new Date().toISOString(),
         };
       } else {
         records[index] = { ...records[index], garmentRegenerationCandidate: null };
       }
-      await saveImported(records);
+      try {
+        await saveImported(records);
+      } catch (error) {
+        await Promise.all(rebuiltAssets.filter(Boolean).map((asset) => rm(
+          path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+          { force: true },
+        )));
+        throw error;
+      }
       const retained = new Set(importedRecordAssets(records[index]).map((asset) => asset.split("?")[0]));
       return {
         record: records[index],

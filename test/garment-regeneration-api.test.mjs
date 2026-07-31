@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
+import sharp from "sharp";
 import { createSessionToken, wardrobeImportApi } from "../scripts/import-job-api.mjs";
 
 const SESSION_SECRET = "garment-regeneration-test-session-secret";
@@ -64,11 +65,22 @@ test("accepting or discarding a regenerated candidate preserves the chosen garme
       "accept-candidate.png",
       "accept-candidate-preview.webp",
       "accept-candidate-thumbnail.webp",
+      "accept-old-variant.png",
+      "accept-old-variant-preview.webp",
+      "accept-old-variant-thumbnail.webp",
       "discard-old.png",
       "discard-candidate.png",
       "source.png",
     ];
     await Promise.all(assets.map((name) => writeFile(path.join(importedDir, name), Buffer.from(name))));
+    const candidatePixels = Buffer.alloc(4 * 4 * 4);
+    for (let pixel = 0; pixel < 16; pixel += 1) {
+      const color = pixel % 4 < 2 ? [20, 33, 61] : [192, 132, 87];
+      candidatePixels.set([...color, 255], pixel * 4);
+    }
+    await sharp(candidatePixels, { raw: { width: 4, height: 4, channels: 4 } })
+      .png()
+      .toFile(path.join(importedDir, "accept-candidate.png"));
     await writeFile(path.join(dataDir, "library.json"), JSON.stringify([
       {
         id: acceptId,
@@ -80,6 +92,19 @@ test("accepting or discarding a regenerated candidate preserves the chosen garme
         image: "/api/import/library/accept-old.png",
         imagePreview: "/api/import/library/accept-old-preview.webp",
         thumbnail: "/api/import/library/accept-old-thumbnail.webp",
+        colorVariants: [{
+          id: "burgundy",
+          image: "/api/import/library/accept-old-variant.png",
+          preview: "/api/import/library/accept-old-variant-preview.webp",
+          thumbnail: "/api/import/library/accept-old-variant-thumbnail.webp",
+          primaryColor: "#7a3d49",
+          secondaryColor: "#304b65",
+          primaryThreshold: 120,
+          secondaryThreshold: 80,
+          createdAt: "2026-07-30T10:00:00.000Z",
+        }],
+        colorVariantOrder: ["burgundy", "original"],
+        selectedColorVariantId: "burgundy",
         sourcePhotos: [{ id: "source", image: "/api/import/library/source.png" }],
         garmentRegenerationCandidate: {
           id: "accept-candidate",
@@ -90,6 +115,7 @@ test("accepting or discarding a regenerated candidate preserves the chosen garme
             name: "Navy peak-lapel blazer",
             part: "wholebody_up",
             color: "#14213d",
+            secondaryColor: "#c08457",
             tags: ["peak lapels", "double-breasted"],
           },
           sourcePhotoIds: ["source"],
@@ -116,6 +142,13 @@ test("accepting or discarding a regenerated candidate preserves the chosen garme
     assert.equal(acceptResponse.json().name, "Navy peak-lapel blazer");
     assert.equal(acceptResponse.json().image.split("?")[0], "/api/import/library/accept-candidate.png");
     assert.equal(acceptResponse.json().garmentRegenerationCandidate, null);
+    assert.equal(acceptResponse.json().colorVariants.length, 1);
+    assert.equal(acceptResponse.json().colorVariants[0].id, "burgundy");
+    assert.equal(acceptResponse.json().colorVariants[0].primaryColor, "#7a3d49");
+    assert.equal(acceptResponse.json().colorVariants[0].secondaryColor, "#304b65");
+    assert.notEqual(acceptResponse.json().colorVariants[0].image.split("?")[0], "/api/import/library/accept-old-variant.png");
+    assert.deepEqual(acceptResponse.json().colorVariantOrder, ["burgundy", "original"]);
+    assert.equal(acceptResponse.json().selectedColorVariantId, "burgundy");
 
     const discardResponse = mockResponse();
     await api.handler(mockRequest(`/api/import/wardrobe/${discardId}/regeneration`, "DELETE"), discardResponse, () => {});
@@ -127,8 +160,15 @@ test("accepting or discarding a regenerated candidate preserves the chosen garme
     const stored = JSON.parse(await readFile(path.join(dataDir, "library.json"), "utf8"));
     assert.equal(stored[0].name, "Navy peak-lapel blazer");
     assert.equal(stored[0].image, "/api/import/library/accept-candidate.png");
+    assert.equal(stored[0].colorVariants[0].primaryThreshold, 120);
+    const rebuiltVariantName = path.basename(stored[0].colorVariants[0].image);
+    const rebuiltPixel = await sharp(path.join(importedDir, rebuiltVariantName)).raw().toBuffer();
+    assert.notDeepEqual([...rebuiltPixel.subarray(0, 3)], [20, 33, 61]);
+    assert.notDeepEqual([...rebuiltPixel.subarray(12, 15)], [192, 132, 87]);
     assert.equal(stored[1].name, "Current shirt");
     await assert.rejects(stat(path.join(importedDir, "accept-old.png")), { code: "ENOENT" });
+    await assert.rejects(stat(path.join(importedDir, "accept-old-variant.png")), { code: "ENOENT" });
+    await stat(path.join(importedDir, rebuiltVariantName));
     await assert.rejects(stat(path.join(importedDir, "discard-candidate.png")), { code: "ENOENT" });
     await stat(path.join(importedDir, "accept-candidate.png"));
     await stat(path.join(importedDir, "discard-old.png"));
