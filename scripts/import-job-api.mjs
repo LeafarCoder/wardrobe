@@ -522,7 +522,7 @@ function apiError(message, status, code, cause) {
 const IMAGE_FALLBACK_REASONS = Object.freeze({
   garment_output_too_small: "it returned an image below Wardrobe's minimum resolution",
   garment_type_mismatch: "it generated the wrong garment",
-  garment_background_not_transparent: "it could not isolate the garment from its background",
+  garment_background_not_transparent: "the result did not isolate the garment from its background",
 });
 
 export function imageFallbackReason(error) {
@@ -3238,9 +3238,11 @@ export async function editWithSafetyFallback({
 }) {
   const candidates = [model, ...fallbackModels].filter((candidate, index, values) => candidate && values.indexOf(candidate) === index);
   const fallbackNotices = [];
+  const rejectedCandidates = [];
   for (const [index, candidate] of candidates.entries()) {
+    let bytes = null;
     try {
-      const bytes = await editImage({
+      bytes = await editImage({
         ...request,
         provider,
         model: candidate,
@@ -3253,8 +3255,12 @@ export async function editWithSafetyFallback({
         fallbackUsed: index > 0,
         fallbackNotice: fallbackNotices.at(-1) || null,
         fallbackNotices,
+        rejectedCandidates,
       };
     } catch (error) {
+      if (bytes && error.code === "garment_background_not_transparent") {
+        rejectedCandidates.push({ bytes, model: candidate, code: error.code, fallbackUsed: index > 0 });
+      }
       const fallback = candidates[index + 1];
       const recoverableQualityError = [
         "garment_output_too_small",
@@ -3263,13 +3269,16 @@ export async function editWithSafetyFallback({
       ].includes(error.code);
       if (!fallback || (!isSafetyPolicyError(error) && !recoverableQualityError)) {
         if (index > 0 && isSafetyPolicyError(error)) {
-          throw apiError(
+          const finalError = apiError(
             "The primary and fallback image models both declined this image under their safety policies. Try a different source or reference photo.",
             400,
             "all_image_models_safety_blocked",
             error,
           );
+          if (rejectedCandidates.length) finalError.rejectedCandidates = rejectedCandidates;
+          throw finalError;
         }
+        if (rejectedCandidates.length) error.rejectedCandidates = rejectedCandidates;
         throw error;
       }
       const parts = [
@@ -6697,6 +6706,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       let chromaKeyUsed = null;
       let usedModel = null;
       let fallbackUsed = false;
+      let rejectedGarmentCandidates = [];
       const recordFallbackNotice = async (fallbackNotice) => {
         current.stages[stageName].fallbackNotice = fallbackNotice;
         current.stages[stageName].updatedAt = fallbackNotice.createdAt;
@@ -6825,30 +6835,64 @@ Interpret this correction semantically in whatever language it is written. It ov
               console.warn(`[wardrobe:ai] garment type validation skipped | item=${JSON.stringify(cleanLogValue(current.metadata.name))} | reason=${cleanLogValue(error.message)}`);
             }
           };
-          const generation = await withGenerationSlot(() => editWithSafetyFallback({
-            editImage,
-            provider,
-            model: provider.garmentModel,
-            fallbackModels: provider.imageFallbackModels,
-            validateImage,
-            onFallback: recordFallbackNotice,
-            quality: provider.imageQuality,
-            size: "1024x1024",
-            background: "transparent",
-            images: generationImages,
-            prompt: generationPrompt,
-            operation: "garment",
-            trace: {
-              uploadId: current.uploadId || null,
-              jobId: current.id,
-              sourceFileName: current.sourceFileName || null,
-              itemName: current.metadata.name,
+          const retainOpaqueCandidates = (candidates) => Promise.all(candidates.map(async (candidate, index) => {
+            const rejectedName = `${stageName}-${stage.attempts}-opaque-${index + 1}.png`;
+            await writeFile(path.join(dir, rejectedName), candidate.bytes);
+            return {
+              id: `${stageName}-${stage.attempts}-opaque-${index + 1}`,
+              assetUrl: `${ASSET_ROOT}/${current.id}/${rejectedName}`,
+              model: candidate.model,
+              fallbackUsed: candidate.fallbackUsed,
               attempt: stage.attempts,
-            },
+              generatedAt: new Date().toISOString(),
+              backgroundTransparent: false,
+            };
           }));
+          let generation;
+          try {
+            generation = await withGenerationSlot(() => editWithSafetyFallback({
+              editImage,
+              provider,
+              model: provider.garmentModel,
+              fallbackModels: provider.imageFallbackModels,
+              validateImage,
+              onFallback: recordFallbackNotice,
+              quality: provider.imageQuality,
+              size: "1024x1024",
+              background: "transparent",
+              images: generationImages,
+              prompt: generationPrompt,
+              operation: "garment",
+              trace: {
+                uploadId: current.uploadId || null,
+                jobId: current.id,
+                sourceFileName: current.sourceFileName || null,
+                itemName: current.metadata.name,
+                attempt: stage.attempts,
+              },
+            }));
+          } catch (error) {
+            if (!error.rejectedCandidates?.length) throw error;
+            const retainedCandidates = await retainOpaqueCandidates(error.rejectedCandidates);
+            const fresh = await loadJob(current.id);
+            if (!fresh) return;
+            for (const rejectedCandidate of retainedCandidates) {
+              fresh.stages.garment = appendImportGenerationCandidate(fresh.stages.garment, rejectedCandidate);
+            }
+            fresh.stages.garment.status = "review";
+            fresh.stages.garment.decision = null;
+            fresh.stages.garment.error = null;
+            fresh.stages.garment.failedAssetUrl = null;
+            fresh.stages.garment.chromaKey = chromaKeyUsed;
+            fresh.stages.garment.updatedAt = new Date().toISOString();
+            fresh.cropDiagnostics = diagnostics;
+            await saveJob(fresh);
+            return;
+          }
           bytes = generation.bytes;
           usedModel = generation.model;
           fallbackUsed = generation.fallbackUsed;
+          rejectedGarmentCandidates = await retainOpaqueCandidates(generation.rejectedCandidates || []);
           current.cropDiagnostics = diagnostics;
           const rawName = `${stageName}-${stage.attempts}-source.png`;
           await writeFile(path.join(dir, rawName), bytes);
@@ -6903,6 +6947,9 @@ Interpret this correction semantically in whatever language it is written. It ov
         const generatedAt = new Date().toISOString();
         const generatedAssetUrl = `${ASSET_ROOT}/${fresh.id}/${path.basename(output)}`;
         if (stageName === "garment") {
+          for (const rejectedCandidate of rejectedGarmentCandidates) {
+            fresh.stages[stageName] = appendImportGenerationCandidate(fresh.stages[stageName], rejectedCandidate);
+          }
           fresh.stages[stageName] = appendImportGenerationCandidate(fresh.stages[stageName], {
             id: `garment-${stage.attempts}`,
             assetUrl: generatedAssetUrl,
@@ -8896,6 +8943,19 @@ Interpret this correction semantically in whatever language it is written. It ov
           return json(res, 202, publicJob(job));
         }
         if (!DECISIONS.has(decision) || job.stages[stageName].status !== "review") throw Object.assign(new Error("Stage is not ready for review"), { status: 409 });
+        if (stageName === "garment" && decision === "approve") {
+          const selectedCandidate = selectedImportGenerationCandidate(job.stages.garment);
+          if (selectedCandidate?.backgroundTransparent === false) {
+            const input = await body(req);
+            if (input.allowOpaqueBackground !== true) {
+              throw apiError(
+                "This garment image does not have a transparent background. Confirm that you want to use it anyway.",
+                409,
+                "opaque_garment_confirmation_required",
+              );
+            }
+          }
+        }
         const previousStatus = job.stages[stageName].status;
         const previousDecision = job.stages[stageName].decision;
         const previousJobStatus = job.status;

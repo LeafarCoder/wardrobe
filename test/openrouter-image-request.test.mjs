@@ -525,6 +525,57 @@ test("retries a fallback model when garment quality validation rejects the prima
   assert.deepEqual(notices, result.fallbackNotices);
 });
 
+test("retains an opaque generated image when a fallback succeeds", async () => {
+  const result = await editWithSafetyFallback({
+    editImage: async ({ model }) => Buffer.from(model),
+    provider: { label: "OpenRouter" },
+    model: "opaque-model",
+    fallbackModels: ["transparent-model"],
+    validateImage: async (_bytes, { model }) => {
+      if (model === "opaque-model") {
+        const error = new Error("opaque background");
+        error.code = "garment_background_not_transparent";
+        throw error;
+      }
+    },
+    prompt: "reconstruct a garment",
+    images: [],
+    operation: "garment",
+  });
+
+  assert.equal(result.rejectedCandidates.length, 1);
+  assert.equal(result.rejectedCandidates[0].model, "opaque-model");
+  assert.equal(result.rejectedCandidates[0].bytes.toString(), "opaque-model");
+  assert.equal(result.fallbackNotice.reason, "the result did not isolate the garment from its background");
+});
+
+test("attaches opaque generated images when no fallback passes validation", async () => {
+  await assert.rejects(
+    editWithSafetyFallback({
+      editImage: async ({ model }) => Buffer.from(model),
+      provider: { label: "OpenRouter" },
+      model: "opaque-primary",
+      fallbackModels: ["opaque-fallback"],
+      validateImage: async () => {
+        const error = new Error("opaque background");
+        error.code = "garment_background_not_transparent";
+        throw error;
+      },
+      prompt: "reconstruct a garment",
+      images: [],
+      operation: "garment",
+    }),
+    (error) => {
+      assert.equal(error.rejectedCandidates.length, 2);
+      assert.deepEqual(error.rejectedCandidates.map((candidate) => candidate.model), [
+        "opaque-primary",
+        "opaque-fallback",
+      ]);
+      return true;
+    },
+  );
+});
+
 test("turns an upstream explicit-content refusal into a human-readable safety fallback notice", async () => {
   const result = await editWithSafetyFallback({
     editImage: async ({ model }) => {

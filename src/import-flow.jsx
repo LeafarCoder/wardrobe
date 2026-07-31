@@ -106,8 +106,15 @@ function setupError(status) {
 
 function ImportToast({ toast, onDismiss }) {
   if (!toast) return null;
+  const duration = toast.duration || 9000;
   return (
-    <div className={`import-toast is-${toast.tone || "error"}`} role={toast.tone === "error" ? "alert" : "status"} aria-live={toast.tone === "error" ? "assertive" : "polite"}>
+    <div
+      key={toast.id || `${toast.title}:${toast.message}`}
+      className={`import-toast is-${toast.tone || "error"}`}
+      role={toast.tone === "error" ? "alert" : "status"}
+      aria-live={toast.tone === "error" ? "assertive" : "polite"}
+      style={{ "--toast-duration": `${duration}ms` }}
+    >
       {toast.tone === "complete"
         ? <Check size={20} weight="bold" aria-hidden="true" />
         : <WarningCircle size={20} weight="fill" aria-hidden="true" />}
@@ -116,6 +123,7 @@ function ImportToast({ toast, onDismiss }) {
         <p>{toast.message}</p>
       </div>
       <button className="import-toast__close" type="button" onClick={onDismiss} aria-label={tr("Dismiss notification")}><X size={17} /></button>
+      <span className="import-toast__timer" aria-hidden="true" />
     </div>
   );
 }
@@ -812,8 +820,11 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
   const comparison = isGarment ? garmentReviewImages(job) : null;
   const garmentCandidates = isGarment ? importGenerationCandidates(job.stages.garment) : [];
   const selectedGarmentCandidate = isGarment ? selectedImportGenerationCandidate(job.stages.garment) : null;
+  const selectedHasOpaqueBackground = selectedGarmentCandidate?.backgroundTransparent === false;
+  const [opaqueConfirmationOpen, setOpaqueConfirmationOpen] = useState(false);
   const primaryValid = HEX_COLOR.test(draft.color);
   const secondaryValid = !draft.secondaryColor || HEX_COLOR.test(draft.secondaryColor);
+  useEffect(() => setOpaqueConfirmationOpen(false), [selectedGarmentCandidate?.id]);
   return (
     <div className={`import-editor${isGarment ? " is-garment-review" : ""}`}>
       {isCrop && (
@@ -835,7 +846,12 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
             <ProductStage className="import-editor__comparison-media import-editor__preview-stage" animated staticStage>
               <img className="import-editor__preview" src={comparison.generated} alt={tr("Generated garment for comparison")} />
             </ProductStage>
-            <figcaption><strong>{tr("Generated garment")}</strong><span>{tr("AI reconstruction")}</span></figcaption>
+            <figcaption className={selectedHasOpaqueBackground ? "has-warning" : ""}>
+              <strong>{tr("Generated garment")}</strong>
+              {selectedHasOpaqueBackground
+                ? <span className="import-editor__opaque-warning"><WarningCircle size={13} weight="fill" aria-hidden="true" />{tr("The model did not correctly generate this image without a background.")}</span>
+                : <span>{tr("AI reconstruction")}</span>}
+            </figcaption>
           </figure>
           {garmentCandidates.length > 1 && (
             <div className="import-candidate-history">
@@ -863,7 +879,9 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
                     >
                       <img src={candidate.assetUrl} alt={tr("Generated garment version {number}", { number: index + 1 })} />
                       <span>{tr("Version {number}", { number: index + 1 })}</span>
-                      {isSelected && <Check size={12} weight="bold" aria-hidden="true" />}
+                      {candidate.backgroundTransparent === false
+                        ? <WarningCircle className="import-candidate-history__warning" size={12} weight="fill" aria-label={tr("Background is not transparent")} />
+                        : isSelected && <Check size={12} weight="bold" aria-hidden="true" />}
                     </button>
                   );
                 })}
@@ -924,8 +942,25 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
         <div className="import-actions">
           <button className="import-button" disabled={busy} onClick={() => onAction("reject")}><Trash size={14} /> {tr("Reject")}</button>
           {!isCrop && <button className="import-button" disabled={busy || (isGarment && (!draft.name.trim() || !primaryValid || !secondaryValid))} onClick={() => onAction("regenerate", regenPrompt)}><ArrowCounterClockwise size={14} /> {tr("Regenerate")}</button>}
-          <button className="import-button import-button--primary" disabled={busy || (isGarment && (!draft.name.trim() || !primaryValid || !secondaryValid))} onClick={() => onAction("approve")}><Check size={14} weight="bold" /> {tr(isCrop ? "Use crop" : isGarment ? "Add to wardrobe" : "Approve")}</button>
+          <button
+            className="import-button import-button--primary"
+            disabled={busy || (isGarment && (!draft.name.trim() || !primaryValid || !secondaryValid))}
+            onClick={() => selectedHasOpaqueBackground ? setOpaqueConfirmationOpen(true) : onAction("approve")}
+          ><Check size={14} weight="bold" /> {tr(isCrop ? "Use crop" : isGarment ? "Add to wardrobe" : "Approve")}</button>
         </div>
+        {opaqueConfirmationOpen && (
+          <div className="import-opaque-confirmation" role="alertdialog" aria-labelledby={`opaque-title-${job.id}`} aria-describedby={`opaque-detail-${job.id}`}>
+            <WarningCircle size={20} weight="fill" aria-hidden="true" />
+            <div>
+              <strong id={`opaque-title-${job.id}`}>{tr("No transparent background")}</strong>
+              <p id={`opaque-detail-${job.id}`}>{tr("This garment image has an opaque background. Are you sure you want to use it?")}</p>
+            </div>
+            <div className="import-opaque-confirmation__actions">
+              <button className="import-button" type="button" onClick={() => setOpaqueConfirmationOpen(false)}>{tr("Cancel")}</button>
+              <button className="import-button import-button--primary" type="button" onClick={() => onAction("approve", "", { allowOpaqueBackground: true })}>{tr("Use garment")}</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -999,7 +1034,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
 
   useEffect(() => {
     if (!toast) return undefined;
-    const timer = setTimeout(() => setToast((current) => current?.id === toast.id ? null : current), 9000);
+    const timer = setTimeout(() => setToast((current) => current?.id === toast.id ? null : current), toast.duration || 9000);
     return () => clearTimeout(timer);
   }, [toast]);
 
@@ -1232,14 +1267,17 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
     return () => { window.removeEventListener("dragenter", onDragEnter); window.removeEventListener("dragover", onDragOver); window.removeEventListener("dragleave", onDragLeave); window.removeEventListener("drop", onDrop); };
   }, [sourceChooserVisible, submitFiles]);
 
-  const perform = async (job, stage, action, prompt = "") => {
+  const perform = async (job, stage, action, prompt = "", actionOptions = {}) => {
     setBusyId(job.id);
     try {
       if (stage === "garment" && action === "approve") {
         const draft = drafts[job.id];
         const metadata = { ...draft, secondaryColor: draft.secondaryColor || null, tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean) };
         await api(`${API}/${job.id}/metadata`, { method: "PATCH", body: JSON.stringify({ metadata }) }, userId);
-        const updated = await api(`${API}/${job.id}/stages/garment/approve`, { method: "POST" }, userId);
+        const updated = await api(`${API}/${job.id}/stages/garment/approve`, {
+          method: "POST",
+          body: JSON.stringify({ allowOpaqueBackground: actionOptions.allowOpaqueBackground === true }),
+        }, userId);
         onGarmentApproved?.(updated.importedRecord || {
           id: `import-${job.id}`,
           ...metadata,
@@ -1503,7 +1541,7 @@ export function WardrobeImportFlow({ userId, onGarmentApproved }) {
           ) : sourcePickerOpen || !jobs.length ? <ImportSourcePicker disabled={!setup?.ready} notice={notice} onChooseFiles={() => inputRef.current?.click()} onDropFiles={submitFiles} onReadClipboard={readClipboard} onTakePhoto={() => setCameraOpen(true)} /> : (
             <>
               <div className={`import-progress${activeStatus?.tone !== "processing" ? " is-reviewing" : progress < 100 ? " is-indeterminate" : ""}`}><div className="import-progress__meta"><span>{activeStatus?.text}</span><span>{tr(jobs.length === 1 ? "{count} item" : "{count} items", { count: jobs.length })}</span></div>{activeStatus?.tone === "processing" && <div className="import-progress__track"><div className="import-progress__bar" style={{ "--import-progress": `${progress}%` }} /></div>}</div>
-              {reviewJob && reviewStage ? <ReviewEditor job={reviewJob} stage={reviewStage} draft={drafts[reviewJob.id] || defaultDraft(reviewJob)} setDraft={(draft) => setDrafts((current) => ({ ...current, [reviewJob.id]: draft }))} regenPrompt={regenerationPrompts[`${reviewJob.id}:${reviewStage}`] || ""} setRegenPrompt={(prompt) => setRegenerationPrompts((current) => ({ ...current, [`${reviewJob.id}:${reviewStage}`]: prompt }))} busy={busyId === reviewJob.id} onAction={(action, prompt) => perform(reviewJob, reviewStage, action, prompt)} onCropSave={(boundingBox) => saveCrop(reviewJob, boundingBox)} onSelectCandidate={(candidateId) => selectGarmentCandidate(reviewJob, candidateId)} /> : reviewJob && hasCleanupFailure(reviewJob) ? <CleanupEditor job={reviewJob} tolerance={cleanupTolerances[reviewJob.id] ?? reviewJob.stages.garment.cleanupTolerance ?? 46} setTolerance={(tolerance) => setCleanupTolerances((current) => ({ ...current, [reviewJob.id]: tolerance }))} busy={busyId === reviewJob.id} onPreview={(tolerance) => performCleanup(reviewJob, "preview", tolerance)} onAccept={() => performCleanup(reviewJob, "accept")} /> : null}
+              {reviewJob && reviewStage ? <ReviewEditor job={reviewJob} stage={reviewStage} draft={drafts[reviewJob.id] || defaultDraft(reviewJob)} setDraft={(draft) => setDrafts((current) => ({ ...current, [reviewJob.id]: draft }))} regenPrompt={regenerationPrompts[`${reviewJob.id}:${reviewStage}`] || ""} setRegenPrompt={(prompt) => setRegenerationPrompts((current) => ({ ...current, [`${reviewJob.id}:${reviewStage}`]: prompt }))} busy={busyId === reviewJob.id} onAction={(action, prompt, actionOptions) => perform(reviewJob, reviewStage, action, prompt, actionOptions)} onCropSave={(boundingBox) => saveCrop(reviewJob, boundingBox)} onSelectCandidate={(candidateId) => selectGarmentCandidate(reviewJob, candidateId)} /> : reviewJob && hasCleanupFailure(reviewJob) ? <CleanupEditor job={reviewJob} tolerance={cleanupTolerances[reviewJob.id] ?? reviewJob.stages.garment.cleanupTolerance ?? 46} setTolerance={(tolerance) => setCleanupTolerances((current) => ({ ...current, [reviewJob.id]: tolerance }))} busy={busyId === reviewJob.id} onPreview={(tolerance) => performCleanup(reviewJob, "preview", tolerance)} onAccept={() => performCleanup(reviewJob, "accept")} /> : null}
               <ImportQueueBoard
                 jobs={jobs}
                 drafts={drafts}

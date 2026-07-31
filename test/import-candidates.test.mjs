@@ -47,3 +47,17 @@ test("migrates a pre-history import stage as one selectable legacy candidate", (
     generatedAt: stage.updatedAt,
   }]);
 });
+
+test("preserves the opaque-background warning when selecting a retained result", () => {
+  const stage = appendImportGenerationCandidate({}, {
+    id: "garment-opaque",
+    assetUrl: "/api/import/assets/job/garment-opaque.png",
+    backgroundTransparent: false,
+  });
+
+  assert.equal(selectedImportGenerationCandidate(stage).backgroundTransparent, false);
+  assert.equal(
+    selectedImportGenerationCandidate(selectImportGenerationCandidate(stage, "garment-opaque")).backgroundTransparent,
+    false,
+  );
+});

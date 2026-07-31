@@ -10,6 +10,7 @@ function cleanCandidate(candidate = {}) {
     fallbackUsed: Boolean(candidate.fallbackUsed),
     attempt: Math.max(1, Math.round(Number(candidate.attempt) || 1)),
     generatedAt: typeof candidate.generatedAt === "string" ? candidate.generatedAt : null,
+    ...(candidate.backgroundTransparent === false ? { backgroundTransparent: false } : {}),
   };
 }
 

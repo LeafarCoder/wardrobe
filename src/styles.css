@@ -2483,12 +2483,25 @@ button { font: inherit; }
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start;
   gap: 11px;
+  overflow: hidden;
   border: 1px solid var(--accent);
   padding: 14px;
   background: var(--paper);
   color: var(--accent);
   box-shadow: 0 18px 48px rgba(25, 24, 22, .22);
   animation: viewer-toast-in 180ms cubic-bezier(.22, .8, .22, 1) both;
+}
+
+.viewer-toast__timer {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: currentColor;
+  opacity: .7;
+  transform-origin: left center;
+  animation: viewer-toast-countdown var(--toast-duration, 9000ms) linear forwards;
 }
 
 .viewer-toast > div {
@@ -2532,6 +2545,10 @@ button { font: inherit; }
     opacity: 0;
     transform: translateY(-7px);
   }
+}
+
+@keyframes viewer-toast-countdown {
+  to { transform: scaleX(0); }
 }
 
 .viewer {
@@ -7597,6 +7614,7 @@ button { font: inherit; }
   .openrouter-key-overlay,
   .openrouter-key-dialog { animation: none; }
   .modeled-request__spinner { animation: none; }
+  .viewer-toast__timer { animation: none; transform: scaleX(0); }
   .viewer.shake {
     animation: none;
     box-shadow: inset 3px 0 0 var(--accent), -18px 0 50px rgba(25, 24, 22, .08);

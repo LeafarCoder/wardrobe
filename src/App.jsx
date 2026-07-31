@@ -1038,11 +1038,26 @@ function CareGuideDialog({ name, instructions, onClose }) {
   );
 }
 
+const viewerToastRenderKeys = new WeakMap();
+let viewerToastRenderSequence = 0;
+
+function viewerToastRenderKey(toast) {
+  if (!viewerToastRenderKeys.has(toast)) viewerToastRenderKeys.set(toast, ++viewerToastRenderSequence);
+  return toast.id || viewerToastRenderKeys.get(toast);
+}
+
 function ViewerToast({ toast, onDismiss }) {
   if (!toast) return null;
+  const duration = toast.duration || 9000;
 
   return (
-    <div className="viewer-toast" role="alert" aria-live="assertive">
+    <div
+      key={viewerToastRenderKey(toast)}
+      className="viewer-toast"
+      role="alert"
+      aria-live="assertive"
+      style={{ "--toast-duration": `${duration}ms` }}
+    >
       <WarningCircle size={21} weight="fill" aria-hidden="true" />
       <div>
         <strong>{toast.title}</strong>
@@ -1051,6 +1066,7 @@ function ViewerToast({ toast, onDismiss }) {
       <button type="button" onClick={onDismiss} aria-label={tr("Dismiss notification")}>
         <X size={16} aria-hidden="true" />
       </button>
+      <span className="viewer-toast__timer" aria-hidden="true" />
     </div>
   );
 }
@@ -1872,7 +1888,7 @@ function ItemViewer({
 
   useEffect(() => {
     if (!viewerToast) return undefined;
-    const timeout = setTimeout(() => setViewerToast(null), 9000);
+    const timeout = setTimeout(() => setViewerToast(null), viewerToast.duration || 9000);
     return () => clearTimeout(timeout);
   }, [viewerToast]);
 
@@ -6463,7 +6479,7 @@ export function App() {
 
   useEffect(() => {
     if (!appToast) return undefined;
-    const timeout = setTimeout(() => setAppToast(null), 9000);
+    const timeout = setTimeout(() => setAppToast(null), appToast.duration || 9000);
     return () => clearTimeout(timeout);
   }, [appToast]);
 

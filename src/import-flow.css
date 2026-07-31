@@ -66,6 +66,7 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 12px;
   align-items: start;
+  overflow: hidden;
   padding: 15px 14px;
   color: var(--import-paper);
   background: var(--import-ink);
@@ -117,6 +118,18 @@
   border-radius: 999px;
   box-shadow: 0 8px 28px rgba(25, 23, 18, 0.2);
   transition: box-shadow 220ms ease;
+}
+
+.import-toast__timer {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: currentColor;
+  opacity: .62;
+  transform-origin: left center;
+  animation: toast-countdown var(--toast-duration, 9000ms) linear forwards;
 }
 
 .import-tray:hover,
@@ -895,6 +908,17 @@ button.import-source-option:focus-visible,
 }
 .import-editor__comparison figcaption strong { font-size: 10px; font-weight: 580; }
 .import-editor__comparison figcaption span { color: var(--import-muted); font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
+.import-editor__comparison figcaption.has-warning { min-height: 66px; }
+.import-editor__comparison .import-editor__opaque-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  color: #855322;
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.import-editor__opaque-warning svg { flex: 0 0 auto; }
 .import-editor__comparison-guidance {
   margin: 0;
   padding: 10px 11px;
@@ -975,6 +999,9 @@ button.import-source-option:focus-visible,
   padding: 3px;
   background: var(--import-ink);
   color: var(--import-paper);
+}
+.import-candidate-history button svg.import-candidate-history__warning {
+  background: #9a6d32;
 }
 .import-crop-editor { min-width: 0; display: grid; align-content: start; gap: 10px; }
 .import-crop-canvas {
@@ -1180,6 +1207,22 @@ button.import-source-option:focus-visible,
 .import-color-row input[type="color"] { height: 44px; padding: 5px; cursor: pointer; }
 .import-field-error { color: #8a3f35; font-size: 10px; line-height: 1.35; }
 .import-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.import-opaque-confirmation {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px 10px;
+  margin-top: 12px;
+  border: 1px solid rgba(154, 109, 50, .34);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(154, 109, 50, .08);
+  color: #735226;
+}
+.import-opaque-confirmation > svg { margin-top: 1px; }
+.import-opaque-confirmation strong { display: block; color: var(--import-ink); font-size: 12px; }
+.import-opaque-confirmation p { margin: 3px 0 0; font-size: 10px; line-height: 1.45; }
+.import-opaque-confirmation__actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 7px; }
+.import-opaque-confirmation__actions .import-button { min-height: 34px; padding: 0 13px; }
 .import-button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 16px; border: 1px solid var(--import-line); border-radius: 999px; color: var(--import-ink); background: transparent; font: 500 12px/1 "Instrument Sans", sans-serif; cursor: pointer; }
 .import-button--primary { color: var(--import-paper); background: var(--import-ink); border-color: var(--import-ink); }
 .import-button:disabled { cursor: default; opacity: 0.42; }
@@ -1188,6 +1231,7 @@ button.import-source-option:focus-visible,
 @keyframes import-pulse { 50% { transform: scale(1.65); opacity: 0.22; } }
 @keyframes import-spin { to { transform: rotate(360deg); } }
 @keyframes import-toast-in { from { opacity: 0; transform: translateY(-10px) scale(0.98); } }
+@keyframes toast-countdown { to { transform: scaleX(0); } }
 @keyframes import-duplicate-drawer-in { from { opacity: 0; transform: translateX(28px); } }
 .import-spinner { animation: import-spin 900ms linear infinite; }
 
@@ -1281,6 +1325,7 @@ button.import-source-option:focus-visible,
   .import-tray__button,
   .import-icon-button { transition-duration: 0.01ms !important; }
   .import-toast { animation: none !important; }
+  .import-toast__timer { animation: none !important; transform: scaleX(0); }
   .import-progress.is-indeterminate .import-progress__bar,
   .import-status.is-processing::before,
   .import-spinner { animation: none !important; }

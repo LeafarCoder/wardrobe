@@ -68,7 +68,7 @@ test("the import API selects an earlier generated garment without deleting newer
           assetUrl: `/api/import/assets/${jobId}/garment-2.png`,
           selectedCandidateId: "garment-2",
           candidates: [
-            { id: "garment-1", assetUrl: `/api/import/assets/${jobId}/garment-1.png`, attempt: 1 },
+            { id: "garment-1", assetUrl: `/api/import/assets/${jobId}/garment-1.png`, attempt: 1, backgroundTransparent: false },
             { id: "garment-2", assetUrl: `/api/import/assets/${jobId}/garment-2.png`, attempt: 2 },
           ],
         },
@@ -87,6 +87,15 @@ test("the import API selects an earlier generated garment without deleting newer
     assert.equal(response.json().stages.garment.selectedCandidateId, "garment-1");
     assert.match(response.json().stages.garment.assetUrl, /garment-1\.png/);
     assert.equal(response.json().stages.garment.candidates.length, 2);
+
+    const unconfirmedApproval = mockResponse();
+    await api.handler(
+      mockRequest(`/api/import/jobs/${jobId}/stages/garment/approve`),
+      unconfirmedApproval,
+      () => {},
+    );
+    assert.equal(unconfirmedApproval.statusCode, 409);
+    assert.equal(unconfirmedApproval.json().code, "opaque_garment_confirmation_required");
 
     const stored = JSON.parse(await readFile(path.join(jobDir, "job.json"), "utf8"));
     assert.equal(stored.stages.garment.selectedCandidateId, "garment-1");
