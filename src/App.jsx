@@ -1602,6 +1602,7 @@ function GarmentMergeDialog({ first, second, keepId, busy, error, onKeep, onCanc
 
 function ItemViewer({
   item,
+  vaultMode = false,
   currency,
   backgroundReferences = [],
   onClose,
@@ -1619,6 +1620,7 @@ function ItemViewer({
   onDeleteModeled,
   onArchiveGarment,
   onArchiveModeled,
+  onRestoreGarment,
   onDeleteSourcePhoto,
   onReorderMedia,
   onDirtyChange,
@@ -2393,6 +2395,20 @@ function ItemViewer({
     }
   };
 
+  const restoreGarment = async () => {
+    if (archiving || deletingGarment || isDirty) {
+      if (isDirty) nudgeUnsaved(false);
+      return;
+    }
+    setArchiving(true);
+    try {
+      await onRestoreGarment(item.id);
+    } catch (requestError) {
+      setViewerToast({ title: tr("Could not restore the garment"), message: readableError(requestError) });
+      setArchiving(false);
+    }
+  };
+
   const requestDeleteSourcePhoto = () => {
     if (activeMedia?.kind !== GARMENT_MEDIA_ORIGINAL || deletingSourcePhoto || generatingModeled) return;
     if (isDirty) {
@@ -2996,7 +3012,7 @@ function ItemViewer({
           )}
         />
 
-        <div className={`viewer-merge-action${mergeSelecting ? " is-active" : ""}`}>
+        {!vaultMode && <div className={`viewer-merge-action${mergeSelecting ? " is-active" : ""}`}>
           <button
             className="secondary-button"
             type="button"
@@ -3008,19 +3024,25 @@ function ItemViewer({
             {tr(mergeSelecting ? "Cancel garment merge" : "Merge with existing garment")}
           </button>
           {mergeSelecting && <small>{tr("Choose the second garment from the wardrobe on the left.")}</small>}
-        </div>
+        </div>}
 
         {closeBlocked && <p className="unsaved-notice" role="status">{tr("Save or cancel changes before leaving this item.")}</p>}
 
         <div className="viewer-actions">
-          <button
-            className="secondary-button viewer-vault-button"
-            type="button"
-            onClick={archiveGarment}
-            disabled={archiving || deletingGarment}
-          >
-            {archiving ? <SpinnerGap className="spin" size={15} /> : <EyeSlash size={15} weight="regular" aria-hidden="true" />} {tr(archiving ? "Moving…" : "Move to Vault")}
-          </button>
+          {(!vaultMode || item.vaultedAt) && (
+            <button
+              className="secondary-button viewer-vault-button"
+              type="button"
+              onClick={vaultMode ? restoreGarment : archiveGarment}
+              disabled={archiving || deletingGarment}
+            >
+              {archiving
+                ? <SpinnerGap className="spin" size={15} />
+                : vaultMode
+                  ? <ArrowCounterClockwise size={15} weight="regular" aria-hidden="true" />
+                  : <EyeSlash size={15} weight="regular" aria-hidden="true" />} {tr(archiving ? vaultMode ? "Restoring…" : "Moving…" : vaultMode ? "Restore to wardrobe" : "Move to Vault")}
+            </button>
+          )}
           <button
             ref={deleteGarmentButtonRef}
             className="delete-button"
@@ -3386,7 +3408,7 @@ function ItemViewer({
                   <span>{tr("Delete version")}</span>
                 </button>
               )}
-              {mediaPreviewOpen === "media" && isActiveMediaGenerated && (
+              {mediaPreviewOpen === "media" && isActiveMediaGenerated && !vaultMode && (
                 <button
                   className="media-preview-dialog__vault"
                   type="button"
@@ -4040,7 +4062,7 @@ function InfoTooltip({ label, children, className = "" }) {
   );
 }
 
-function ProfileMenu({ users, currentUser, canCreate, connectionCount, originalPhotoCount, onConnections, onOriginalPhotos, onVault, onCreate, onSelect, onEdit, onExport, onLogout }) {
+function ProfileMenu({ users, currentUser, canCreate, connectionCount, originalPhotoCount, vaultMode = false, onConnections, onOriginalPhotos, onVault, onCreate, onSelect, onEdit, onExport, onLogout }) {
   const detailsRef = useRef(null);
   const closeMenu = () => { if (detailsRef.current) detailsRef.current.open = false; };
 
@@ -4122,7 +4144,7 @@ function ProfileMenu({ users, currentUser, canCreate, connectionCount, originalP
             <ImageSquare size={14} /> {tr("Images")}<span className="profile-menu__notification is-neutral">{originalPhotoCount}</span>
           </button>
           <button className="profile-menu__export" type="button" onClick={() => { onVault(); closeMenu(); }}>
-            <LockKey size={14} /> {tr("Vault")}
+            {vaultMode ? <ArrowCounterClockwise size={14} /> : <LockKey size={14} />} {tr(vaultMode ? "Back to wardrobe" : "Vault")}
           </button>
           <button className="profile-menu__export" type="button" onClick={() => { onExport(); closeMenu(); }} title={tr("Includes only your own wardrobe and photos")}>
             <DownloadSimple size={14} /> {tr("Download data")}
@@ -4258,12 +4280,10 @@ function ProfileHeightEditor({ value, onChange }) {
   );
 }
 
-function VaultDialog({ user, onClose, onRestore, onSetUpPassword }) {
+function VaultDialog({ user, onClose, onUnlock, onSetUpPassword }) {
   const [password, setPassword] = useState("");
-  const [entries, setEntries] = useState(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [preview, setPreview] = useState(null);
   const passwordRef = useRef(null);
 
   useEffect(() => {
@@ -4274,12 +4294,11 @@ function VaultDialog({ user, onClose, onRestore, onSetUpPassword }) {
     const closeOnEscape = (event) => {
       if (event.key !== "Escape" || busy) return;
       event.preventDefault();
-      if (preview) setPreview(null);
-      else onClose();
+      onClose();
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [busy, onClose, preview]);
+  }, [busy, onClose]);
 
   const unlock = async (event) => {
     event.preventDefault();
@@ -4290,67 +4309,23 @@ function VaultDialog({ user, onClose, onRestore, onSetUpPassword }) {
         method: "POST",
         body: JSON.stringify({ password }),
       });
-      setEntries(result.entries || []);
       setPassword("");
+      onUnlock(result.items || []);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
       setBusy("");
     }
   };
-
-  const restore = async (entry) => {
-    setBusy(entry.id);
-    setError("");
-    try {
-      await onRestore(entry);
-      setEntries((current) => current.filter((candidate) => candidate.id !== entry.id));
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const groups = entries ? [
-    ["garment", tr("Garments")],
-    ["garment-look", tr("Garment photos")],
-    ["outfit-look", tr("Outfit photos")],
-  ].map(([kind, label]) => ({ kind, label, entries: entries.filter((entry) => entry.kind === kind) })).filter((group) => group.entries.length) : [];
 
   return (
     <div className="vault-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
-      <section className={`vault-dialog${entries ? " is-open" : " is-locked"}`} role="dialog" aria-modal="true" aria-labelledby="vault-title">
+      <section className="vault-dialog is-locked" role="dialog" aria-modal="true" aria-labelledby="vault-title">
         <header>
           <div><p>{tr("Private storage")}</p><h2 id="vault-title">{tr("Vault")}</h2></div>
           <button type="button" onClick={onClose} disabled={Boolean(busy)} aria-label={tr("Close Vault")}><X size={21} /></button>
         </header>
-        {entries ? (
-          <div className="vault-dialog__content">
-            <div className="vault-dialog__intro"><LockKey size={18} /><span><strong>{tr("Vault unlocked")}</strong><small>{tr("Restore anything you want to return to your wardrobe or Outfit Studio.")}</small></span></div>
-            {!entries.length && <div className="vault-empty"><EyeSlash size={34} weight="light" /><strong>{tr("Your Vault is empty")}</strong><p>{tr("Hidden garments and generated photos will appear here.")}</p></div>}
-            {groups.map((group) => (
-              <section className="vault-group" key={group.kind}>
-                <header><h3>{group.label}</h3><span>{group.entries.length}</span></header>
-                <div className="vault-grid">
-                  {group.entries.map((entry) => (
-                    <article key={entry.id}>
-                      <button className="vault-card__image" type="button" onClick={() => setPreview(entry)} aria-label={tr("Enlarge {name}", { name: entry.name })}>
-                        <OptimizedImage src={entry.preview || entry.image} alt="" sizes="240px" />
-                        {entry.kind !== "garment" && <span><Sparkle size={10} weight="fill" /> {tr("Generated")}</span>}
-                      </button>
-                      <div><strong>{entry.name}</strong><small>{tr(entry.kind === "garment" ? "Hidden garment" : entry.kind === "outfit-look" ? "Outfit Studio photo" : "Garment photo")}</small></div>
-                      <button className="vault-card__restore" type="button" disabled={Boolean(busy)} onClick={() => restore(entry)}>
-                        {busy === entry.id ? <SpinnerGap className="spin" size={14} /> : <ArrowCounterClockwise size={14} />}{tr("Restore")}
-                      </button>
-                    </article>
-                  ))}
-                </div>
-              </section>
-            ))}
-            {error && <p className="vault-error" role="alert">{error}</p>}
-          </div>
-        ) : user.hasVaultPassword ? (
+        {user.hasVaultPassword ? (
           <form className="vault-unlock" onSubmit={unlock}>
             <span className="vault-unlock__icon"><LockKey size={29} weight="light" /></span>
             <h3>{tr("Enter your Vault password")}</h3>
@@ -4365,12 +4340,6 @@ function VaultDialog({ user, onClose, onRestore, onSetUpPassword }) {
             <h3>{tr("Set up your Vault")}</h3>
             <p>{tr("Create a password in profile preferences before hiding sensitive garments or generated photos.")}</p>
             <button type="button" onClick={onSetUpPassword}><Key size={15} />{tr("Create Vault password")}</button>
-          </div>
-        )}
-        {preview && (
-          <div className="vault-preview" role="dialog" aria-modal="true" aria-label={preview.name} onMouseDown={(event) => event.target === event.currentTarget && setPreview(null)}>
-            <OptimizedImage src={preview.image} alt={preview.name} sizes="90vw" priority />
-            <button type="button" onClick={() => setPreview(null)} aria-label={tr("Close enlarged photo")}><X size={22} /></button>
           </div>
         )}
       </section>
@@ -6693,6 +6662,7 @@ export function App() {
   const [outfitStudioOpen, setOutfitStudioOpen] = useState(false);
   const [originalPhotosOpen, setOriginalPhotosOpen] = useState(false);
   const [vaultOpen, setVaultOpen] = useState(false);
+  const [vaultItems, setVaultItems] = useState(null);
   const [selectedOriginalPhotoId, setSelectedOriginalPhotoId] = useState(null);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [tutorialStep, setTutorialStep] = useState("profile");
@@ -6733,6 +6703,7 @@ export function App() {
       setOutfitStudioOpen(false);
       setOriginalPhotosOpen(false);
       setVaultOpen(false);
+      setVaultItems(null);
       setSelectedOriginalPhotoId(null);
       setConnectionsOpen(false);
       setConnectionsData(EMPTY_CONNECTION_DATA);
@@ -6900,9 +6871,11 @@ export function App() {
   useEffect(() => {
     if (!profileEditor && currentUser?.language && currentUser.language !== locale) setLocale(currentUser.language);
   }, [currentUser?.language, locale, profileEditor]);
-  const selectedItem = items.find((item) => item.id === selectedId) || null;
-  const mergeSourceItem = items.find((item) => item.id === mergeSourceId) || null;
-  const mergeCandidateItem = items.find((item) => item.id === mergeCandidateId) || null;
+  const vaultMode = Array.isArray(vaultItems);
+  const displayItems = vaultMode ? vaultItems : items;
+  const selectedItem = displayItems.find((item) => item.id === selectedId) || null;
+  const mergeSourceItem = displayItems.find((item) => item.id === mergeSourceId) || null;
+  const mergeCandidateItem = displayItems.find((item) => item.id === mergeCandidateId) || null;
   const wardrobeDisplay = normalizeWardrobeDisplayPreferences(currentUser?.wardrobeDisplay);
   const gridDensity = wardrobeDisplay.density;
   const originalPhotoLibrary = useMemo(() => collectOriginalPhotoLibrary(items), [items]);
@@ -6938,6 +6911,7 @@ export function App() {
     setOutfitStudioOpen(false);
     setOriginalPhotosOpen(false);
     setVaultOpen(false);
+    setVaultItems(null);
     setSelectedOriginalPhotoId(null);
     setPlannerError("");
     setMergeSourceId(null);
@@ -6961,8 +6935,8 @@ export function App() {
   }, [connectionsOpen, mergeCandidateItem, openRouterKeyDialogOpen, originalPhotosOpen, outfitStudioOpen, plannerOpen, savedViewDeleteCandidate, savedViewDialogOpen, vaultOpen]);
 
   const customOrderedItems = useMemo(() => {
-    const sourcePositions = new Map(items.map((item, index) => [item.id, index]));
-    return [...items].sort((first, second) => {
+    const sourcePositions = new Map(displayItems.map((item, index) => [item.id, index]));
+    return [...displayItems].sort((first, second) => {
       const firstOrder = first.customOrder;
       const secondOrder = second.customOrder;
       const firstHasOrder = Number.isFinite(firstOrder);
@@ -6971,7 +6945,7 @@ export function App() {
       if (firstHasOrder !== secondHasOrder) return firstHasOrder ? -1 : 1;
       return sourcePositions.get(first.id) - sourcePositions.get(second.id);
     });
-  }, [items]);
+  }, [displayItems]);
 
   const visibleItems = useMemo(() => {
     const filtered = customOrderedItems.filter((item) => wardrobeItemMatches(item, {
@@ -6997,11 +6971,11 @@ export function App() {
   }, [activeType, customOrderedItems, filters, sortMode]);
   const galleryItems = mergeSourceId ? customOrderedItems : visibleItems;
 
-  const facets = useMemo(() => collectFacetOptions(items), [items]);
+  const facets = useMemo(() => collectFacetOptions(displayItems), [displayItems]);
   const typeCounts = useMemo(() => Object.fromEntries(TYPES.map((type) => [
     type.id,
-    type.id === "all" ? items.length : items.filter((item) => item.part === type.id).length,
-  ])), [items]);
+    type.id === "all" ? displayItems.length : displayItems.filter((item) => item.part === type.id).length,
+  ])), [displayItems]);
   const selectedFilterCount = activeFilterCount({ ...filters, type: activeType });
   const savedViews = normalizeSavedViews(currentUser?.savedViews);
 
@@ -7039,6 +7013,21 @@ export function App() {
     setFilters(normalizeWardrobeFilters(DEFAULT_WARDROBE_FILTERS));
     setActiveType("all");
     setActiveSavedViewId(null);
+  };
+
+  const enterVault = (unlockedItems) => {
+    closeViewer();
+    clearFilters();
+    setFilterRailOpen(false);
+    setVaultItems(unlockedItems);
+    setVaultOpen(false);
+  };
+
+  const leaveVault = () => {
+    closeViewer();
+    clearFilters();
+    setFilterRailOpen(false);
+    setVaultItems(null);
   };
 
   const saveWardrobeArrangement = async (nextSortMode, nextGroupMode) => {
@@ -7317,6 +7306,9 @@ export function App() {
 
   const saveItem = async (updatedItem) => {
     setItems((current) => current.map((item) => item.id === updatedItem.id ? updatedItem : item));
+    setVaultItems((current) => Array.isArray(current)
+      ? current.map((item) => item.id === updatedItem.id ? updatedItem : item)
+      : current);
     persistEdit(updatedItem, currentUserId);
     if (!updatedItem.id.startsWith("import-")) return;
     try {
@@ -7342,6 +7334,9 @@ export function App() {
       });
       removePersistedEdit(updatedItem.id, currentUserId);
       setItems((current) => current.map((item) => item.id === saved.id ? { ...item, ...saved } : item));
+      setVaultItems((current) => Array.isArray(current)
+        ? current.map((item) => item.id === saved.id ? { ...item, ...saved } : item)
+        : current);
     } catch (requestError) {
       setError(tr("{error} Your change is still saved in this browser.", { error: readableError(requestError) }));
     }
@@ -7358,6 +7353,7 @@ export function App() {
       }
     }
     setItems((current) => current.filter((item) => item.id !== id));
+    setVaultItems((current) => Array.isArray(current) ? current.filter((item) => item.id !== id) : current);
     removePersistedEdit(id, currentUserId);
     if (id.startsWith("import-")) removePersistedDeletedItem(id, currentUserId);
     else persistDeletedItem(id, currentUserId);
@@ -7626,12 +7622,19 @@ export function App() {
       : [...current, newItem]);
   }, []);
 
+  const updateGarmentCollections = useCallback((updated) => {
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    setVaultItems((current) => Array.isArray(current)
+      ? current.map((item) => item.id === updated.id ? { ...item, ...updated } : item)
+      : current);
+  }, []);
+
   const createColorVariant = async (id, input) => {
     const updated = await profileApi(`/api/import/wardrobe/${id}/variants?user=${encodeURIComponent(currentUserId)}`, {
       method: "POST",
       body: JSON.stringify(input),
     });
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    updateGarmentCollections(updated);
     return updated;
   };
 
@@ -7641,7 +7644,7 @@ export function App() {
       method: "PATCH",
       body: JSON.stringify({ variantId }),
     });
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    updateGarmentCollections(updated);
     return updated;
   };
 
@@ -7650,7 +7653,7 @@ export function App() {
       method: "PATCH",
       body: JSON.stringify({ ids }),
     });
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    updateGarmentCollections(updated);
     return updated;
   };
 
@@ -7659,7 +7662,7 @@ export function App() {
       method: "DELETE",
     });
     const updated = result.item || result;
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    updateGarmentCollections(updated);
     if (result.user) {
       setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
     }
@@ -7678,7 +7681,7 @@ export function App() {
     });
     showCompletedImageFallback(generated.fallbackNotice);
     const record = withoutFallbackNotice(generated);
-    setItems((current) => current.map((item) => item.id === record.id ? { ...item, ...record } : item));
+    updateGarmentCollections(record);
     return record;
   };
 
@@ -7689,7 +7692,7 @@ export function App() {
     });
     showCompletedImageFallback(updated.fallbackNotice);
     const record = withoutFallbackNotice(updated);
-    setItems((current) => current.map((item) => item.id === record.id ? { ...item, ...record } : item));
+    updateGarmentCollections(record);
     return record;
   };
 
@@ -7697,7 +7700,7 @@ export function App() {
     const updated = await profileApi(`/api/import/wardrobe/${id}/regeneration/center?user=${encodeURIComponent(currentUserId)}`, {
       method: "POST",
     });
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    updateGarmentCollections(updated);
     return updated;
   };
 
@@ -7706,7 +7709,7 @@ export function App() {
       method: "POST",
     });
     removePersistedEdit(id, currentUserId);
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    updateGarmentCollections(updated);
     return updated;
   };
 
@@ -7714,7 +7717,7 @@ export function App() {
     const updated = await profileApi(`/api/import/wardrobe/${id}/regeneration?user=${encodeURIComponent(currentUserId)}`, {
       method: "DELETE",
     });
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    updateGarmentCollections(updated);
     return updated;
   };
 
@@ -7722,7 +7725,7 @@ export function App() {
     const updated = await profileApi(`/api/import/wardrobe/${id}/modeled/${encodeURIComponent(lookId)}?user=${encodeURIComponent(currentUserId)}`, {
       method: "DELETE",
     });
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    updateGarmentCollections(updated);
     return updated;
   };
 
@@ -7742,37 +7745,26 @@ export function App() {
       method: "PATCH",
       body: JSON.stringify({ vaulted: true }),
     });
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    updateGarmentCollections(updated);
     return updated;
   };
 
-  const restoreVaultEntry = async (entry) => {
-    if (entry.kind === "garment") {
-      const result = await profileApi(`/api/import/wardrobe/${entry.itemId}/vault?user=${encodeURIComponent(currentUserId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ vaulted: false }),
-      });
-      setItems((current) => current.some((item) => item.id === result.item.id)
-        ? current.map((item) => item.id === result.item.id ? { ...item, ...result.item } : item)
-        : [...current, result.item]);
-      return result;
-    }
-    if (entry.kind === "garment-look") {
-      const updated = await profileApi(`/api/import/wardrobe/${entry.itemId}/modeled/${encodeURIComponent(entry.lookId)}?user=${encodeURIComponent(currentUserId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ vaulted: false }),
-      });
-      if (!updated.vaultedAt) {
-        setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
-      }
-      return updated;
-    }
-    const result = await profileApi(`/api/import/outfits/${encodeURIComponent(entry.outfitId)}/modeled/${encodeURIComponent(entry.lookId)}?user=${encodeURIComponent(currentUserId)}`, {
+  const restoreVaultGarment = async (id) => {
+    const result = await profileApi(`/api/import/wardrobe/${id}/vault?user=${encodeURIComponent(currentUserId)}`, {
       method: "PATCH",
       body: JSON.stringify({ vaulted: false }),
     });
-    setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
-    return result;
+    setItems((current) => current.some((item) => item.id === result.item.id)
+      ? current.map((item) => item.id === result.item.id ? { ...item, ...result.item } : item)
+      : [...current, result.item]);
+    setVaultItems((current) => Array.isArray(current)
+      ? current
+        .map((item) => item.id === id ? { ...item, vaultedAt: null } : item)
+        .filter((item) => item.vaultedAt || item.modeledLooks?.some((look) => look.vaultedAt))
+      : current);
+    closeViewer();
+    setAppToast({ title: tr("Garment restored"), message: tr("It is back in your wardrobe.") });
+    return result.item;
   };
 
   const deleteSourcePhoto = async (id, sourcePhotoId, replacementSourcePhotoId = null) => {
@@ -7780,7 +7772,7 @@ export function App() {
       method: "DELETE",
       body: JSON.stringify({ replacementSourcePhotoId }),
     });
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    updateGarmentCollections(updated);
     return updated;
   };
 
@@ -7789,7 +7781,7 @@ export function App() {
       method: "PATCH",
       body: JSON.stringify({ ids }),
     });
-    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    updateGarmentCollections(updated);
     return updated;
   };
 
@@ -7972,6 +7964,7 @@ export function App() {
       setStudioConnections([]);
       setCurrentUserId(null);
       setItems([]);
+      setVaultItems(null);
       setPlannerOpen(false);
       setOutfitStudioOpen(false);
       setOriginalPhotosOpen(false);
@@ -7997,7 +7990,7 @@ export function App() {
           <div className="gallery-meta-row">
             <p className="wardrobe-owner">
               {currentUser?.name || tr("Wardrobe")}
-              <span>{tr(items.length === 1 ? "{count} garment" : "{count} garments", { count: items.length })}</span>
+              <span>{tr(displayItems.length === 1 ? "{count} garment" : "{count} garments", { count: displayItems.length })}</span>
             </p>
           </div>
           <div className="discovery-toolbar" data-tutorial="wardrobe-tools">
@@ -8077,10 +8070,14 @@ export function App() {
         </header>
 
         {error && <p className="status error">{error}</p>}
-        {!error && loading && <p className="status">{tr("Loading wardrobe")}</p>}
-        {!error && !loading && !items.length && <p className="status empty">{tr("Drop, paste, or add a photo to import your first garment.")}</p>}
+        {!error && loading && <p className="status">{tr(vaultMode ? "Loading Vault" : "Loading wardrobe")}</p>}
+        {!error && !loading && !displayItems.length && (
+          vaultMode
+            ? <div className="status empty"><strong>{tr("Your Vault has no garments")}</strong><p>{tr("Garments and their secret generated photos appear here after you move them to the Vault.")}</p></div>
+            : <p className="status empty">{tr("Drop, paste, or add a photo to import your first garment.")}</p>
+        )}
 
-        {!!items.length && (
+        {!!displayItems.length && (
           <div className={`wardrobe-browser${filterRailOpen ? " has-filter-rail" : ""}`}>
             <div id="wardrobe-filter-rail">
               <FilterRail
@@ -8116,7 +8113,7 @@ export function App() {
                       </span>
                     ))}
                   </div>
-                  <small className="saved-view-count">{tr("{visible} of {total} garments", { visible: visibleItems.length, total: items.length })}</small>
+                  <small className="saved-view-count">{tr("{visible} of {total} garments", { visible: visibleItems.length, total: displayItems.length })}</small>
                 </div>
               )}
               {!galleryItems.length ? (
@@ -8165,7 +8162,7 @@ export function App() {
                           mergeSource={mergeSourceItem?.id === item.id}
                           onOpen={openItem}
                           priority={(visibleItemIndex.get(item.id) ?? Infinity) < 8}
-                          draggable={!mergeSourceItem && sortMode === "custom" && groupMode === "none" && organizationStatus !== "saving" && !selectedFilterCount}
+                          draggable={!vaultMode && !mergeSourceItem && sortMode === "custom" && groupMode === "none" && organizationStatus !== "saving" && !selectedFilterCount}
                           dragging={draggedId === item.id}
                           dropTarget={dropTargetId === item.id}
                           onDragStart={beginItemDrag}
@@ -8197,6 +8194,7 @@ export function App() {
       {selectedItem && (
         <ItemViewer
           item={selectedItem}
+          vaultMode={vaultMode}
           currency={normalizePurchaseCurrency(currentUser?.preferredCurrency)}
           backgroundReferences={currentUser?.backgroundReferences || []}
           onClose={closeViewer}
@@ -8214,11 +8212,12 @@ export function App() {
           onDeleteModeled={deleteModeledLook}
           onArchiveGarment={archiveGarment}
           onArchiveModeled={archiveModeledLook}
+          onRestoreGarment={restoreVaultGarment}
           onDeleteSourcePhoto={deleteSourcePhoto}
           onReorderMedia={reorderGarmentMedia}
           onDirtyChange={setViewerDirty}
           blockedSwitchSignal={blockedSwitchSignal}
-          canMerge={items.length > 1}
+          canMerge={!vaultMode && items.length > 1}
           mergeSelecting={mergeSourceItem?.id === selectedItem.id}
           onBeginMerge={beginGarmentMerge}
           onCancelMerge={cancelGarmentMerge}
@@ -8243,12 +8242,13 @@ export function App() {
           canCreate={isOwner}
           connectionCount={connectionsData.notificationCount || 0}
           originalPhotoCount={originalPhotoLibrary.length + generatedPhotoLibrary.length}
+          vaultMode={vaultMode}
           onConnections={() => { setConnectionsError(""); setConnectionsOpen(true); }}
           onOriginalPhotos={() => {
             setSelectedOriginalPhotoId(null);
             setOriginalPhotosOpen(true);
           }}
-          onVault={() => setVaultOpen(true)}
+          onVault={() => vaultMode ? leaveVault() : setVaultOpen(true)}
           onCreate={() => { setProfileInitialTab("basics"); setProfileError(""); setProfileEditor("new"); }}
           onSelect={selectUser}
           onEdit={() => { setProfileInitialTab("basics"); setProfileError(""); setProfileEditor(currentUser.id); }}
@@ -8289,7 +8289,7 @@ export function App() {
         <VaultDialog
           user={currentUser}
           onClose={() => setVaultOpen(false)}
-          onRestore={restoreVaultEntry}
+          onUnlock={enterVault}
           onSetUpPassword={() => {
             setVaultOpen(false);
             setProfileInitialTab("vault");

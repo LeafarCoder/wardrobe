@@ -71,6 +71,7 @@ test("preserves normalized generation settings on modeled looks", () => {
     setting: "city",
     season: "spring",
     weather: "",
+    timeOfDay: "",
     expression: "smiling",
     backgroundReferenceId: "",
     backgroundReferenceName: "",

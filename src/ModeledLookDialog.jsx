@@ -1,6 +1,7 @@
 import {
   Aperture,
   Check,
+  Clock,
   CloudSun,
   HandWaving,
   House,
@@ -39,6 +40,7 @@ const GROUP_ICONS = {
   "Open-air setting": Tree,
   Season: Leaf,
   Weather: CloudSun,
+  "Day period": Clock,
   Style: Aperture,
 };
 
@@ -266,34 +268,40 @@ export function ModeledLookDialog({
               <div>
                 <ChoiceGroup label="Season" options={MODELED_LOOK_CONTEXT_OPTIONS.season} value={context.season} onChange={(value) => update("season", value)} />
                 <ChoiceGroup label="Weather" options={MODELED_LOOK_CONTEXT_OPTIONS.weather} value={context.weather} onChange={(value) => update("weather", value)} />
+                <ChoiceGroup label="Day period" options={MODELED_LOOK_CONTEXT_OPTIONS.timeOfDay} value={context.timeOfDay} onChange={(value) => update("timeOfDay", value)} />
               </div>
             </div>
 
             {!!backgroundReferences.length && (
-            <fieldset className="modeled-context__group modeled-context__backgrounds">
-              <legend>{tr("Saved background")}</legend>
-              <p>{tr("Use one of your own places as the scene reference. The people and garments will be composed naturally into it.")}</p>
-              <div className="modeled-context__background-list">
-                {backgroundReferences.map((reference) => {
-                  const selected = context.backgroundReferenceId === reference.id;
-                  return (
-                    <button
-                      key={reference.id}
-                      type="button"
-                      className={selected ? "is-selected" : ""}
-                      aria-pressed={selected}
-                      aria-label={reference.name || tr("Saved background")}
-                      title={reference.name || tr("Saved background")}
-                      onClick={() => update("backgroundReferenceId", selected ? "" : reference.id)}
-                    >
-                      <OptimizedImage src={reference.previewUrl || reference.url} alt="" sizes="128px" />
-                      <span>{reference.name}</span>
-                      {selected && <Check size={13} weight="bold" aria-hidden="true" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </fieldset>
+              <details className="modeled-context__backgrounds">
+                <summary>
+                  <span>{tr("Saved backgrounds")}</span>
+                  <small>{backgroundReferences.length}</small>
+                </summary>
+                <div>
+                  <p>{tr("Use one of your own places as the scene reference. The people and garments will be composed naturally into it.")}</p>
+                  <div className="modeled-context__background-list">
+                    {backgroundReferences.map((reference) => {
+                      const selected = context.backgroundReferenceId === reference.id;
+                      return (
+                        <button
+                          key={reference.id}
+                          type="button"
+                          className={selected ? "is-selected" : ""}
+                          aria-pressed={selected}
+                          aria-label={reference.name || tr("Saved background")}
+                          title={reference.name || tr("Saved background")}
+                          onClick={() => update("backgroundReferenceId", selected ? "" : reference.id)}
+                        >
+                          <OptimizedImage src={reference.previewUrl || reference.url} alt="" sizes="128px" />
+                          <span>{reference.name}</span>
+                          {selected && <Check size={13} weight="bold" aria-hidden="true" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </details>
             )}
             </div>
           </details>

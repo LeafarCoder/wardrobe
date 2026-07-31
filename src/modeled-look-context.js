@@ -2,7 +2,7 @@ export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
   photographicStyle: Object.freeze([
     { id: "editorial", label: "Editorial", description: "Polished fashion story", prompt: "polished editorial fashion photography" },
     { id: "candid", label: "Candid", description: "Unposed everyday moment", prompt: "a natural candid lifestyle photograph" },
-    { id: "street-style", label: "Street style", description: "Fashion seen in the city", prompt: "authentic street-style fashion photography" },
+    { id: "freestyle", label: "Freestyle", description: "Expressive and creatively composed", prompt: "expressive freestyle fashion photography with playful, creative composition" },
     { id: "cinematic", label: "Cinematic", description: "Dramatic light and atmosphere", prompt: "cinematic photography with natural depth and atmosphere" },
     { id: "minimal", label: "Minimal", description: "Quiet, clean, restrained frame", prompt: "restrained minimal fashion photography" },
   ]),
@@ -103,6 +103,13 @@ export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
     { id: "foggy", label: "Foggy", prompt: "soft atmospheric fog" },
     { id: "windy", label: "Windy", prompt: "windy conditions with believable movement in hair and fabric" },
   ]),
+  timeOfDay: Object.freeze([
+    { id: "sunrise", label: "Sunrise", prompt: "at sunrise with low, gentle first light" },
+    { id: "morning", label: "Morning", prompt: "in clear natural morning light" },
+    { id: "afternoon", label: "Afternoon", prompt: "in natural afternoon light" },
+    { id: "sunset", label: "Sunset", prompt: "at sunset with warm low-angle light" },
+    { id: "night", label: "Night", prompt: "at night with believable ambient and practical lighting" },
+  ]),
   expression: Object.freeze([
     { id: "neutral", label: "Neutral", prompt: "a neutral, relaxed expression" },
     { id: "smiling", label: "Smiling", prompt: "a natural smile" },
@@ -119,8 +126,11 @@ export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
 
 export const MODELED_LOOK_IMAGE_RATIO_OPTIONS = Object.freeze([
   { id: "square", label: "Square", description: "1:1", prompt: "square 1:1" },
-  { id: "portrait", label: "Portrait", description: "9:16 vertical", prompt: "vertical portrait 9:16" },
-  { id: "landscape", label: "Landscape", description: "16:9 horizontal", prompt: "horizontal landscape 16:9" },
+  { id: "instagram-portrait", label: "Social portrait", description: "4:5 Instagram feed", prompt: "social portrait 4:5" },
+  { id: "portrait", label: "Story portrait", description: "9:16 Stories & Reels", prompt: "vertical story portrait 9:16" },
+  { id: "photo-portrait", label: "Photo portrait", description: "3:4 classic", prompt: "classic photo portrait 3:4" },
+  { id: "landscape", label: "Widescreen", description: "16:9 horizontal", prompt: "horizontal widescreen 16:9" },
+  { id: "photo-landscape", label: "Photo landscape", description: "3:2 classic", prompt: "classic photo landscape 3:2" },
 ]);
 
 export const MODELED_LOOK_CONTEXT_TRANSLATION_KEYS = Object.freeze(
@@ -142,6 +152,7 @@ export const EMPTY_MODELED_LOOK_CONTEXT = Object.freeze({
   setting: "",
   season: "",
   weather: "",
+  timeOfDay: "",
   expression: "",
   backgroundReferenceId: "",
   backgroundReferenceName: "",
@@ -203,7 +214,7 @@ export function normalizeModeledLookContext(input = {}) {
   }).slice(0, 4);
   return {
     imageRatio: normalizeModeledLookImageRatio(source.imageRatio),
-    photographicStyle: validOption("photographicStyle", source.photographicStyle),
+    photographicStyle: validOption("photographicStyle", source.photographicStyle === "street-style" ? "freestyle" : source.photographicStyle),
     pose: validOption("pose", source.pose),
     gesture: validOption("gesture", source.gesture),
     hairstyle: validOption("hairstyle", source.hairstyle),
@@ -213,6 +224,7 @@ export function normalizeModeledLookContext(input = {}) {
     setting: environmentType ? validOption(settingGroup, source.setting) : "",
     season: validOption("season", source.season),
     weather: validOption("weather", source.weather),
+    timeOfDay: validOption("timeOfDay", source.timeOfDay),
     expression: validOption("expression", source.expression),
     backgroundReferenceId: typeof source.backgroundReferenceId === "string"
       ? source.backgroundReferenceId.trim().slice(0, 80)
@@ -243,6 +255,7 @@ export function modeledLookContextPrompt(input = {}) {
       : null,
     context.season ? `Season: ${optionPrompt("season", context.season)}.` : null,
     context.weather ? `Weather and atmosphere: ${optionPrompt("weather", context.weather)}.${context.season ? " Treat this as a plausible weather moment within the selected season." : ""}` : null,
+    context.timeOfDay ? `Day period and light: ${optionPrompt("timeOfDay", context.timeOfDay)}.` : null,
     context.expression ? `Expression: ${optionPrompt("expression", context.expression)}.` : null,
     ...context.people.map((person) => {
       const directions = PERSON_DIRECTION_FIELDS.flatMap((field) => (
@@ -280,6 +293,7 @@ export function modeledLookContextDetails(input = {}) {
     ]),
     translated("season", "Season", [optionLabel("season", context.season)]),
     translated("weather", "Weather", [optionLabel("weather", context.weather)]),
+    translated("timeOfDay", "Day period", [optionLabel("timeOfDay", context.timeOfDay)]),
     translated("expression", "Expression", [optionLabel("expression", context.expression)]),
     context.backgroundReferenceId
       ? {

@@ -18,6 +18,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
     setting: "living-room",
     season: "autumn",
     weather: "sunny",
+    timeOfDay: "sunset",
     expression: "smiling",
     additionalDirection: "  Carry a small bouquet.  ",
     ignored: "not persisted",
@@ -33,6 +34,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
     setting: "living-room",
     season: "autumn",
     weather: "sunny",
+    timeOfDay: "sunset",
     expression: "smiling",
     backgroundReferenceId: "",
     backgroundReferenceName: "",
@@ -43,6 +45,8 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
   assert.equal(normalizeModeledLookContext({ environmentType: "outside", setting: "bedroom" }).setting, "");
   assert.equal(normalizeModeledLookContext({ environmentType: "invalid", setting: "forest" }).environmentType, "");
   assert.equal(normalizeModeledLookContext({ season: "monsoon" }).season, "");
+  assert.equal(normalizeModeledLookContext({ timeOfDay: "midday" }).timeOfDay, "");
+  assert.equal(normalizeModeledLookContext({ photographicStyle: "street-style" }).photographicStyle, "freestyle");
   assert.equal(normalizeModeledLookContext({ imageRatio: "landscape" }).imageRatio, "landscape");
   assert.equal(normalizeModeledLookContext({ imageRatio: "wide-ish" }).imageRatio, "");
   assert.deepEqual(normalizeModeledLookContext(null), normalizeModeledLookContext());
@@ -94,6 +98,7 @@ test("bounds free-form modeled-look direction", () => {
 test("normalizes shared style, saved backgrounds, stair poses, and per-person direction", () => {
   const context = normalizeModeledLookContext({
     photographicStyle: "cinematic",
+    timeOfDay: "night",
     backgroundReferenceId: "background-1",
     backgroundReferenceName: "Garden",
     people: [
@@ -102,6 +107,7 @@ test("normalizes shared style, saved backgrounds, stair poses, and per-person di
     ],
   });
   assert.equal(context.photographicStyle, "cinematic");
+  assert.equal(context.timeOfDay, "night");
   assert.equal(context.backgroundReferenceId, "background-1");
   assert.equal(context.people.length, 1);
   assert.equal(context.people[0].pose, "stairs-up");
@@ -111,6 +117,7 @@ test("normalizes shared style, saved backgrounds, stair poses, and per-person di
   const prompt = buildModeledPrompt(2, { name: "Rafael" }, { name: "Coat" }, context);
   assert.match(prompt, /Scene reference: Image 3/);
   assert.match(prompt, /cinematic photography/);
+  assert.match(prompt, /at night with believable ambient and practical lighting/);
   assert.match(prompt, /hands gently clasped together in front/);
 });
 
@@ -126,6 +133,7 @@ test("describes every selected modeled-look setting without translating free tex
     setting: "living-room",
     season: "winter",
     weather: "sunny",
+    timeOfDay: "morning",
     expression: "smiling",
     additionalDirection: "Carry the red book.",
   }), [
@@ -138,6 +146,7 @@ test("describes every selected modeled-look setting without translating free tex
     { id: "environment", label: "Environment", values: ["Inside", "Living room"], translateValues: true },
     { id: "season", label: "Season", values: ["Winter"], translateValues: true },
     { id: "weather", label: "Weather", values: ["Sunny"], translateValues: true },
+    { id: "timeOfDay", label: "Day period", values: ["Morning"], translateValues: true },
     { id: "expression", label: "Expression", values: ["Smiling"], translateValues: true },
     { id: "additionalDirection", label: "More direction", values: ["Carry the red book."], translateValues: false },
   ]);

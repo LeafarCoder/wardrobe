@@ -221,8 +221,11 @@
 }
 
 .modeled-context__ratio-frame.is-square { width: 32px; height: 32px; }
+.modeled-context__ratio-frame.is-instagram-portrait { width: 29px; height: 36px; }
 .modeled-context__ratio-frame.is-portrait { width: 23px; height: 41px; }
+.modeled-context__ratio-frame.is-photo-portrait { width: 27px; height: 36px; }
 .modeled-context__ratio-frame.is-landscape { width: 41px; height: 23px; }
+.modeled-context__ratio-frame.is-photo-landscape { width: 39px; height: 26px; }
 
 .modeled-context__version-list {
   display: flex;
@@ -253,11 +256,25 @@
 .modeled-context__version-list img { width: 44px; height: 48px; object-fit: contain; background: #f3eee6; }
 
 .modeled-context__backgrounds {
-  margin-top: 2px;
+  margin: 2px 0 18px;
   border-top: 1px solid var(--line);
-  padding-top: 22px;
+  border-bottom: 1px solid var(--line);
 }
-.modeled-context__backgrounds > p { margin: -2px 0 12px; color: var(--muted); font-size: 10px; }
+.modeled-context__backgrounds > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 2px;
+  cursor: pointer;
+  list-style: none;
+}
+.modeled-context__backgrounds > summary::-webkit-details-marker { display: none; }
+.modeled-context__backgrounds > summary::after { content: "+"; margin-left: auto; color: var(--muted); font-size: 16px; font-weight: 300; }
+.modeled-context__backgrounds[open] > summary::after { content: "−"; }
+.modeled-context__backgrounds > summary span { font-size: 10px; font-weight: 570; }
+.modeled-context__backgrounds > summary small { min-width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: rgba(25, 24, 22, .08); color: var(--muted); font-size: 8px; }
+.modeled-context__backgrounds > div { padding: 3px 2px 14px; }
+.modeled-context__backgrounds > div > p { margin: 0 0 12px; color: var(--muted); font-size: 10px; }
 .modeled-context__background-list { display: flex; gap: 9px; overflow-x: auto; padding-bottom: 6px; }
 .modeled-context .modeled-context__background-list button {
   position: relative;

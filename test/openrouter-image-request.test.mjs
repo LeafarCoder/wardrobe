@@ -717,11 +717,20 @@ test("requests each modeled-photo ratio and sends exact OpenRouter aspect ratios
   assert.deepEqual(modeledImageRequest({ imageRatio: "square" }), {
     size: "1024x1024", aspectRatio: "1:1", width: 1, height: 1,
   });
+  assert.deepEqual(modeledImageRequest({ imageRatio: "instagram-portrait" }), {
+    size: "1024x1536", aspectRatio: "4:5", width: 4, height: 5,
+  });
   assert.deepEqual(modeledImageRequest({ imageRatio: "portrait" }), {
     size: "1024x1536", aspectRatio: "9:16", width: 9, height: 16,
   });
+  assert.deepEqual(modeledImageRequest({ imageRatio: "photo-portrait" }), {
+    size: "1024x1536", aspectRatio: "3:4", width: 3, height: 4,
+  });
   assert.deepEqual(modeledImageRequest({ imageRatio: "landscape" }), {
     size: "1536x1024", aspectRatio: "16:9", width: 16, height: 9,
+  });
+  assert.deepEqual(modeledImageRequest({ imageRatio: "photo-landscape" }), {
+    size: "1536x1024", aspectRatio: "3:2", width: 3, height: 2,
   });
 
   const request = openRouterImageRequest({
@@ -741,8 +750,10 @@ test("crops provider output to the selected exact final ratio", async () => {
   }).png().toBuffer();
   const portrait = await sharp(await cropModeledImageToRatio(source, { imageRatio: "portrait" })).metadata();
   const landscape = await sharp(await cropModeledImageToRatio(source, { imageRatio: "landscape" })).metadata();
+  const instagramPortrait = await sharp(await cropModeledImageToRatio(source, { imageRatio: "instagram-portrait" })).metadata();
   assert.deepEqual([portrait.width, portrait.height], [90, 160]);
   assert.deepEqual([landscape.width, landscape.height], [160, 90]);
+  assert.deepEqual([instagramPortrait.width, instagramPortrait.height], [128, 160]);
 });
 
 test("starts Seedream landscape fallbacks at a route-compatible pixel count", () => {

@@ -87,6 +87,9 @@ test("Vault API hides garments and generated photos until the password is verifi
 
     const unlockedPhoto = await request(api, "/api/users/default/vault", "POST", { password: "private wardrobe" });
     assert.deepEqual(unlockedPhoto.json().entries.map((entry) => entry.kind), ["garment-look"]);
+    assert.equal(unlockedPhoto.json().items.length, 1);
+    assert.equal(unlockedPhoto.json().items[0].id, ITEM_ID);
+    assert.equal(unlockedPhoto.json().items[0].modeledLooks[0].id, "private-look");
 
     const hiddenGarment = await request(api, `/api/import/wardrobe/${ITEM_ID}/vault`, "PATCH", { vaulted: true });
     assert.equal(hiddenGarment.statusCode, 200);
@@ -95,6 +98,8 @@ test("Vault API hides garments and generated photos until the password is verifi
 
     const unlockedGarment = await request(api, "/api/users/default/vault", "POST", { password: "private wardrobe" });
     assert.deepEqual(new Set(unlockedGarment.json().entries.map((entry) => entry.kind)), new Set(["garment", "garment-look"]));
+    assert.equal(unlockedGarment.json().items.length, 1);
+    assert.equal(unlockedGarment.json().items[0].vaultedAt, hiddenGarment.json().item.vaultedAt);
 
     const restored = await request(api, `/api/import/wardrobe/${ITEM_ID}/vault`, "PATCH", { vaulted: false });
     assert.equal(restored.statusCode, 200);

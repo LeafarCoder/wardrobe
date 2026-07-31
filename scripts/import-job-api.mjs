@@ -2691,8 +2691,11 @@ No text, captions, watermark, collage, split screen, product mockup, extra peopl
 
 const MODELED_IMAGE_RATIO_REQUESTS = Object.freeze({
   square: Object.freeze({ size: "1024x1024", aspectRatio: "1:1", width: 1, height: 1 }),
+  "instagram-portrait": Object.freeze({ size: "1024x1536", aspectRatio: "4:5", width: 4, height: 5 }),
   portrait: Object.freeze({ size: "1024x1536", aspectRatio: "9:16", width: 9, height: 16 }),
+  "photo-portrait": Object.freeze({ size: "1024x1536", aspectRatio: "3:4", width: 3, height: 4 }),
   landscape: Object.freeze({ size: "1536x1024", aspectRatio: "16:9", width: 16, height: 9 }),
+  "photo-landscape": Object.freeze({ size: "1536x1024", aspectRatio: "3:2", width: 3, height: 2 }),
 });
 
 export function modeledImageRequest(context = {}) {
@@ -5545,6 +5548,9 @@ export function wardrobeImportApi(options = {}) {
 
   async function vaultPayload(profile) {
     const records = (await loadImported()).filter((record) => record.userId === profile.id);
+    const items = records
+      .filter((record) => isVaulted(record) || modeledLooksForRecord(record).some(isVaulted))
+      .map((record) => publicImportedRecord(record, profile.id, { includeVault: true }));
     const entries = [];
     for (const record of records) {
       if (isVaulted(record)) {
@@ -5586,7 +5592,7 @@ export function wardrobeImportApi(options = {}) {
       }
     }
     entries.sort((first, second) => Date.parse(second.vaultedAt || 0) - Date.parse(first.vaultedAt || 0));
-    return { entries };
+    return { entries, items };
   }
 
   const libraryAssetUrl = (fileName, version = null) => (
