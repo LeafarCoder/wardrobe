@@ -20,6 +20,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
     additionalDirection: "  Carry a small bouquet.  ",
     ignored: "not persisted",
   }), {
+    photographicStyle: "",
     pose: "walking",
     hairstyle: "ponytail",
     bodyOrientation: "three-quarter",
@@ -28,7 +29,10 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
     setting: "living-room",
     weather: "sunny",
     expression: "smiling",
+    backgroundReferenceId: "",
+    backgroundReferenceName: "",
     additionalDirection: "Carry a small bouquet.",
+    people: [],
   });
 
   assert.equal(normalizeModeledLookContext({ environmentType: "outside", setting: "bedroom" }).setting, "");
@@ -72,6 +76,27 @@ test("leaves the base prompt unconstrained when no direction is selected", () =>
 test("bounds free-form modeled-look direction", () => {
   const context = normalizeModeledLookContext({ additionalDirection: `  ${"x".repeat(900)}  ` });
   assert.equal(context.additionalDirection.length, 800);
+});
+
+test("normalizes shared style, saved backgrounds, stair poses, and per-person direction", () => {
+  const context = normalizeModeledLookContext({
+    photographicStyle: "cinematic",
+    backgroundReferenceId: "background-1",
+    backgroundReferenceName: "Garden",
+    people: [
+      { personId: "rafael", pose: "stairs-up", expression: "smiling", additionalDirection: "Hold the rail." },
+      { personId: "rafael", pose: "running" },
+    ],
+  });
+  assert.equal(context.photographicStyle, "cinematic");
+  assert.equal(context.backgroundReferenceId, "background-1");
+  assert.equal(context.people.length, 1);
+  assert.equal(context.people[0].pose, "stairs-up");
+  assert.equal(context.people[0].additionalDirection, "Hold the rail.");
+
+  const prompt = buildModeledPrompt(2, { name: "Rafael" }, { name: "Coat" }, context);
+  assert.match(prompt, /Scene reference: Image 3/);
+  assert.match(prompt, /cinematic photography/);
 });
 
 test("describes every selected modeled-look setting without translating free text", () => {

@@ -76,6 +76,16 @@
   padding: 24px 26px 28px;
 }
 
+.modeled-context__section { border: 1px solid var(--line); background: rgba(255, 255, 255, .14); }
+.modeled-context__section + .modeled-context__section { margin-top: 12px; }
+.modeled-context__section > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; list-style: none; }
+.modeled-context__section > summary::-webkit-details-marker { display: none; }
+.modeled-context__section > summary::after { content: "+"; grid-column: 2; grid-row: 1 / span 2; color: var(--muted); font-size: 17px; font-weight: 300; }
+.modeled-context__section[open] > summary::after { content: "−"; }
+.modeled-context__section > summary > span { font-size: 13px; font-weight: 570; }
+.modeled-context__section > summary > small { grid-column: 1; color: var(--muted); font-size: 9px; }
+.modeled-context__section-body { border-top: 1px solid var(--line); padding: 20px 16px 4px; }
+
 .modeled-context__columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -120,6 +130,20 @@
   font-size: 10px;
   cursor: pointer;
 }
+.modeled-context__choices button > span { display: grid; gap: 2px; }
+.modeled-context__choices button > span small { color: var(--muted); font-size: 8px; font-weight: 400; line-height: 1.3; }
+.modeled-context__choices button.is-selected > span small { color: rgba(248, 245, 239, .72); }
+.modeled-context__choice-icon { flex: 0 0 auto; }
+.modeled-context__choices.is-visual { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.modeled-context__choices.is-visual button { position: relative; min-height: 94px; display: grid; align-content: center; justify-items: start; gap: 8px; padding: 12px; text-align: left; }
+.modeled-context__choices.is-visual .modeled-context__selected-check { position: absolute; top: 8px; right: 8px; }
+.modeled-context__choices.is-visual button > span { font-size: 11px; }
+.modeled-context__choices.is-visual .modeled-choice--editorial { background: linear-gradient(145deg, #f7f0e7 0 48%, #dfd2c2 49% 52%, #fffdf9 53%); }
+.modeled-context__choices.is-visual .modeled-choice--candid { background: radial-gradient(circle at 76% 24%, rgba(226, 190, 133, .34), transparent 34%), #f5efe5; }
+.modeled-context__choices.is-visual .modeled-choice--street-style { background: linear-gradient(90deg, transparent 0 30%, rgba(90, 91, 86, .1) 30% 33%, transparent 33% 66%, rgba(90, 91, 86, .1) 66% 69%, transparent 69%), #eeeae3; }
+.modeled-context__choices.is-visual .modeled-choice--cinematic { background: linear-gradient(145deg, #d7cab8, #f5e6cc 45%, #a99a8d); }
+.modeled-context__choices.is-visual .modeled-choice--minimal { background: linear-gradient(165deg, #fbf9f5 0 72%, #e7e0d6 72%); }
+.modeled-context__choices.is-visual button.is-selected { background: var(--ink); }
 
 .modeled-context__choices button:hover,
 .modeled-context__choices button:focus-visible {
@@ -167,6 +191,51 @@
 .modeled-context__version-list button.is-selected { border-color: var(--ink); outline: none; }
 .modeled-context__version-list img { width: 44px; height: 48px; object-fit: contain; background: #f3eee6; }
 
+.modeled-context__backgrounds {
+  margin-top: 2px;
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+}
+.modeled-context__backgrounds > p { margin: -2px 0 12px; color: var(--muted); font-size: 10px; }
+.modeled-context__background-list { display: flex; gap: 9px; overflow-x: auto; padding-bottom: 6px; }
+.modeled-context__background-list button {
+  position: relative;
+  min-width: 142px;
+  max-width: 142px;
+  display: grid;
+  grid-template-rows: 92px auto;
+  gap: 7px;
+  border: 1px solid var(--line);
+  padding: 5px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, .32);
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.modeled-context__background-list button:hover,
+.modeled-context__background-list button:focus-visible,
+.modeled-context__background-list button.is-selected { border-color: var(--ink); outline: none; }
+.modeled-context__background-list img { width: 100%; height: 92px; object-fit: cover; background: #eee8de; }
+.modeled-context__background-list button > svg { position: absolute; top: 10px; right: 10px; padding: 4px; color: var(--paper); background: var(--ink); box-sizing: content-box; }
+
+.modeled-context__people { margin: 0 0 18px; }
+.modeled-context__people-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.modeled-context__people-heading > span { color: var(--muted); font-size: 9px; font-weight: 560; letter-spacing: .1em; text-transform: uppercase; }
+.modeled-context__people-heading small { color: var(--muted); font-size: 9px; }
+.modeled-context__people article { border: 1px solid var(--line); padding: 15px; background: rgba(255, 255, 255, .2); }
+.modeled-context__people article + article { margin-top: 10px; }
+.modeled-context__people article > header { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
+.modeled-context__people article > header strong,
+.modeled-context__people article > header small { display: block; }
+.modeled-context__people article > header strong { font-size: 12px; font-weight: 560; }
+.modeled-context__people article > header small { margin-top: 2px; color: var(--muted); font-size: 9px; }
+.modeled-context__person-avatar { width: 42px; height: 42px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 50%; background: #eee8de; }
+.modeled-context__person-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.modeled-context__person-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; }
+.modeled-context__person-direction { margin-top: -4px; }
+
 .modeled-context__additional { display: block; }
 .modeled-context__additional textarea {
   width: 100%;
@@ -203,6 +272,8 @@
   .modeled-context-overlay { padding: 14px; }
   .modeled-context { max-height: calc(100dvh - 28px); }
   .modeled-context__columns { grid-template-columns: 1fr; }
+  .modeled-context__person-grid { grid-template-columns: 1fr; }
+  .modeled-context__choices.is-visual { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 520px) {

@@ -58,6 +58,7 @@ test("preserves normalized generation settings on modeled looks", () => {
   });
 
   assert.deepEqual(look.context, {
+    photographicStyle: "",
     pose: "walking",
     hairstyle: "",
     bodyOrientation: "",
@@ -66,7 +67,10 @@ test("preserves normalized generation settings on modeled looks", () => {
     setting: "city",
     weather: "",
     expression: "smiling",
+    backgroundReferenceId: "",
+    backgroundReferenceName: "",
     additionalDirection: "Hold a newspaper.",
+    people: [],
   });
 });
 

@@ -65,7 +65,7 @@ import {
   summarizeAiUsage,
 } from "../src/ai-preferences.js";
 import { normalizeTutorialState, updateTutorialState } from "../src/tutorial.js";
-import { modeledLookContextPrompt, normalizeModeledLookContext } from "../src/modeled-look-context.js";
+import { modeledLookContextPrompt, modeledLookOptionPrompt, normalizeModeledLookContext } from "../src/modeled-look-context.js";
 import {
   isCompleteGarmentMediaOrder,
   normalizeGarmentMediaOrder,
@@ -2221,13 +2221,18 @@ export function buildModeledPrompt(personReferenceCount = 1, profile = {}, metad
     profile.preferences ? `Personal styling preferences and constraints: ${profile.preferences}.` : null,
   ].filter(Boolean).join(" ");
   const identityLock = modeledIdentityLock(profile.name || "the referenced person");
-  const creativeDirection = modeledLookContextPrompt(context);
+  const modeledContext = normalizeModeledLookContext(context);
+  const creativeDirection = modeledLookContextPrompt(modeledContext);
+  const sceneReference = modeledContext.backgroundReferenceId
+    ? `Scene reference: Image ${garmentImage + 1} is the user's exact saved background. Preserve its recognizable architecture, layout, materials, vegetation, and atmosphere while placing the person naturally and photorealistically into that location. Do not copy any people, animals, text, or transient objects from it.`
+    : "";
 
   return `Create a professional horizontal 3:2 editorial fashion photograph.
 
 Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
 Subjects: ${subjectBinding}
 Garments: Image ${garmentImage} is the exact garment reference for "${metadata.name || "the featured garment"}".
+${sceneReference}
 ${modeledReferenceRoleRules()}
 
 Show ${subject} wearing the garment from Image ${garmentImage}. ${categoryDirection} ${profileDetails} ${identityLock} Preserve every garment color, material, fit, construction, graphic, logo, and distinctive detail. Keep the complete featured item clearly visible and unobstructed. Respect the owner's stated style, sizing, and preferences when choosing understated supporting clothes and the setting. Use realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. Show exactly one person. No text, watermark, product mockup, collage, split screen, or synthetic appearance.${creativeDirection}`;
@@ -2237,7 +2242,7 @@ function modeledIdentityLock(subject = "the referenced person") {
   return `Identity lock — highest priority: Maintain the exact identity of ${subject} from the identity reference images. Keep the same facial geometry and distinctive features: eye shape, color and spacing; eyebrows; nose shape; mouth and lip shape; cheekbones; jawline and face contour; chin contour; ears; hairline, hair color and hair texture; skin tone and visible skin texture; and apparent age. Preserve the same body shape, height impression and proportions. A new expression, pose, hairstyle, clothing and lighting are allowed, but those identity traits must not change. Do not beautify, idealize, age up or down, slim, enlarge, symmetrize, reshape the face or body, smooth away real skin texture, add unreferenced makeup, or substitute a generic fashion-model face. When references differ in angle, expression or lighting, reconcile them as views of the same real person using their stable shared traits; never average, blend or invent an identity.`;
 }
 
-export function buildPlannedOutfitPrompt(personReferenceCount = 1, profile = {}, plan = {}, outfit = {}, garments = []) {
+export function buildPlannedOutfitPrompt(personReferenceCount = 1, profile = {}, plan = {}, outfit = {}, garments = [], context = {}) {
   const count = Math.max(1, Math.min(3, Math.round(personReferenceCount)));
   const subject = profile.name || "Wardrobe owner";
   const identityReferences = modeledSubjectBinding(subject, 1, 0, count);
@@ -2275,12 +2280,21 @@ export function buildPlannedOutfitPrompt(personReferenceCount = 1, profile = {},
     profile.preferences ? `Personal styling preferences and constraints: ${profile.preferences}.` : null,
   ].filter(Boolean).join(" ");
   const identityLock = modeledIdentityLock(profile.name || "the wardrobe owner");
+  const modeledContext = normalizeModeledLookContext(context);
+  const sceneReference = modeledContext.backgroundReferenceId
+    ? `Scene reference: Image ${count + garments.length} is the user's exact saved background. Preserve its recognizable architecture, layout, materials, vegetation, and atmosphere while composing the person naturally into that place. Do not copy people, animals, text, or transient objects from it.`
+    : "";
+  const creativeDirection = modeledLookContextPrompt(modeledContext);
+  const settingDirection = modeledContext.backgroundReferenceId
+    ? "Use the saved scene reference as the actual location even when it differs from the plan destination; keep the plan's season, weather, and occasion cues believable within that place."
+    : setting;
 
   return `Create one professional horizontal 3:2 editorial fashion photograph for the saved wardrobe plan.
 
 Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
 Subjects: ${identityReferences}
 Garments: ${garmentReferences}
+${sceneReference}
 ${modeledReferenceRoleRules()}
 
 Outfit: "${outfit.name || "Planned outfit"}". Styling occasion and mood: ${outfit.note || "Wear all supplied garments together as one coherent outfit."}
@@ -2289,14 +2303,14 @@ Mandatory garments: Dress the referenced person in EVERY supplied garment refere
 
 Person: ${profileDetails} ${identityLock} Show exactly one person with realistic anatomy.
 
-Setting and season: ${setting} ${season} Make the environment, natural light, pose, layering, and overall mood appropriate to the stated place, time of year, weather expectations, dress code, and outfit note. For walking or casual plans, use a natural active street or neighborhood moment. For formal plans, use a refined setting and composed posture. Avoid an artificial studio unless the plan explicitly calls for one.
+Setting and season: ${settingDirection} ${season} Make the environment, natural light, pose, layering, and overall mood appropriate to the stated place, time of year, weather expectations, dress code, and outfit note. For walking or casual plans, use a natural active street or neighborhood moment. For formal plans, use a refined setting and composed posture. Avoid an artificial studio unless the plan explicitly calls for one.
 
 Composition: Keep the entire outfit readable. Use a head-to-toe or sufficiently wide view whenever trousers, skirts, dresses, or footwear are included. Do not obscure one supplied garment with another unnecessarily.
 
-No text, captions, watermark, collage, split screen, product mockup, extra people, duplicate person, or synthetic appearance.`;
+No text, captions, watermark, collage, split screen, product mockup, extra people, duplicate person, or synthetic appearance.${creativeDirection}`;
 }
 
-export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile = {}, outfit = {}, garments = []) {
+export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile = {}, outfit = {}, garments = [], contextInput = {}) {
   const people = Array.isArray(personReferenceCount) && personReferenceCount.length
     ? personReferenceCount
     : [{ profile, referenceCount: Math.max(1, Math.min(3, Math.round(personReferenceCount)) ) }];
@@ -2321,6 +2335,9 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
     garment.tags?.length ? garment.tags.join(", ") : null,
   ].filter(Boolean).join(" — ")).join("; ");
   const context = normalizeOutfitContext(outfit.context);
+  const hasModeledContext = contextInput && typeof contextInput === "object" && !Array.isArray(contextInput)
+    && Object.keys(contextInput).length > 0;
+  const modeledContext = normalizeModeledLookContext(contextInput);
   const presentation = normalizeOutfitPresentation(outfit.presentation);
   const presentationByPerson = new Map(outfitPresentationForPeople(
     presentation,
@@ -2334,12 +2351,16 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
   ].filter(Boolean).join(" ")).join(" ");
   const personDirections = people.map((person, index) => {
     const label = person.profile?.name || `Person ${index + 1}`;
-    const personal = presentationByPerson.get(person.profile?.id);
-    const pose = personal?.pose || (people.length === 1 ? presentation.pose : "automatic");
+    const personal = modeledContext.people.find((entry) => entry.personId === person.profile?.id)
+      || (!hasModeledContext ? presentationByPerson.get(person.profile?.id) : null);
+    const pose = personal?.pose || (!hasModeledContext && people.length === 1 ? presentation.pose : "automatic");
     const details = [
-      pose !== "automatic" ? `Pose: ${outfitPosePrompt(pose) || pose}` : null,
-      personal?.hairstyle && personal.hairstyle !== "automatic" ? `hairstyle: ${outfitHairstylePrompt(personal.hairstyle) || personal.hairstyle}; preserve their real hair color, hairline, and texture` : null,
-      personal?.direction ? `individual user direction: ${personal.direction}` : null,
+      pose !== "automatic" ? `Pose: ${outfitPosePrompt(pose) || modeledLookOptionPrompt("pose", pose) || pose}` : null,
+      personal?.hairstyle && personal.hairstyle !== "automatic" ? `hairstyle: ${outfitHairstylePrompt(personal.hairstyle) || modeledLookOptionPrompt("hairstyle", personal.hairstyle)}; preserve their real hair color, hairline, and texture` : null,
+      personal?.bodyOrientation ? `body orientation: ${modeledLookOptionPrompt("bodyOrientation", personal.bodyOrientation)}` : null,
+      personal?.headOrientation ? `head orientation: ${modeledLookOptionPrompt("headOrientation", personal.headOrientation)}` : null,
+      personal?.expression ? `expression: ${modeledLookOptionPrompt("expression", personal.expression)}` : null,
+      personal?.additionalDirection || personal?.direction ? `individual user direction: ${personal.additionalDirection || personal.direction}` : null,
     ].filter(Boolean);
     return details.length ? `${label}: ${details.join("; ")}.` : `${label}: choose a natural pose that keeps their assigned outfit readable.`;
   }).join(" ");
@@ -2347,10 +2368,19 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
     ? modeledIdentityLock(people[0].profile?.name || "the referenced person")
     : `Identity lock — highest priority: Maintain the exact identity of every named character from only that character's own subject mapping. For each person, keep the same facial geometry and distinctive eye shape, color and spacing; eyebrows; nose; mouth and lips; cheekbones; jawline and face contour; chin contour; ears; hairline, hair color and texture; skin tone and visible skin texture; apparent age; body shape; height impression; and proportions. Expressions, poses, hairstyles, clothing and lighting may change, but identity traits must not. Do not beautify, idealize, age, slim, enlarge, symmetrize, reshape, smooth away real skin texture, add unreferenced makeup, substitute generic fashion-model faces, or transfer any feature between people. Reconcile different views within each character's mapped images as the same real person; never average, blend or invent identities.`;
   const presentationDirection = [
-    presentation.background !== "automatic" ? `Background: ${presentation.background}.` : "Choose a tasteful background appropriate to the outfit context.",
-    presentation.style !== "automatic" ? `Photographic style: ${presentation.style}.` : "Use a natural editorial fashion-photography style.",
+    modeledContext.backgroundReferenceId
+      ? `Use Image ${count + garments.length} as the exact saved scene reference, preserving its recognizable architecture, layout, materials, vegetation, and atmosphere while placing every person naturally into it. Do not copy people, animals, text, or transient objects from it.`
+      : !hasModeledContext && presentation.background !== "automatic" ? `Background: ${presentation.background}.` : "Choose a tasteful background appropriate to the outfit context.",
+    modeledContext.photographicStyle
+      ? modeledLookContextPrompt({ photographicStyle: modeledContext.photographicStyle })
+      : !hasModeledContext && presentation.style !== "automatic" ? `Photographic style: ${presentation.style}.` : "Use a natural editorial fashion-photography style.",
     `Per-person direction: ${personDirections}`,
-    presentation.direction ? `Additional user direction: ${presentation.direction}` : null,
+    modeledLookContextPrompt({
+      environmentType: modeledContext.environmentType,
+      setting: modeledContext.setting,
+      weather: modeledContext.weather,
+      additionalDirection: modeledContext.additionalDirection || (!hasModeledContext ? presentation.direction : ""),
+    }),
   ].filter(Boolean).join(" ");
 
   return `Create one professional horizontal 3:2 modeled fashion photograph for Outfit Studio.
@@ -2358,6 +2388,7 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
 Reference indexing: Image 0 is the first supplied image reference after this prompt; numbering is zero-based.
 Subjects: ${identityReferences}
 Garments: ${garmentReferences}
+${modeledContext.backgroundReferenceId ? `Scene reference: Image ${count + garments.length} is the user's saved background.` : ""}
 ${modeledReferenceRoleRules()}
 
 Mandatory outfit: Dress the referenced ${people.length === 1 ? "person" : "people"} in EVERY supplied garment assigned to them. Preserve the exact product identity, silhouette, color version shown in its reference, material, pattern, fit, construction, logo, and distinctive detail. Do not omit, replace, merge, redesign, recolor, swap between people, or invent any supplied garment. Garment details: ${requirements}.
@@ -3757,6 +3788,21 @@ export function wardrobeImportApi(options = {}) {
           if (avatarAssetId) profile.assetIds[reference.avatarFileName] = avatarAssetId;
         }
       }
+      for (const reference of profile.backgroundReferences || []) {
+        const backgroundDir = profileBackgroundDir(profile.id);
+        for (const fileName of profileBackgroundAssetNames(reference)) {
+          const assetId = await registerLocalAsset({
+            file: path.join(backgroundDir, fileName),
+            ownerUserId: profile.id,
+            entityType: "profile",
+            entityId: profile.id,
+            role: fileName === reference.previewFileName ? "background-preview" : "background",
+            mediaKind: "profile-background",
+            ...(fileName === reference.previewFileName ? { cachePolicy: "private-immutable" } : {}),
+          });
+          if (assetId) profile.assetIds[fileName] = assetId;
+        }
+      }
       for (const asset of [
         ...wardrobePlanAssets(profile.wardrobePlans),
         ...wardrobeOutfitAssets(profile.wardrobeOutfits),
@@ -4268,6 +4314,9 @@ export function wardrobeImportApi(options = {}) {
     reference.fileName,
     reference.avatarFileName,
   ].filter(Boolean);
+  const profileBackgroundDir = (userId) => path.join(profilesDir, userId, "backgrounds");
+  const profileBackgroundUrl = (userId, fileName) => `${USERS_ROOT}/${userId}/backgrounds/${encodeURIComponent(fileName)}`;
+  const profileBackgroundAssetNames = (reference = {}) => [reference.fileName, reference.previewFileName].filter(Boolean);
   const cleanProfileText = (value, maxLength) => typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 
   const normalizeProfile = (input = {}, existing = {}) => {
@@ -4370,6 +4419,13 @@ export function wardrobeImportApi(options = {}) {
       url: storedAssetUrl({ assetIds }, profileReferenceUrl(profile.id, reference.fileName), profile.id),
       avatarUrl: reference.avatarFileName
         ? storedAssetUrl({ assetIds }, profileReferenceUrl(profile.id, reference.avatarFileName), profile.id)
+        : undefined,
+    })),
+    backgroundReferences: (profile.backgroundReferences || []).map((reference) => ({
+      ...reference,
+      url: storedAssetUrl({ assetIds }, profileBackgroundUrl(profile.id, reference.fileName), profile.id),
+      previewUrl: reference.previewFileName
+        ? storedAssetUrl({ assetIds }, profileBackgroundUrl(profile.id, reference.previewFileName), profile.id)
         : undefined,
     })),
   });
@@ -4608,6 +4664,7 @@ export function wardrobeImportApi(options = {}) {
         googleSubject: identity.subject,
         email,
         referenceImages: [],
+        backgroundReferences: [],
         tutorial: { status: "pending", step: "profile" },
         createdAt: now,
         updatedAt: now,
@@ -4720,6 +4777,56 @@ export function wardrobeImportApi(options = {}) {
     return references;
   }
 
+  async function saveProfileBackgrounds(userId, images) {
+    if (!Array.isArray(images) || images.length < 1 || images.length > 8) {
+      throw apiError("Choose between one and eight background photos.", 400, "invalid_background_reference_count");
+    }
+    const backgroundDir = profileBackgroundDir(userId);
+    await mkdir(backgroundDir, { recursive: true });
+    const references = [];
+    try {
+      for (const [index, image] of images.entries()) {
+        const source = decodeImage({ imageDataUrl: typeof image === "string" ? image : image?.dataUrl });
+        const prepared = await prepareProviderImage(source.data);
+        const id = randomUUID();
+        const fileName = `${id}${prepared.extension}`;
+        const previewFileName = imageVariantFileName(fileName, "preview");
+        const reference = {
+          id,
+          name: cleanProfileText(image?.name, 120) || `Background ${index + 1}`,
+          fileName,
+          previewFileName,
+          mime: prepared.mime,
+        };
+        references.push(reference);
+        const sourceFile = path.join(backgroundDir, fileName);
+        await writeFile(sourceFile, prepared.data);
+        await writeImageVariant(sourceFile, path.join(backgroundDir, previewFileName), "preview");
+      }
+    } catch (error) {
+      await Promise.all(references.flatMap((reference) => profileBackgroundAssetNames(reference)
+        .map((fileName) => rm(path.join(backgroundDir, fileName), { force: true }))));
+      throw error;
+    }
+    return references;
+  }
+
+  async function loadProfileBackground(profile, referenceId) {
+    if (!referenceId) return null;
+    const reference = (profile?.backgroundReferences || []).find((candidate) => candidate.id === referenceId);
+    if (!reference) throw apiError("That saved background no longer exists.", 409, "background_reference_not_found");
+    const file = path.join(profileBackgroundDir(profile.id), reference.fileName);
+    try {
+      return {
+        reference,
+        image: { data: await readFile(file), mime: reference.mime || imageMime(file), name: reference.name || "saved-background" },
+      };
+    } catch (error) {
+      if (error.code === "ENOENT") throw apiError("That saved background image is missing. Add it to the profile again.", 409, "background_reference_missing");
+      throw error;
+    }
+  }
+
   async function backfillProfileReferenceAvatars() {
     const store = await loadUsersStore();
     if (!store) return;
@@ -4792,6 +4899,7 @@ export function wardrobeImportApi(options = {}) {
       }, {
         id: "default",
         referenceImages: [],
+        backgroundReferences: [],
         createdAt: now,
         updatedAt: now,
       });
@@ -5592,6 +5700,8 @@ Interpret this correction semantically in whatever language it is written. It ov
       };
       const editImage = provider.id === "openrouter" ? openRouterEdit : openAIEdit;
       const modeledContext = normalizeModeledLookContext(context);
+      const background = await loadProfileBackground(profile, modeledContext.backgroundReferenceId);
+      if (background) modeledContext.backgroundReferenceName = background.reference.name;
       const prompt = options.modeledPrompt || buildModeledPrompt(models.length, profile, modeledRecord, modeledContext);
       const modeledModel = modeledModelForReferenceCount(provider, models.length);
       console.info(`[wardrobe] Generating requested modeled look with ${provider.label} / ${modeledModel} for "${record.name}" using ${models.length} identity reference${models.length === 1 ? "" : "s"}...`);
@@ -5602,7 +5712,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         fallbackModels: provider.imageFallbackModels,
         quality: provider.imageQuality,
         size: "1536x1024",
-        images: [...models, garment],
+        images: [...models, garment, ...(background ? [background.image] : [])],
         prompt,
         operation: "modeled-on-demand",
         trace: {
@@ -5613,6 +5723,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           itemName: record.name,
           attempt: existingLooks.length + 1,
           personReferenceCount: models.length,
+          backgroundReferenceId: background?.reference.id || null,
         },
       }));
 
@@ -5660,7 +5771,7 @@ Interpret this correction semantically in whatever language it is written. It ov
     return task;
   }
 
-  async function generatePlannedOutfitLook(planId, outfitIndex, user, payerProfile = null) {
+  async function generatePlannedOutfitLook(planId, outfitIndex, user, payerProfile = null, context = {}) {
     const normalizedOutfitIndex = Number(outfitIndex);
     if (!Number.isInteger(normalizedOutfitIndex) || normalizedOutfitIndex < 0 || normalizedOutfitIndex > 11) {
       throw apiError("That planned outfit could not be found.", 404, "planner_outfit_not_found");
@@ -5698,6 +5809,9 @@ Interpret this correction semantically in whatever language it is written. It ov
         );
       }
       const personReferences = await loadProfileReferenceImages(profile);
+      const modeledContext = normalizeModeledLookContext(context);
+      const background = await loadProfileBackground(profile, modeledContext.backgroundReferenceId);
+      if (background) modeledContext.backgroundReferenceName = background.reference.name;
       const garmentReferences = await Promise.all(garments.map(async (record, index) => {
         const fileName = path.basename(new URL(record.image, "http://localhost").pathname);
         return {
@@ -5714,6 +5828,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         plan,
         outfit,
         garments,
+        modeledContext,
       );
       console.info(`[wardrobe] Generating planned outfit "${outfit.name}" with ${provider.label} / ${modeledModel} using ${garments.length} garment reference${garments.length === 1 ? "" : "s"}...`);
       const generation = await withGenerationSlot(() => editWithSafetyFallback({
@@ -5723,7 +5838,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         fallbackModels: provider.imageFallbackModels,
         quality: provider.imageQuality,
         size: "1536x1024",
-        images: [...personReferences, ...garmentReferences],
+        images: [...personReferences, ...garmentReferences, ...(background ? [background.image] : [])],
         prompt,
         operation: "modeled-plan",
         trace: {
@@ -5732,6 +5847,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           planTitle: plan.input.title || plan.input.location,
           attempt: (outfit.modeledLooks?.length || (outfit.modeledLook ? 1 : 0)) + 1,
           personReferenceCount: personReferences.length,
+          backgroundReferenceId: background?.reference.id || null,
         },
       }));
 
@@ -5751,6 +5867,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         ...(modeledPreview ? { preview: modeledPreview } : {}),
         model: generation.model,
         fallbackUsed: generation.fallbackUsed,
+        context: modeledContext,
         generatedAt,
       };
 
@@ -5814,7 +5931,7 @@ Interpret this correction semantically in whatever language it is written. It ov
     return task;
   }
 
-  async function generateSavedOutfitLook(outfitId, user, payerProfile = null) {
+  async function generateSavedOutfitLook(outfitId, user, payerProfile = null, context = {}) {
     const lock = `outfit:${outfitId}:modeled`;
     if (running.has(lock)) return running.get(lock);
     const task = (async () => {
@@ -5865,6 +5982,9 @@ Interpret this correction semantically in whatever language it is written. It ov
         };
       }));
       const personReferences = peopleWithReferences.flatMap((person) => person.references);
+      const modeledContext = normalizeModeledLookContext(context);
+      const background = await loadProfileBackground(profile, modeledContext.backgroundReferenceId);
+      if (background) modeledContext.backgroundReferenceName = background.reference.name;
       const garmentReferences = await Promise.all(selections.map(async (selection, index) => {
         const fileName = path.basename(new URL(selection.image, "http://localhost").pathname);
         return {
@@ -5885,6 +6005,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           secondaryColor: variant?.secondaryColor || record.secondaryColor,
           wearerName: profileMap.get(wearerId)?.name || "the wardrobe owner",
         })),
+        modeledContext,
       );
       console.info(`[wardrobe] Generating Outfit Studio look "${outfit.name}" with ${provider.label} / ${modeledModel} using ${selections.length} garment reference${selections.length === 1 ? "" : "s"}...`);
       const generation = await withGenerationSlot(() => editWithSafetyFallback({
@@ -5894,7 +6015,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         fallbackModels: provider.imageFallbackModels,
         quality: provider.imageQuality,
         size: "1536x1024",
-        images: [...personReferences, ...garmentReferences],
+        images: [...personReferences, ...garmentReferences, ...(background ? [background.image] : [])],
         prompt,
         operation: "modeled-outfit",
         trace: {
@@ -5904,6 +6025,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           attempt: outfit.modeledLooks.length + 1,
           personReferenceCount: personReferences.length,
           companionCount: people.length - 1,
+          backgroundReferenceId: background?.reference.id || null,
         },
       }));
 
@@ -5920,7 +6042,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         model: generation.model,
         fallbackUsed: generation.fallbackUsed,
         generatedAt,
-        presentation: outfit.presentation,
+        context: modeledContext,
       };
 
       const saved = await withUsers(async () => {
@@ -6547,6 +6669,15 @@ Interpret this correction semantically in whatever language it is written. It ov
         );
       }
     }
+    const backgroundDir = profileBackgroundDir(userId);
+    for (const reference of profile.backgroundReferences || []) {
+      for (const fileName of profileBackgroundAssetNames(reference)) {
+        yield* yieldFile(
+          path.posix.join("wardrobe-data", "data", "profiles", userId, "backgrounds", fileName),
+          path.join(backgroundDir, fileName),
+        );
+      }
+    }
 
     const assets = new Set([
       ...owned.flatMap((record) => importedRecordAssets(record)),
@@ -6726,11 +6857,13 @@ Interpret this correction semantically in whatever language it is written. It ov
           [privateAssetMatch[1]],
         );
         const asset = assetResult.rows[0];
-        const permission = asset?.media_kind === "profile-reference" ? "referenceImages" : "garments";
+        const permission = asset?.media_kind === "profile-reference"
+          ? "referenceImages"
+          : asset?.media_kind === "profile-background" ? null : "garments";
         const allowed = asset && (
           asset.owner_user_id === signedInUser.id
           || (isOwner && profileStore.users.some((profile) => profile.id === asset.owner_user_id))
-          || connectionCanShare(profileStore.connections, asset.owner_user_id, signedInIdentity.id, permission)
+          || (permission && connectionCanShare(profileStore.connections, asset.owner_user_id, signedInIdentity.id, permission))
         );
         if (!allowed) throw apiError("Wardrobe image not found.", 404, "wardrobe_image_not_found");
         res.statusCode = 302;
@@ -6968,6 +7101,10 @@ Interpret this correction semantically in whatever language it is written. It ov
         if (!Array.isArray(additions) || additions.length > 3) {
           throw apiError("Choose up to three reference photos.", 400, "invalid_reference_count");
         }
+        const backgroundAdditions = Object.hasOwn(input, "backgroundReferenceImages") ? input.backgroundReferenceImages : [];
+        if (!Array.isArray(backgroundAdditions) || backgroundAdditions.length > 8) {
+          throw apiError("Choose up to eight background photos.", 400, "invalid_background_reference_count");
+        }
         const created = await withUsers(async () => {
           const store = await loadUsersStore();
           if (!store) throw apiError("User profiles are not initialized.", 503, "profiles_unavailable");
@@ -6976,8 +7113,11 @@ Interpret this correction semantically in whatever language it is written. It ov
           }
           const now = new Date().toISOString();
           const id = randomUUID();
-          const referenceImages = additions.length ? await saveProfileReferences(id, additions) : [];
+          let referenceImages = [];
+          let backgroundReferences = [];
           try {
+            referenceImages = additions.length ? await saveProfileReferences(id, additions) : [];
+            backgroundReferences = backgroundAdditions.length ? await saveProfileBackgrounds(id, backgroundAdditions) : [];
             const profile = normalizeProfile(input, {
               id,
               googleSubject: null,
@@ -6986,6 +7126,7 @@ Interpret this correction semantically in whatever language it is written. It ov
               accountClaimedAt: null,
               preparedByUserId: signedInIdentity.id,
               referenceImages,
+              backgroundReferences,
               tutorial: { status: "pending", step: "profile" },
               createdAt: now,
               updatedAt: now,
@@ -6997,6 +7138,8 @@ Interpret this correction semantically in whatever language it is written. It ov
           } catch (error) {
             await Promise.all(referenceImages.flatMap((reference) => profileReferenceAssetNames(reference)
               .map((fileName) => rm(path.join(profileReferenceDir(id), fileName), { force: true }))));
+            await Promise.all(backgroundReferences.flatMap((reference) => profileBackgroundAssetNames(reference)
+              .map((fileName) => rm(path.join(profileBackgroundDir(id), fileName), { force: true }))));
             throw error;
           }
         });
@@ -7106,6 +7249,28 @@ Interpret this correction semantically in whatever language it is written. It ov
         }
         return res.end(await readFile(file));
       }
+      const backgroundMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})\/backgrounds\/([\w.-]+)$/i);
+      if (backgroundMatch && req.method === "GET") {
+        if (backgroundMatch[1] !== signedInUserId) throw apiError("Background photo not found.", 404, "background_reference_not_found");
+        const profile = signedInUser;
+        const reference = profile?.backgroundReferences?.find((candidate) => profileBackgroundAssetNames(candidate).includes(backgroundMatch[2]));
+        if (!reference) throw apiError("Background photo not found.", 404, "background_reference_not_found");
+        const fileName = backgroundMatch[2];
+        if (await redirectStoredAsset(res, profile.id, fileName)) return;
+        const file = path.join(profileBackgroundDir(profile.id), fileName);
+        const details = await stat(file);
+        const isPreview = fileName === reference.previewFileName;
+        const etag = `"${details.size.toString(16)}-${Math.trunc(details.mtimeMs).toString(16)}"`;
+        res.setHeader("Content-Type", isPreview ? "image/webp" : reference.mime || imageMime(file));
+        res.setHeader("Content-Length", details.size);
+        res.setHeader("ETag", etag);
+        res.setHeader("Cache-Control", isPreview ? "private, max-age=31536000, immutable" : "private, no-store");
+        if (req.headers["if-none-match"] === etag) {
+          res.statusCode = 304;
+          return res.end();
+        }
+        return res.end(await readFile(file));
+      }
       const profileMatch = url.pathname.match(/^\/api\/users\/(default|[a-f0-9-]{36})$/i);
       if (profileMatch && req.method === "PATCH") {
         const input = await body(req, 60 * 1024 * 1024);
@@ -7153,9 +7318,37 @@ Interpret this correction semantically in whatever language it is written. It ov
             referenceImages = [...retained, ...added];
             removedReferences = (existing.referenceImages || []).filter((reference) => !retainedIds.includes(reference.id));
           }
+          const updatingBackgrounds = Object.hasOwn(input, "backgroundReferenceImages")
+            || Object.hasOwn(input, "backgroundReferenceImageIds");
+          let backgroundReferences = existing.backgroundReferences || [];
+          let removedBackgrounds = [];
+          if (updatingBackgrounds) {
+            const retainedIds = Object.hasOwn(input, "backgroundReferenceImageIds")
+              ? input.backgroundReferenceImageIds
+              : [];
+            if (
+              !Array.isArray(retainedIds)
+              || retainedIds.some((id) => typeof id !== "string")
+              || new Set(retainedIds).size !== retainedIds.length
+            ) {
+              throw apiError("Background photo selection is invalid.", 400, "invalid_background_reference_selection");
+            }
+            const retained = backgroundReferences.filter((reference) => retainedIds.includes(reference.id));
+            if (retained.length !== retainedIds.length) {
+              throw apiError("One of the selected background photos no longer exists.", 409, "background_reference_not_found");
+            }
+            const additions = Object.hasOwn(input, "backgroundReferenceImages") ? input.backgroundReferenceImages : [];
+            if (!Array.isArray(additions) || retained.length + additions.length > 8) {
+              throw apiError("Choose up to eight background photos.", 400, "invalid_background_reference_count");
+            }
+            const added = additions.length ? await saveProfileBackgrounds(existing.id, additions) : [];
+            backgroundReferences = [...retained, ...added];
+            removedBackgrounds = (existing.backgroundReferences || []).filter((reference) => !retainedIds.includes(reference.id));
+          }
           const profile = normalizeProfile(input, {
             ...existing,
             referenceImages,
+            backgroundReferences,
             updatedAt: new Date().toISOString(),
           });
           store.users[index] = profile;
@@ -7163,6 +7356,10 @@ Interpret this correction semantically in whatever language it is written. It ov
           if (updatingReferences) {
             await Promise.all(removedReferences.flatMap((reference) => profileReferenceAssetNames(reference)
               .map((fileName) => rm(path.join(profileReferenceDir(existing.id), fileName), { force: true }))));
+          }
+          if (updatingBackgrounds) {
+            await Promise.all(removedBackgrounds.flatMap((reference) => profileBackgroundAssetNames(reference)
+              .map((fileName) => rm(path.join(profileBackgroundDir(existing.id), fileName), { force: true }))));
           }
           return { currentUserId: store.currentUserId, profile };
         });
@@ -7311,7 +7508,8 @@ Interpret this correction semantically in whatever language it is written. It ov
       }
       const outfitModeledMatch = url.pathname.match(/^\/api\/import\/outfits\/([a-z0-9-]{1,80})\/modeled(?:\/([a-z0-9-]{1,80}))?$/i);
       if (outfitModeledMatch && req.method === "POST" && !outfitModeledMatch[2]) {
-        return json(res, 200, await generateSavedOutfitLook(outfitModeledMatch[1], user, payerProfile));
+        const input = await body(req, 64 * 1024);
+        return json(res, 200, await generateSavedOutfitLook(outfitModeledMatch[1], user, payerProfile, input.context));
       }
       if (outfitModeledMatch && req.method === "DELETE" && outfitModeledMatch[2]) {
         return json(res, 200, await deleteSavedOutfitLook(outfitModeledMatch[1], outfitModeledMatch[2], user));
@@ -7455,11 +7653,13 @@ Interpret this correction semantically in whatever language it is written. It ov
       }
       const plannerOutfitMatch = url.pathname.match(/^\/api\/import\/planner\/([a-z0-9-]{1,80})\/outfits\/(\d{1,2})\/modeled$/i);
       if (plannerOutfitMatch && req.method === "POST") {
+        const input = await body(req, 64 * 1024);
         const result = await generatePlannedOutfitLook(
           plannerOutfitMatch[1],
           Number(plannerOutfitMatch[2]),
           user,
           payerProfile,
+          input.context,
         );
         return json(res, 200, result);
       }

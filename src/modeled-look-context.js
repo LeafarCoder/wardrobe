@@ -1,4 +1,11 @@
 export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
+  photographicStyle: Object.freeze([
+    { id: "editorial", label: "Editorial", description: "Polished fashion story", prompt: "polished editorial fashion photography" },
+    { id: "candid", label: "Candid", description: "Unposed everyday moment", prompt: "a natural candid lifestyle photograph" },
+    { id: "street-style", label: "Street style", description: "Fashion seen in the city", prompt: "authentic street-style fashion photography" },
+    { id: "cinematic", label: "Cinematic", description: "Dramatic light and atmosphere", prompt: "cinematic photography with natural depth and atmosphere" },
+    { id: "minimal", label: "Minimal", description: "Quiet, clean, restrained frame", prompt: "restrained minimal fashion photography" },
+  ]),
   pose: Object.freeze([
     { id: "standing", label: "Standing", prompt: "standing naturally" },
     { id: "walking", label: "Walking", prompt: "walking with a natural mid-step stride" },
@@ -7,6 +14,8 @@ export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
     { id: "sitting", label: "Sitting", prompt: "sitting in a relaxed, natural pose" },
     { id: "lying", label: "Lying down", prompt: "lying down in a natural editorial pose" },
     { id: "crouching", label: "Crouching", prompt: "crouching in a balanced, natural pose" },
+    { id: "stairs-up", label: "Going upstairs", prompt: "walking naturally up a staircase with a believable step and balanced posture" },
+    { id: "stairs-down", label: "Going downstairs", prompt: "walking naturally down a staircase with a believable step and balanced posture" },
   ]),
   hairstyle: Object.freeze([
     { id: "long-loose", label: "Long hair, loose", prompt: "long loose hair with its natural texture" },
@@ -88,7 +97,14 @@ export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
   ]),
 });
 
+export const MODELED_LOOK_CONTEXT_TRANSLATION_KEYS = Object.freeze(
+  Object.values(MODELED_LOOK_CONTEXT_OPTIONS).flatMap((options) => (
+    options.flatMap((option) => [option.label, option.description].filter(Boolean))
+  )),
+);
+
 export const EMPTY_MODELED_LOOK_CONTEXT = Object.freeze({
+  photographicStyle: "",
   pose: "",
   hairstyle: "",
   bodyOrientation: "",
@@ -97,8 +113,19 @@ export const EMPTY_MODELED_LOOK_CONTEXT = Object.freeze({
   setting: "",
   weather: "",
   expression: "",
+  backgroundReferenceId: "",
+  backgroundReferenceName: "",
   additionalDirection: "",
+  people: [],
 });
+
+const PERSON_DIRECTION_FIELDS = Object.freeze([
+  "pose",
+  "hairstyle",
+  "bodyOrientation",
+  "headOrientation",
+  "expression",
+]);
 
 function validOption(group, value) {
   return MODELED_LOOK_CONTEXT_OPTIONS[group].some((option) => option.id === value) ? value : "";
@@ -106,6 +133,10 @@ function validOption(group, value) {
 
 function optionPrompt(group, value) {
   return MODELED_LOOK_CONTEXT_OPTIONS[group].find((option) => option.id === value)?.prompt || "";
+}
+
+export function modeledLookOptionPrompt(group, value) {
+  return Object.hasOwn(MODELED_LOOK_CONTEXT_OPTIONS, group) ? optionPrompt(group, value) : "";
 }
 
 function optionLabel(group, value) {
@@ -116,7 +147,22 @@ export function normalizeModeledLookContext(input = {}) {
   const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
   const environmentType = validOption("environmentType", source.environmentType);
   const settingGroup = environmentType === "inside" ? "insideSetting" : "outsideSetting";
+  const seenPeople = new Set();
+  const people = (Array.isArray(source.people) ? source.people : []).flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const personId = typeof entry.personId === "string" ? entry.personId.trim().slice(0, 80) : "";
+    if (!personId || seenPeople.has(personId)) return [];
+    seenPeople.add(personId);
+    return [{
+      personId,
+      ...Object.fromEntries(PERSON_DIRECTION_FIELDS.map((field) => [field, validOption(field, entry[field])])),
+      additionalDirection: typeof entry.additionalDirection === "string"
+        ? entry.additionalDirection.trim().slice(0, 400)
+        : "",
+    }];
+  }).slice(0, 4);
   return {
+    photographicStyle: validOption("photographicStyle", source.photographicStyle),
     pose: validOption("pose", source.pose),
     hairstyle: validOption("hairstyle", source.hairstyle),
     bodyOrientation: validOption("bodyOrientation", source.bodyOrientation),
@@ -125,15 +171,23 @@ export function normalizeModeledLookContext(input = {}) {
     setting: environmentType ? validOption(settingGroup, source.setting) : "",
     weather: validOption("weather", source.weather),
     expression: validOption("expression", source.expression),
+    backgroundReferenceId: typeof source.backgroundReferenceId === "string"
+      ? source.backgroundReferenceId.trim().slice(0, 80)
+      : "",
+    backgroundReferenceName: typeof source.backgroundReferenceName === "string"
+      ? source.backgroundReferenceName.trim().slice(0, 120)
+      : "",
     additionalDirection: typeof source.additionalDirection === "string"
       ? source.additionalDirection.trim().slice(0, 800)
       : "",
+    people,
   };
 }
 
 export function modeledLookContextPrompt(input = {}) {
   const context = normalizeModeledLookContext(input);
   const details = [
+    context.photographicStyle ? `Photographic style: ${optionPrompt("photographicStyle", context.photographicStyle)}.` : null,
     context.pose ? `Pose and action: ${optionPrompt("pose", context.pose)}.` : null,
     context.hairstyle ? `Hairstyle: ${optionPrompt("hairstyle", context.hairstyle)}. Preserve the person's real hair color, hairline, and texture.` : null,
     context.bodyOrientation ? `Body orientation: ${optionPrompt("bodyOrientation", context.bodyOrientation)}.` : null,
@@ -145,6 +199,13 @@ export function modeledLookContextPrompt(input = {}) {
       : null,
     context.weather ? `Weather and atmosphere: ${optionPrompt("weather", context.weather)}.` : null,
     context.expression ? `Expression: ${optionPrompt("expression", context.expression)}.` : null,
+    ...context.people.map((person) => {
+      const directions = PERSON_DIRECTION_FIELDS.flatMap((field) => (
+        person[field] ? [`${field}: ${optionPrompt(field, person[field])}`] : []
+      ));
+      if (person.additionalDirection) directions.push(`additional direction: ${person.additionalDirection}`);
+      return directions.length ? `Person ${person.personId}: ${directions.join("; ")}.` : null;
+    }),
     context.additionalDirection
       ? `Additional user direction: ${context.additionalDirection}`
       : null,
@@ -159,6 +220,7 @@ export function modeledLookContextDetails(input = {}) {
     ? { id, label, values: values.filter(Boolean), translateValues: true }
     : null;
   return [
+    translated("photographicStyle", "Style", [optionLabel("photographicStyle", context.photographicStyle)]),
     translated("pose", "Pose", [optionLabel("pose", context.pose)]),
     translated("hairstyle", "Hairstyle", [optionLabel("hairstyle", context.hairstyle)]),
     translated("bodyOrientation", "Body orientation", [optionLabel("bodyOrientation", context.bodyOrientation)]),
@@ -171,6 +233,14 @@ export function modeledLookContextDetails(input = {}) {
     ]),
     translated("weather", "Weather", [optionLabel("weather", context.weather)]),
     translated("expression", "Expression", [optionLabel("expression", context.expression)]),
+    context.backgroundReferenceId
+      ? {
+          id: "backgroundReference",
+          label: "Saved background",
+          values: [context.backgroundReferenceName || context.backgroundReferenceId],
+          translateValues: false,
+        }
+      : null,
     context.additionalDirection
       ? {
           id: "additionalDirection",

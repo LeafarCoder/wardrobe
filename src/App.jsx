@@ -1510,6 +1510,7 @@ function GarmentMergeDialog({ first, second, keepId, busy, error, onKeep, onCanc
 function ItemViewer({
   item,
   currency,
+  backgroundReferences = [],
   onClose,
   onSave,
   onDelete,
@@ -2829,6 +2830,7 @@ function ItemViewer({
       <ModeledLookDialog
         garmentName={draft.name || type}
         colorVersions={colorVersions}
+        backgroundReferences={backgroundReferences}
         busy={generatingModeled}
         onClose={() => !generatingModeled && setModeledVariantPickerOpen(false)}
         onGenerate={generateModeledLook}
@@ -3850,6 +3852,7 @@ function ProfileWardrobeDisplayEditor({ value, onChange }) {
 
 const PROFILE_TABS = [
   { id: "basics", label: "Personal" },
+  { id: "references", label: "References" },
   { id: "sizes", label: "Sizes & fit" },
   { id: "style", label: "Style" },
   { id: "display", label: "Wardrobe" },
@@ -4588,6 +4591,27 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
   ];
   const referencesChanged = files.length > 0
     || retainedReferenceIds.length !== (user?.referenceImages || []).length;
+  const [backgroundFiles, setBackgroundFiles] = useState([]);
+  const [retainedBackgroundIds, setRetainedBackgroundIds] = useState(
+    () => (user?.backgroundReferences || []).map((reference) => reference.id),
+  );
+  const [backgroundError, setBackgroundError] = useState("");
+  const [pendingBackgroundRemovalId, setPendingBackgroundRemovalId] = useState(null);
+  const backgroundInputRef = useRef(null);
+  const backgroundPreviews = useMemo(() => backgroundFiles.map((file, index) => ({
+    id: `new-background-${file.name}-${file.lastModified}-${file.size}-${index}`,
+    name: file.name.replace(/\.[^.]+$/, ""),
+    url: URL.createObjectURL(file),
+    file,
+    isNew: true,
+  })), [backgroundFiles]);
+  const visibleBackgrounds = [
+    ...(user?.backgroundReferences || []).filter((reference) => retainedBackgroundIds.includes(reference.id)),
+    ...backgroundPreviews,
+  ];
+  const remainingBackgroundSlots = Math.max(0, 8 - visibleBackgrounds.length);
+  const backgroundsChanged = backgroundFiles.length > 0
+    || retainedBackgroundIds.length !== (user?.backgroundReferences || []).length;
 
   const closeEditor = () => {
     setLocale(originalLanguageRef.current);
@@ -4595,6 +4619,7 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
   };
 
   useEffect(() => () => previews.forEach((preview) => URL.revokeObjectURL(preview.url)), [previews]);
+  useEffect(() => () => backgroundPreviews.forEach((preview) => URL.revokeObjectURL(preview.url)), [backgroundPreviews]);
 
   useEffect(() => {
     if (!referencePreview) return undefined;
@@ -4636,6 +4661,30 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
     setFileError("");
   };
 
+  const chooseBackgrounds = (event) => {
+    const selected = [...event.target.files].filter((file) => file.type.startsWith("image/"));
+    const accepted = selected.slice(0, remainingBackgroundSlots);
+    setBackgroundFiles((current) => [...current, ...accepted]);
+    setBackgroundError(selected.length > accepted.length
+      ? tr("Only {count} more background photos fit in this profile.", { count: remainingBackgroundSlots })
+      : "");
+    event.target.value = "";
+  };
+
+  const removeBackground = (reference) => {
+    if (pendingBackgroundRemovalId !== reference.id) {
+      setPendingBackgroundRemovalId(reference.id);
+      return;
+    }
+    if (reference.isNew) {
+      setBackgroundFiles((current) => current.filter((file) => file !== reference.file));
+    } else {
+      setRetainedBackgroundIds((current) => current.filter((id) => id !== reference.id));
+    }
+    setPendingBackgroundRemovalId(null);
+    setBackgroundError("");
+  };
+
   const submit = async (event) => {
     event.preventDefault();
     if (!isNew && referencesChanged && !visibleReferences.length) {
@@ -4649,11 +4698,24 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
     const referenceUpdate = isNew || referencesChanged
       ? { referenceImageIds: retainedReferenceIds, referenceImages: referenceImages || [] }
       : {};
+    const backgroundReferenceImages = backgroundFiles.length
+      ? await Promise.all(backgroundFiles.map(async (file) => ({
+          name: file.name.replace(/\.[^.]+$/, ""),
+          dataUrl: await fileToDataUrl(file),
+        })))
+      : undefined;
+    const backgroundUpdate = backgroundsChanged
+      ? {
+          backgroundReferenceImageIds: retainedBackgroundIds,
+          backgroundReferenceImages: backgroundReferenceImages || [],
+        }
+      : {};
     await onSave({
       ...draft,
       age: draft.age === "" ? null : Number(draft.age),
       ...(!accountEditable ? { accountEmail: undefined } : {}),
       ...referenceUpdate,
+      ...backgroundUpdate,
       // Omitted entirely unless the person actually typed a new key, so saving
       // any other tab never disturbs the stored one.
       ...(typeof apiKeyDraft === "string" ? { openRouterApiKey: apiKeyDraft.trim() } : {}),
@@ -4827,6 +4889,78 @@ function ProfileEditor({ user, busy, error, canManageAccount, onClose, onSave, o
                   <button type="button" onClick={onStartTutorial}>{tr("Start walkthrough")}</button>
                 </div>
               )}
+            </section>
+          )}
+          {activeTab === "references" && (
+            <section className="profile-tab-panel profile-reference-library" role="tabpanel" id="profile-panel-references" aria-labelledby="profile-tab-references">
+              <div className="profile-tab-intro">
+                <div>
+                  <h3>{tr("Reference image library")}</h3>
+                  <p>{tr("Keep reusable visual references here. Backgrounds can be chosen from the modeled-look composer for garments, outfits, and plans.")}</p>
+                </div>
+                <span><ImageSquare size={16} /> {tr("{count}/8 backgrounds", { count: visibleBackgrounds.length })}</span>
+              </div>
+              <section className="profile-reference-overview">
+                <div>
+                  <span>{tr("Model identity")}</span>
+                  <h4>{tr("Photos used to preserve your identity")}</h4>
+                  <p>{tr("These portraits identify the person in generated looks. They stay separate from scene and background references.")}</p>
+                </div>
+                <div className="profile-reference-overview__photos">
+                  {visibleReferences.map((reference) => <img key={reference.id || reference.url} src={reference.avatarUrl || reference.url} alt="" />)}
+                </div>
+                <button type="button" onClick={() => setActiveTab("basics")}>{tr("Edit identity photos")}</button>
+              </section>
+              <section className="profile-background-library">
+                <header>
+                  <div>
+                    <span>{tr("Backgrounds")}</span>
+                    <h4>{tr("Your places and environments")}</h4>
+                    <p>{tr("Add rooms, gardens, streets, venues, or other places you want to reuse. Wardrobe treats these as scene references, never as identity photos.")}</p>
+                  </div>
+                  <button type="button" onClick={() => backgroundInputRef.current?.click()} disabled={busy || remainingBackgroundSlots === 0}>
+                    <Plus size={14} />{tr("Add backgrounds")}
+                  </button>
+                </header>
+                <input
+                  ref={backgroundInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  multiple
+                  hidden
+                  disabled={busy || remainingBackgroundSlots === 0}
+                  onChange={chooseBackgrounds}
+                />
+                {!!visibleBackgrounds.length ? (
+                  <div className="profile-background-grid">
+                    {visibleBackgrounds.map((reference) => {
+                      const pendingRemoval = pendingBackgroundRemovalId === reference.id;
+                      return (
+                        <article key={reference.id}>
+                          <img src={reference.previewUrl || reference.url} alt="" />
+                          <div><strong>{reference.name}</strong><small>{tr(reference.isNew ? "Added when you save" : "Available in every modeled-look composer")}</small></div>
+                          <button
+                            type="button"
+                            className={pendingRemoval ? "is-confirming" : ""}
+                            onClick={() => removeBackground(reference)}
+                            aria-label={pendingRemoval ? tr("Confirm removing {name}", { name: reference.name }) : tr("Remove {name}", { name: reference.name })}
+                          >
+                            {pendingRemoval ? <Check size={13} weight="bold" /> : <Trash size={13} />}
+                            {pendingRemoval && <span>{tr("Confirm")}</span>}
+                          </button>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <button className="profile-background-empty" type="button" onClick={() => backgroundInputRef.current?.click()} disabled={busy}>
+                    <ImageSquare size={26} weight="light" />
+                    <strong>{tr("Add your first background")}</strong>
+                    <span>{tr("For example, your living room, garden, a church square, or a favorite street.")}</span>
+                  </button>
+                )}
+                {backgroundError && <small className="profile-field-error">{backgroundError}</small>}
+              </section>
             </section>
           )}
           {activeTab === "sizes" && (
@@ -5279,6 +5413,7 @@ function WardrobePlanner({
   const [outfitErrors, setOutfitErrors] = useState({});
   const [outfitImageIndices, setOutfitImageIndices] = useState({});
   const [outfitLightbox, setOutfitLightbox] = useState(null);
+  const [modeledDialogOutfitIndex, setModeledDialogOutfitIndex] = useState(null);
   const [addingIdeas, setAddingIdeas] = useState(false);
   const [ideasError, setIdeasError] = useState("");
   const plans = user.wardrobePlans || [];
@@ -5304,17 +5439,21 @@ function WardrobePlanner({
     }
     setDeletingPlanId(null);
   };
-  const generateOutfit = async (outfitIndex) => {
+  const generateOutfit = async (_variantId, context) => {
     if (!selectedPlan) return;
+    const outfitIndex = modeledDialogOutfitIndex;
+    if (!Number.isInteger(outfitIndex)) return;
     const key = `${selectedPlan.id}:${outfitIndex}`;
     setGeneratingOutfitKey(key);
     setOutfitErrors((current) => ({ ...current, [key]: "" }));
     try {
-      const result = await onGenerateOutfit(selectedPlan.id, outfitIndex);
+      const result = await onGenerateOutfit(selectedPlan.id, outfitIndex, context);
       const nextIndex = Math.max(0, (result?.modeledLooks?.length || 1) - 1);
       setOutfitImageIndices((current) => ({ ...current, [key]: nextIndex }));
+      setModeledDialogOutfitIndex(null);
     } catch (requestError) {
       setOutfitErrors((current) => ({ ...current, [key]: readableError(requestError) }));
+      throw requestError;
     } finally {
       setGeneratingOutfitKey("");
     }
@@ -5554,7 +5693,7 @@ function WardrobePlanner({
                           <button
                             className="planner-outfit-generate"
                             type="button"
-                            onClick={() => generateOutfit(outfitIndex)}
+                            onClick={() => setModeledDialogOutfitIndex(outfitIndex)}
                             disabled={generating}
                           >
                             {generating
@@ -5593,6 +5732,16 @@ function WardrobePlanner({
           </div>
         </div>
       </section>
+      {Number.isInteger(modeledDialogOutfitIndex) && selectedPlan?.result.outfitIdeas[modeledDialogOutfitIndex] && (
+        <ModeledLookDialog
+          itemName={selectedPlan.result.outfitIdeas[modeledDialogOutfitIndex].name}
+          backgroundReferences={user.backgroundReferences || []}
+          eyebrow="Planned outfit"
+          busy={generatingOutfitKey === `${selectedPlan.id}:${modeledDialogOutfitIndex}`}
+          onClose={() => !generatingOutfitKey && setModeledDialogOutfitIndex(null)}
+          onGenerate={generateOutfit}
+        />
+      )}
       {outfitLightbox && (
         <div
           className="planner-look-lightbox"
@@ -6703,12 +6852,12 @@ export function App() {
     }
   };
 
-  const generatePlannedOutfitLook = async (planId, outfitIndex) => {
+  const generatePlannedOutfitLook = async (planId, outfitIndex, context = {}) => {
     setPlannerError("");
     try {
       const result = await profileApi(
         `/api/import/planner/${encodeURIComponent(planId)}/outfits/${outfitIndex}/modeled?user=${encodeURIComponent(currentUserId)}`,
-        { method: "POST" },
+        { method: "POST", body: JSON.stringify({ context }) },
       );
       setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
       return result;
@@ -6772,9 +6921,10 @@ export function App() {
     return result.user.wardrobeOutfits;
   };
 
-  const generateWardrobeOutfitLook = async (outfitId) => {
+  const generateWardrobeOutfitLook = async (outfitId, context = {}) => {
     const result = await profileApi(`/api/import/outfits/${encodeURIComponent(outfitId)}/modeled?user=${encodeURIComponent(currentUserId)}`, {
       method: "POST",
+      body: JSON.stringify({ context }),
     });
     setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
     return result;
@@ -7045,6 +7195,7 @@ export function App() {
         <ItemViewer
           item={selectedItem}
           currency={normalizePurchaseCurrency(currentUser?.preferredCurrency)}
+          backgroundReferences={currentUser?.backgroundReferences || []}
           onClose={closeViewer}
           onSave={saveItem}
           onDelete={deleteItem}

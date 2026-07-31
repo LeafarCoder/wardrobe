@@ -24,18 +24,14 @@ import {
 } from "@phosphor-icons/react";
 import { tr } from "./i18n.js";
 import { OptimizedImage } from "./OptimizedImage.jsx";
+import { ModeledLookDialog } from "./ModeledLookDialog.jsx";
 import {
   currentNorthernSeason,
   normalizeOutfitContext,
   normalizeOutfitPresentation,
-  outfitPresentationForPeople,
-  OUTFIT_BACKGROUNDS,
-  OUTFIT_HAIRSTYLES,
   OUTFIT_MAX_GARMENTS,
   OUTFIT_OCCASIONS,
-  OUTFIT_POSES,
   OUTFIT_SEASONS,
-  OUTFIT_STYLES,
   OUTFIT_WEATHER,
   outfitGarmentSource,
 } from "./outfit-studio.js";
@@ -182,7 +178,6 @@ export function OutfitStudio({
   const [contextDialogOpen, setContextDialogOpen] = useState(false);
   const [pendingContext, setPendingContext] = useState(normalizeOutfitContext({}));
   const [modeledDialogOpen, setModeledDialogOpen] = useState(false);
-  const [pendingPresentation, setPendingPresentation] = useState(normalizeOutfitPresentation({}));
   const draftId = useRef(crypto.randomUUID());
   const connectionMap = useMemo(() => new Map(connections.map((connection) => [connection.person.id, connection])), [connections]);
   const allItems = useMemo(() => [
@@ -395,34 +390,20 @@ export function OutfitStudio({
       setActivePersonId(undressedPeople[0].id);
       return;
     }
-    setPendingPresentation(outfitPresentationForPeople(
-      draft.presentation,
-      scenePeople.map((person) => person.id),
-    ));
     setModeledDialogOpen(true);
   };
 
-  const updatePendingPerson = (personId, change) => {
-    setPendingPresentation((current) => ({
-      ...current,
-      people: current.people.map((person) => person.personId === personId
-        ? { ...person, ...change }
-        : person),
-    }));
-  };
-
-  const generateModeled = async () => {
-    setModeledDialogOpen(false);
+  const generateModeled = async (_variantId, context) => {
     setBusy("generate");
     setError("");
     try {
-      const nextDraft = { ...draft, presentation: pendingPresentation };
-      setDraft(nextDraft);
-      const saved = await onSave({ ...nextDraft, name: nextDraft.name || tr("Untitled outfit") });
-      const result = await onGenerate(saved.id);
+      const saved = await onSave({ ...draft, name: draft.name || tr("Untitled outfit") });
+      const result = await onGenerate(saved.id, context);
       loadOutfit(result.outfit);
+      setModeledDialogOpen(false);
     } catch (requestError) {
       setError(requestError.message);
+      throw requestError;
     } finally {
       setBusy("");
     }
@@ -670,63 +651,20 @@ export function OutfitStudio({
         {!!aiCandidates.length && activeAi && <StudioDialog title={tr("Choose an improved outfit")} eyebrow={tr("AI suggestions")} onCancel={() => { setAiCandidates([]); setAiOriginal(null); }} actions={<><button type="button" onClick={() => { setAiCandidates([]); setAiOriginal(null); }}>{tr("Keep mine")}</button><button type="button" className="primary" onClick={() => applyCandidate(activeAi)}><Check />{tr("Use this outfit")}</button></>}><div className="outfit-ai-tabs">{aiCandidates.map((candidate, index) => <button type="button" className={activeAiIndex === index ? "active" : ""} key={candidate.id || index} onClick={() => setActiveAiIndex(index)}>{tr("Option {number}", { number: index + 1 })}</button>)}</div><div className="outfit-comparison-boards"><article><span>{tr("Your outfit")}</span><h4>{aiOriginal?.name || tr("Current board")}</h4><div>{(aiOriginal?.garments || []).map((selection) => <MiniGarment key={selection.itemId} item={itemMap.get(selection.itemId)} selection={selection} changed={!candidateIds.has(selection.itemId)} removed={!candidateIds.has(selection.itemId)} />)}</div></article><article className="ai-option"><span><Sparkle />{tr("AI option")}</span><h4>{activeAi.name}</h4><div>{activeAi.itemIds.map((id) => <MiniGarment key={id} item={itemMap.get(id)} changed={!originalIds.has(id)} />)}</div><p>{activeAi.explanation}</p></article></div></StudioDialog>}
 
         {modeledDialogOpen && (
-          <StudioDialog
-            title={tr("Direct the modeled look")}
-            eyebrow={tr("Paid AI image")}
-            onCancel={() => setModeledDialogOpen(false)}
-            actions={(
-              <>
-                <button type="button" onClick={() => setModeledDialogOpen(false)}>{tr("Cancel")}</button>
-                <button type="button" className="primary" onClick={generateModeled}><Sparkle />{tr("Generate image")}</button>
-              </>
-            )}
-          >
-            <p>{tr("Choose the scene only when you are ready. Generating an image is a paid AI action and saves this outfit first.")}</p>
-            <ChipGroup title="Background" options={OUTFIT_BACKGROUNDS} value={pendingPresentation.background} onChange={(background) => setPendingPresentation((value) => ({ ...value, background }))} />
-            <ChipGroup title="Style" options={OUTFIT_STYLES} value={pendingPresentation.style} onChange={(style) => setPendingPresentation((value) => ({ ...value, style }))} />
-            <div className="outfit-person-directions">
-              <div className="outfit-person-directions__heading">
-                <span>{tr("People in this image")}</span>
-                <small>{tr("Pose and hairstyle belong to each person.")}</small>
-              </div>
-              {scenePeople.map((person) => {
-                const personPresentation = pendingPresentation.people.find((entry) => entry.personId === person.id);
-                if (!personPresentation) return null;
-                const reference = person.profile.referenceImages?.[0];
-                return (
-                  <article key={person.id}>
-                    <header>
-                      <span className="outfit-person-avatar">
-                        {reference ? <img src={reference.avatarUrl || reference.url} alt="" /> : person.name?.[0]}
-                      </span>
-                      <div>
-                        <strong>{person.isMe ? tr("Me") : person.name}</strong>
-                        <small>{tr("{count} selected pieces", { count: garmentCountByPerson.get(person.id) || 0 })}</small>
-                      </div>
-                    </header>
-                    <ChipGroup title="Pose" options={OUTFIT_POSES} value={personPresentation.pose} onChange={(pose) => updatePendingPerson(person.id, { pose })} />
-                    <ChipGroup title="Hairstyle" options={OUTFIT_HAIRSTYLES} value={personPresentation.hairstyle} onChange={(hairstyle) => updatePendingPerson(person.id, { hairstyle })} />
-                    <label className="outfit-direction">
-                      <span>{tr("Direction for {name}", { name: person.isMe ? tr("Me") : person.name })} <small>{tr("optional")}</small></span>
-                      <textarea
-                        rows="2"
-                        maxLength="300"
-                        value={personPresentation.direction}
-                        onChange={(event) => updatePendingPerson(person.id, { direction: event.target.value })}
-                        placeholder={tr("For example: looking toward the other person, relaxed expression…")}
-                      />
-                      <small>{personPresentation.direction.length}/300</small>
-                    </label>
-                  </article>
-                );
-              })}
-            </div>
-            <label className="outfit-direction">
-              <span>{tr("Scene direction")} <small>{tr("optional")}</small></span>
-              <textarea rows="3" maxLength="300" value={pendingPresentation.direction} onChange={(event) => setPendingPresentation((value) => ({ ...value, direction: event.target.value }))} placeholder={tr("For example: soft evening light, natural interaction, full outfits visible…")} />
-              <small>{pendingPresentation.direction.length}/300</small>
-            </label>
-          </StudioDialog>
+          <ModeledLookDialog
+            itemName={draft.name || tr("Untitled outfit")}
+            backgroundReferences={user.backgroundReferences || []}
+            people={scenePeople.map((person) => ({
+              id: person.id,
+              name: person.isMe ? tr("Me") : person.name,
+              referenceImage: person.profile.referenceImages?.[0]?.avatarUrl || person.profile.referenceImages?.[0]?.url,
+              detail: tr("{count} selected pieces", { count: garmentCountByPerson.get(person.id) || 0 }),
+            }))}
+            eyebrow="Paid AI image"
+            busy={busy === "generate"}
+            onClose={() => setModeledDialogOpen(false)}
+            onGenerate={generateModeled}
+          />
         )}
       </section>
     </div>

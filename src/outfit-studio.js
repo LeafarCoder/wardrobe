@@ -1,5 +1,5 @@
 import { garmentColorVariants } from "./garment-variants.js";
-import { MODELED_LOOK_CONTEXT_OPTIONS } from "./modeled-look-context.js";
+import { MODELED_LOOK_CONTEXT_OPTIONS, normalizeModeledLookContext } from "./modeled-look-context.js";
 
 export const OUTFIT_OCCASIONS = [
   { id: "everyday", label: "Everyday" },
@@ -202,6 +202,7 @@ function normalizeModeledLooks(value) {
       fallbackUsed: Boolean(look.fallbackUsed),
       generatedAt: cleanText(look.generatedAt, 40) || null,
       presentation: normalizeOutfitPresentation(look.presentation),
+      context: normalizeModeledLookContext(look.context),
     }];
   }).slice(0, 12);
 }

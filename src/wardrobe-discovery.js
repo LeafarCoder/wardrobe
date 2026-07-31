@@ -1,4 +1,5 @@
 import { colorGroup } from "./color-organization.js";
+import { normalizeModeledLookContext } from "./modeled-look-context.js";
 
 export const WARDROBE_ITEM_TYPES = new Set([
   "all",
@@ -306,6 +307,7 @@ export function normalizeWardrobePlans(value = {}) {
         preview: cleanText(look.preview, 500) || null,
         model: cleanText(look.model, 180) || null,
         fallbackUsed: Boolean(look.fallbackUsed),
+        context: normalizeModeledLookContext(look.context),
         generatedAt: cleanText(look.generatedAt, 40) || null,
       }), 12).filter((look) => look.id && look.image);
       return looks;
