@@ -30,6 +30,7 @@ import {
 } from "../src/wardrobe-metadata.js";
 import {
   normalizeGarmentFacetList,
+  normalizePlannerGarmentVariants,
   normalizeGarmentSeasons,
   normalizeSavedViews,
   normalizeWardrobeDisplayPreferences,
@@ -1616,11 +1617,17 @@ export function wardrobePlansAfterGarmentMerge(value, keeperId, discardedId) {
       ...outfit,
       itemIds: [...new Set(outfit.itemIds.map((itemId) => itemId === discardedId ? keeperId : itemId))],
     }));
+    const garmentVariants = { ...plan.result.garmentVariants };
+    if (!Object.hasOwn(garmentVariants, keeperId) && Object.hasOwn(garmentVariants, discardedId)) {
+      garmentVariants[keeperId] = garmentVariants[discardedId];
+    }
+    delete garmentVariants[discardedId];
     return {
       ...plan,
       result: {
         ...plan.result,
         recommendedItems,
+        garmentVariants,
         outfitIdeas,
       },
     };
@@ -6305,6 +6312,31 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (garments.length !== outfit.itemIds.length) {
         throw apiError("One or more garments in this outfit are no longer in the wardrobe.", 409, "planner_outfit_garment_missing");
       }
+      const plannedVariants = normalizePlannerGarmentVariants(plan.result.garmentVariants);
+      const garmentSelections = garments.map((record) => {
+        const hasPlannedVariant = Object.hasOwn(plannedVariants, record.id);
+        const variantId = hasPlannedVariant ? plannedVariants[record.id] : selectedGarmentVariantId(record);
+        const variant = variantId
+          ? garmentColorVariants(record).find((candidate) => candidate.id === variantId)
+          : null;
+        if (variantId && !variant) {
+          throw apiError(
+            `The selected version of "${record.name}" is no longer available.`,
+            409,
+            "planner_outfit_variant_missing",
+          );
+        }
+        return {
+          record,
+          variant,
+          image: variant?.image || record.image,
+          promptRecord: variant ? {
+            ...record,
+            color: variant.primaryColor || record.color,
+            secondaryColor: variant.secondaryColor || record.secondaryColor,
+          } : record,
+        };
+      });
 
       const provider = providerWithProfilePreferences(aiProvider(payerProfile?.id || user.id), profile, payerProfile);
       if (provider.configurationError) throw apiError(provider.configurationError, 400, "invalid_ai_provider");
@@ -6319,8 +6351,8 @@ Interpret this correction semantically in whatever language it is written. It ov
       const modeledContext = normalizeModeledLookContext(context);
       const background = await loadProfileBackground(profile, modeledContext.backgroundReferenceId);
       if (background) modeledContext.backgroundReferenceName = background.reference.name;
-      const garmentReferences = await Promise.all(garments.map(async (record, index) => {
-        const fileName = path.basename(new URL(record.image, "http://localhost").pathname);
+      const garmentReferences = await Promise.all(garmentSelections.map(async (selection, index) => {
+        const fileName = path.basename(new URL(selection.image, "http://localhost").pathname);
         return {
           data: await readFile(path.join(libraryAssetDir, fileName)),
           mime: imageMime(fileName),
@@ -6334,7 +6366,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         profile,
         plan,
         outfit,
-        garments,
+        garmentSelections.map((selection) => selection.promptRecord),
         modeledContext,
       );
       console.info(`[wardrobe] Generating planned outfit "${outfit.name}" with ${provider.label} / ${modeledModel} using ${garments.length} garment reference${garments.length === 1 ? "" : "s"}...`);
@@ -6374,6 +6406,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         ...(modeledPreview ? { preview: modeledPreview } : {}),
         model: generation.model,
         fallbackUsed: generation.fallbackUsed,
+        garmentVariants: Object.fromEntries(garmentSelections.map(({ record, variant }) => [record.id, variant?.id || null])),
         context: modeledContext,
         generatedAt,
       };
@@ -8278,6 +8311,59 @@ Interpret this correction semantically in whatever language it is written. It ov
         );
         return json(res, 200, result);
       }
+      const plannerVariantsMatch = url.pathname.match(/^\/api\/import\/planner\/([a-z0-9-]{1,80})\/variants$/i);
+      if (plannerVariantsMatch && req.method === "PATCH") {
+        const input = await body(req, 64 * 1024);
+        const itemId = typeof input.itemId === "string" ? input.itemId.trim().slice(0, 100) : "";
+        const variantId = input.variantId === null
+          ? null
+          : typeof input.variantId === "string" ? input.variantId.trim().slice(0, 80) : "";
+        if (!itemId || variantId === "") {
+          throw apiError("Choose a valid garment version.", 400, "planner_variant_invalid");
+        }
+        const records = await loadImported(user.id);
+        const record = records.find((candidate) => candidate.id === itemId);
+        if (!record) throw apiError("That wardrobe garment could not be found.", 404, "planner_garment_not_found");
+        if (variantId && !garmentColorVariants(record).some((variant) => variant.id === variantId)) {
+          throw apiError("That garment version could not be found.", 404, "planner_variant_not_found");
+        }
+        const owner = await withUsers(async () => {
+          const latestStore = await loadUsersStore();
+          const latestIndex = latestStore.users.findIndex((candidate) => candidate.id === user.id);
+          if (latestIndex < 0) throw apiError("Wardrobe user not found.", 404, "user_not_found");
+          const plans = normalizeWardrobePlans(latestStore.users[latestIndex].wardrobePlans);
+          const planIndex = plans.findIndex((candidate) => candidate.id === plannerVariantsMatch[1]);
+          if (planIndex < 0) throw apiError("Saved wardrobe plan not found.", 404, "planner_plan_not_found");
+          const planItemIds = new Set([
+            ...plans[planIndex].result.recommendedItems.map((item) => item.itemId),
+            ...plans[planIndex].result.outfitIdeas.flatMap((outfit) => outfit.itemIds),
+          ]);
+          if (!planItemIds.has(itemId)) {
+            throw apiError("That garment is not part of this wardrobe plan.", 400, "planner_garment_not_in_plan");
+          }
+          plans[planIndex] = normalizeWardrobePlans([{
+            ...plans[planIndex],
+            result: {
+              ...plans[planIndex].result,
+              garmentVariants: {
+                ...plans[planIndex].result.garmentVariants,
+                [itemId]: variantId,
+              },
+            },
+          }])[0];
+          latestStore.users[latestIndex] = {
+            ...latestStore.users[latestIndex],
+            wardrobePlans: plans,
+            updatedAt: new Date().toISOString(),
+          };
+          await saveUsersStore(latestStore);
+          return latestStore.users[latestIndex];
+        });
+        return json(res, 200, {
+          plan: publicProfile(owner).wardrobePlans.find((candidate) => candidate.id === plannerVariantsMatch[1]),
+          user: publicProfile(owner),
+        });
+      }
       const plannerIdeasMatch = url.pathname.match(/^\/api\/import\/planner\/([a-z0-9-]{1,80})\/ideas$/i);
       if (plannerIdeasMatch && req.method === "POST") {
         const store = await loadUsersStore();
@@ -8567,6 +8653,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       const garmentVariantMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/variants$/i);
       const garmentVariantSelectionMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/variants\/selection$/i);
       const garmentVariantOrderMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/variants\/order$/i);
+      const garmentVariantDeleteMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/variants\/([a-z0-9-]{1,80})$/i);
       if (garmentVariantOrderMatch && req.method === "PATCH") {
         const input = await body(req, 16 * 1024);
         const saved = await withLibrary(async () => {
@@ -8612,6 +8699,81 @@ Interpret this correction semantically in whatever language it is written. It ov
           return records[index];
         });
         return json(res, 200, publicImportedRecord(saved, user.id));
+      }
+      if (garmentVariantDeleteMatch && req.method === "DELETE") {
+        const itemId = garmentVariantDeleteMatch[1];
+        const variantId = garmentVariantDeleteMatch[2];
+        const saved = await withLibrary(async () => {
+          const records = await loadImported();
+          const index = records.findIndex((record) => record.id === itemId && record.userId === user.id);
+          if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+          const removedVariant = garmentColorVariants(records[index]).find((variant) => variant.id === variantId);
+          if (!removedVariant) {
+            throw apiError("That garment color version could not be found.", 404, "garment_variant_not_found");
+          }
+          const nextVariants = garmentColorVariants(records[index]).filter((variant) => variant.id !== variantId);
+          const nextOrder = garmentVersionOrder(records[index]).filter((id) => id !== variantId);
+          const first = nextOrder[0] || GARMENT_ORIGINAL_VERSION_ID;
+          records[index] = {
+            ...records[index],
+            colorVariants: nextVariants,
+            colorVariantOrder: nextOrder,
+            selectedColorVariantId: first === GARMENT_ORIGINAL_VERSION_ID ? null : first,
+            updatedAt: new Date().toISOString(),
+          };
+          await saveImported(records);
+          const retained = new Set(records.flatMap((record) => importedRecordAssets(record).map((asset) => asset.split("?")[0])));
+          return {
+            record: records[index],
+            removedAssets: [removedVariant.image, removedVariant.preview, removedVariant.thumbnail]
+              .filter((asset) => asset && !retained.has(asset.split("?")[0])),
+          };
+        });
+
+        const updatedProfile = await withUsers(async () => {
+          const store = await loadUsersStore();
+          const now = new Date().toISOString();
+          let storeChanged = false;
+          store.users = store.users.map((profile) => {
+            let profileChanged = false;
+            const wardrobePlans = normalizeWardrobePlans(profile.wardrobePlans).map((plan) => {
+              if (plan.result.garmentVariants[itemId] !== variantId) return plan;
+              profileChanged = true;
+              return {
+                ...plan,
+                result: {
+                  ...plan.result,
+                  garmentVariants: { ...plan.result.garmentVariants, [itemId]: null },
+                },
+              };
+            });
+            const wardrobeOutfits = normalizeWardrobeOutfits(profile.wardrobeOutfits).map((outfit) => {
+              let outfitChanged = false;
+              const garments = outfit.garments.map((garment) => {
+                if (garment.itemId !== itemId || garment.variantId !== variantId) return garment;
+                outfitChanged = true;
+                return { ...garment, variantId: null };
+              });
+              if (!outfitChanged) return outfit;
+              profileChanged = true;
+              return { ...outfit, garments, updatedAt: now };
+            });
+            if (!profileChanged) return profile;
+            storeChanged = true;
+            return { ...profile, wardrobePlans, wardrobeOutfits, updatedAt: now };
+          });
+          if (storeChanged) await saveUsersStore(store);
+          return store.users.find((profile) => profile.id === user.id) || user;
+        });
+
+        await Promise.all(saved.removedAssets.map((asset) => rm(
+          path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+          { force: true },
+        )));
+        return json(res, 200, {
+          item: publicImportedRecord(saved.record, user.id),
+          user: publicProfile(updatedProfile),
+        });
       }
       if (garmentVariantMatch && req.method === "POST") {
         const input = await body(req, 18 * 1024 * 1024);

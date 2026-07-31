@@ -1548,6 +1548,7 @@ function ItemViewer({
   onCreateVariant,
   onSelectColorVersion,
   onReorderColorVersions,
+  onDeleteColorVersion,
   onDeleteModeled,
   onArchiveGarment,
   onArchiveModeled,
@@ -1562,6 +1563,8 @@ function ItemViewer({
 }) {
   const deleteLookButtonRef = useRef(null);
   const deleteCancelButtonRef = useRef(null);
+  const deleteVersionButtonRef = useRef(null);
+  const deleteVersionCancelButtonRef = useRef(null);
   const sourceDeleteCancelButtonRef = useRef(null);
   const deleteGarmentButtonRef = useRef(null);
   const deleteGarmentCancelButtonRef = useRef(null);
@@ -1604,6 +1607,8 @@ function ItemViewer({
   const [deletingModeled, setDeletingModeled] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState(null);
+  const [deleteVersionCandidate, setDeleteVersionCandidate] = useState(null);
+  const [deletingVersion, setDeletingVersion] = useState(false);
   const [sourceDeleteCandidate, setSourceDeleteCandidate] = useState(null);
   const [deletingSourcePhoto, setDeletingSourcePhoto] = useState(false);
   const [garmentDeleteOpen, setGarmentDeleteOpen] = useState(false);
@@ -1795,6 +1800,11 @@ function ItemViewer({
         } else if (colorEditorOpen) {
           setColorEditorOpen(false);
           setSampling(null);
+        } else if (deleteVersionCandidate) {
+          if (!deletingVersion) {
+            setDeleteVersionCandidate(null);
+            requestAnimationFrame(() => deleteVersionButtonRef.current?.focus({ preventScroll: true }));
+          }
         } else if (garmentDeleteOpen) {
           if (!deletingGarment) {
             setGarmentDeleteOpen(false);
@@ -1834,11 +1844,15 @@ function ItemViewer({
       document.removeEventListener("keydown", onKeyDown);
       clearTimeout(shakeTimerRef.current);
     };
-  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deletingGarment, deletingModeled, deletingSourcePhoto, garmentDeleteOpen, garmentRegenerationOpen, generatingModeled, mediaPreviewOpen, modeledSettingsOpen, modeledVariantPickerOpen, requestClose, sampling, sourceDeleteCandidate, sourcePhotoOpen, variantStudioOpen]);
+  }, [careGuideOpen, colorEditorOpen, deleteCandidate, deleteVersionCandidate, deletingGarment, deletingModeled, deletingSourcePhoto, deletingVersion, garmentDeleteOpen, garmentRegenerationOpen, generatingModeled, mediaPreviewOpen, modeledSettingsOpen, modeledVariantPickerOpen, requestClose, sampling, sourceDeleteCandidate, sourcePhotoOpen, variantStudioOpen]);
 
   useEffect(() => {
     if (deleteCandidate) deleteCancelButtonRef.current?.focus({ preventScroll: true });
   }, [deleteCandidate]);
+
+  useEffect(() => {
+    if (deleteVersionCandidate) deleteVersionCancelButtonRef.current?.focus({ preventScroll: true });
+  }, [deleteVersionCandidate]);
 
   useEffect(() => {
     if (sourceDeleteCandidate) sourceDeleteCancelButtonRef.current?.focus({ preventScroll: true });
@@ -2132,6 +2146,48 @@ function ItemViewer({
       });
     } finally {
       setColorVersionOrderBusy(false);
+    }
+  };
+
+  const requestDeleteColorVersion = () => {
+    if (!activeColorVersion?.id || deletingVersion || colorVersionOrderBusy) return;
+    if (isDirty) {
+      setViewerToast({
+        title: tr("Save this garment first"),
+        message: tr("Save your changes before deleting a color version."),
+      });
+      nudgeUnsaved(false);
+      return;
+    }
+    setViewerToast(null);
+    setDeleteVersionCandidate({
+      version: activeColorVersion,
+    });
+  };
+
+  const closeVersionDeleteConfirmation = () => {
+    if (deletingVersion) return;
+    setDeleteVersionCandidate(null);
+    requestAnimationFrame(() => deleteVersionButtonRef.current?.focus({ preventScroll: true }));
+  };
+
+  const deleteColorVersion = async () => {
+    if (!deleteVersionCandidate || deletingVersion) return;
+    setDeletingVersion(true);
+    setViewerToast(null);
+    try {
+      const updated = await onDeleteColorVersion(item.id, deleteVersionCandidate.version.id);
+      const nextVersions = itemColorVersions(updated);
+      setColorVersionIndex(itemSelectedColorVersionIndex(updated, nextVersions));
+      setDeleteVersionCandidate(null);
+    } catch (requestError) {
+      setViewerToast({
+        title: tr("Could not delete the color version"),
+        message: readableError(requestError),
+      });
+      setDeleteVersionCandidate(null);
+    } finally {
+      setDeletingVersion(false);
     }
   };
 
@@ -2770,7 +2826,7 @@ function ItemViewer({
 
   return (
     <>
-    <div className="viewer-entry" data-tutorial="garment-panel" aria-hidden={deleteCandidate || sourceDeleteCandidate || garmentDeleteOpen || sourcePhotoOpen || mediaPreviewOpen || colorEditorOpen || variantStudioOpen || modeledVariantPickerOpen ? "true" : undefined}>
+    <div className="viewer-entry" data-tutorial="garment-panel" aria-hidden={deleteCandidate || deleteVersionCandidate || sourceDeleteCandidate || garmentDeleteOpen || sourcePhotoOpen || mediaPreviewOpen || colorEditorOpen || variantStudioOpen || modeledVariantPickerOpen ? "true" : undefined}>
     <aside className={`viewer editing${hasHeroImage ? " has-hero-image" : ""}${shaking ? " shake" : ""}`} aria-label={tr("Selected wardrobe item")}>
       <button className="viewer-icon-close" type="button" onClick={requestClose} aria-label={tr("Close viewer")}>
         <X size={24} weight="light" aria-hidden="true" />
@@ -2979,6 +3035,7 @@ function ItemViewer({
       <div
         className="source-photo-overlay media-preview-overlay"
         role="presentation"
+        aria-hidden={deleteVersionCandidate ? "true" : undefined}
         onMouseDown={(event) => event.target === event.currentTarget && closeMediaPreview()}
       >
         <section
@@ -3223,6 +3280,20 @@ function ItemViewer({
                 <span className="garment-media-ai-badge is-dialog" role="img" tabIndex={0} aria-label={tr("AI generated")} data-tooltip={tr("AI generated")}>
                   <Sparkle size={9} weight="fill" aria-hidden="true" />
                 </span>
+              )}
+              {mediaPreviewOpen === "garment" && item.id.startsWith("import-") && activeColorVersion?.id && (
+                <button
+                  ref={deleteVersionButtonRef}
+                  className="media-preview-dialog__vault media-preview-dialog__version-delete"
+                  type="button"
+                  onClick={requestDeleteColorVersion}
+                  disabled={deletingVersion || colorVersionOrderBusy}
+                  aria-label={tr("Delete this color version")}
+                  title={tr("Delete this color version")}
+                >
+                  <Trash size={17} aria-hidden="true" />
+                  <span>{tr("Delete version")}</span>
+                </button>
               )}
               {mediaPreviewOpen === "media" && isActiveMediaGenerated && (
                 <button
@@ -3590,6 +3661,62 @@ function ItemViewer({
             <button className="look-delete-dialog__confirm" type="button" onClick={deleteModeledLook} disabled={deletingModeled}>
               <Trash size={15} aria-hidden="true" />
               {tr(deletingModeled ? "Deleting…" : "Delete look")}
+            </button>
+          </div>
+        </section>
+      </div>
+    )}
+    {deleteVersionCandidate && (
+      <div
+        className="look-delete-overlay version-delete-overlay"
+        role="presentation"
+        onMouseDown={(event) => event.target === event.currentTarget && closeVersionDeleteConfirmation()}
+      >
+        <section
+          className="look-delete-dialog version-delete-dialog"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="version-delete-title"
+          onKeyDown={keepDeleteDialogFocus}
+        >
+          <button
+            className="look-delete-dialog__close"
+            type="button"
+            onClick={closeVersionDeleteConfirmation}
+            disabled={deletingVersion}
+            aria-label={tr("Cancel deleting this color version")}
+          >
+            <X size={22} weight="light" aria-hidden="true" />
+          </button>
+          <ProductStage className="look-delete-dialog__image version-delete-dialog__image" animated>
+            <OptimizedImage
+              src={deleteVersionCandidate.version.preview || deleteVersionCandidate.version.image}
+              alt={tr("{name} color version to delete", { name: draft.name || type })}
+              sizes="(max-width: 520px) calc(100vw - 64px), 400px"
+              breakpoints={[320, 480, 640, 800]}
+              quality={82}
+              priority
+              reveal
+            />
+          </ProductStage>
+          <div className="look-delete-dialog__body version-delete-dialog__body">
+            <p className="look-delete-dialog__eyebrow">{tr("Delete color version")}</p>
+            <h2 id="version-delete-title">{tr("Delete this color version?")}</h2>
+            <p>{tr("Only this version will be removed. The original garment and generated looks will stay saved.")}</p>
+          </div>
+          <div className="look-delete-dialog__actions">
+            <button
+              ref={deleteVersionCancelButtonRef}
+              className="secondary-button"
+              type="button"
+              onClick={closeVersionDeleteConfirmation}
+              disabled={deletingVersion}
+            >
+              {tr("Cancel")}
+            </button>
+            <button className="look-delete-dialog__confirm" type="button" onClick={deleteColorVersion} disabled={deletingVersion}>
+              <Trash size={15} aria-hidden="true" />
+              {tr(deletingVersion ? "Deleting version…" : "Delete version")}
             </button>
           </div>
         </section>
@@ -5883,27 +6010,50 @@ function SavedViewDeleteDialog({ view, busy, onClose, onConfirm }) {
   );
 }
 
-function PlannerGarmentButton({ item, reason = "", onClick, compact = false }) {
+function PlannerGarmentButton({
+  item,
+  reason = "",
+  onClick,
+  compact = false,
+  versions = [],
+  versionIndex = 0,
+  onVersionChange,
+}) {
   if (!item) return null;
-  const preview = item.thumbnail || item.imagePreview || item.image;
+  const activeVersion = versions[versionIndex] || versions[0] || item;
+  const preview = activeVersion.thumbnail || activeVersion.preview || activeVersion.image || item.thumbnail || item.imagePreview || item.image;
   return (
-    <button
+    <div
       className={`planner-garment-link${compact ? " is-compact" : ""}`}
-      type="button"
-      onClick={onClick}
     >
-      {!compact && <span className="planner-pack-list__swatch" style={{ backgroundColor: item.color }} aria-hidden="true" />}
-      <span className="planner-garment-link__copy">
-        <strong>{item.name}</strong>
-        {!!reason && <small>{reason}</small>}
-      </span>
-      {!!preview && (
+      {!compact && !!preview && (
+        <div className="planner-garment-link__media">
+          <button type="button" onClick={onClick} aria-label={item.name}>
+            <OptimizedImage src={preview} alt="" sizes="96px" />
+          </button>
+          {versions.length > 1 && (
+            <div className="planner-garment-link__version-nav" role="group" aria-label={tr("Garment color versions")}>
+              <button type="button" onClick={() => onVersionChange?.(-1)} aria-label={tr("Previous garment version")}><CaretLeft size={16} aria-hidden="true" /></button>
+              <span>{tr("{current} of {total}", { current: versionIndex + 1, total: versions.length })}</span>
+              <button type="button" onClick={() => onVersionChange?.(1)} aria-label={tr("Next garment version")}><CaretRight size={16} aria-hidden="true" /></button>
+            </div>
+          )}
+        </div>
+      )}
+      <button className="planner-garment-link__details" type="button" onClick={onClick}>
+        {!compact && <span className="planner-pack-list__swatch" style={{ backgroundColor: activeVersion.primaryColor || item.color }} aria-hidden="true" />}
+        <span className="planner-garment-link__copy">
+          <strong>{item.name}</strong>
+          {!!reason && <small>{reason}</small>}
+        </span>
+      </button>
+      {compact && !!preview && (
         <span className="planner-garment-tooltip" role="tooltip">
           <OptimizedImage src={preview} alt="" sizes="180px" />
           <b>{item.name}</b>
         </span>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -5979,6 +6129,7 @@ function WardrobePlanner({
   onGenerate,
   onGenerateOutfit,
   onAddOutfitIdeas,
+  onSelectVariant,
   onDelete,
   onOpenItem,
 }) {
@@ -6001,9 +6152,43 @@ function WardrobePlanner({
   const [modeledDialogOutfitIndex, setModeledDialogOutfitIndex] = useState(null);
   const [addingIdeas, setAddingIdeas] = useState(false);
   const [ideasError, setIdeasError] = useState("");
+  const [pendingVariantIds, setPendingVariantIds] = useState({});
   const plans = user.wardrobePlans || [];
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) || plans[0] || null;
   const itemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const plannerVersion = (item) => {
+    const versions = itemColorVersions(item);
+    const pendingKey = `${selectedPlan?.id || ""}:${item.id}`;
+    const savedVariants = selectedPlan?.result.garmentVariants || {};
+    const hasPending = Object.hasOwn(pendingVariantIds, pendingKey);
+    const hasSaved = Object.hasOwn(savedVariants, item.id);
+    const selectedId = hasPending
+      ? pendingVariantIds[pendingKey]
+      : hasSaved ? savedVariants[item.id] : (versions[itemSelectedColorVersionIndex(item, versions)]?.id || null);
+    const index = versions.findIndex((version) => (version.id || null) === selectedId);
+    return { versions, index: index >= 0 ? index : 0 };
+  };
+  const movePlannerVersion = async (item, direction) => {
+    if (!selectedPlan) return;
+    const { versions, index } = plannerVersion(item);
+    if (versions.length < 2) return;
+    const next = versions[(index + direction + versions.length) % versions.length];
+    const pendingKey = `${selectedPlan.id}:${item.id}`;
+    const variantId = next.id || null;
+    setPendingVariantIds((current) => ({ ...current, [pendingKey]: variantId }));
+    try {
+      await onSelectVariant(selectedPlan.id, item.id, variantId);
+    } catch {
+      // The parent surfaces the request error in the planner.
+    } finally {
+      setPendingVariantIds((current) => {
+        if (!Object.hasOwn(current, pendingKey) || current[pendingKey] !== variantId) return current;
+        const nextPending = { ...current };
+        delete nextPending[pendingKey];
+        return nextPending;
+      });
+    }
+  };
   const submit = async (event) => {
     event.preventDefault();
     if (!draft.startDate || !draft.endDate) return;
@@ -6199,11 +6384,16 @@ function WardrobePlanner({
                     <div className="planner-pack-list">
                       {selectedPlan.result.recommendedItems.map((recommendation) => {
                         const item = itemMap.get(recommendation.itemId);
+                        if (!item) return null;
+                        const { versions, index } = plannerVersion(item);
                         return (
                           <PlannerGarmentButton
                             item={item}
                             reason={recommendation.reason}
                             onClick={() => onOpenItem(item.id)}
+                            versions={versions}
+                            versionIndex={index}
+                            onVersionChange={(direction) => void movePlannerVersion(item, direction)}
                             key={recommendation.itemId}
                           />
                         );
@@ -6265,11 +6455,15 @@ function WardrobePlanner({
                           <div className="planner-outfit-garments">
                             {outfit.itemIds.map((id) => {
                               const item = itemMap.get(id);
+                              if (!item) return null;
+                              const { versions, index } = plannerVersion(item);
                               return (
                                 <PlannerGarmentButton
                                   compact
                                   item={item}
                                   onClick={() => onOpenItem(id)}
+                                  versions={versions}
+                                  versionIndex={index}
                                   key={id}
                                 />
                               );
@@ -7359,6 +7553,18 @@ export function App() {
     return updated;
   };
 
+  const deleteColorVersion = async (id, variantId) => {
+    const result = await profileApi(`/api/import/wardrobe/${id}/variants/${encodeURIComponent(variantId)}?user=${encodeURIComponent(currentUserId)}`, {
+      method: "DELETE",
+    });
+    const updated = result.item || result;
+    setItems((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+    if (result.user) {
+      setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+    }
+    return updated;
+  };
+
   const showCompletedImageFallback = (notice) => {
     const nextToast = imageFallbackToast(notice, { completed: true });
     if (nextToast) setAppToast(nextToast);
@@ -7529,6 +7735,21 @@ export function App() {
       const response = withoutFallbackNotice(result);
       setUsers((current) => current.map((user) => user.id === response.user.id ? response.user : user));
       return response;
+    } catch (requestError) {
+      setPlannerError(readableError(requestError));
+      throw requestError;
+    }
+  };
+
+  const selectPlannedGarmentVersion = async (planId, itemId, variantId) => {
+    setPlannerError("");
+    try {
+      const result = await profileApi(
+        `/api/import/planner/${encodeURIComponent(planId)}/variants?user=${encodeURIComponent(currentUserId)}`,
+        { method: "PATCH", body: JSON.stringify({ itemId, variantId }) },
+      );
+      setUsers((current) => current.map((user) => user.id === result.user.id ? result.user : user));
+      return result.plan;
     } catch (requestError) {
       setPlannerError(readableError(requestError));
       throw requestError;
@@ -7887,6 +8108,7 @@ export function App() {
           onCreateVariant={createColorVariant}
           onSelectColorVersion={selectColorVersion}
           onReorderColorVersions={reorderColorVersions}
+          onDeleteColorVersion={deleteColorVersion}
           onDeleteModeled={deleteModeledLook}
           onArchiveGarment={archiveGarment}
           onArchiveModeled={archiveModeledLook}
@@ -8011,6 +8233,7 @@ export function App() {
           onGenerate={generateWardrobePlan}
           onGenerateOutfit={generatePlannedOutfitLook}
           onAddOutfitIdeas={addPlannedOutfitIdeas}
+          onSelectVariant={selectPlannedGarmentVersion}
           onDelete={deleteWardrobePlan}
           onOpenItem={(id) => {
             if (selectedId === id) closeViewer();

@@ -78,17 +78,18 @@ test("keeps the first ordered version as the saved garment default", () => {
   );
 });
 
-test("uses fan, horizontal spread, and carousel layouts at the requested version counts", () => {
-  assert.equal(garmentVersionLayout("upperbody", 2, true), "fan");
-  assert.equal(garmentVersionLayout("upperbody", 3, true), "fan");
+test("uses a horizontal spread for every multi-version garment with hero media", () => {
+  assert.equal(garmentVersionLayout("upperbody", 2, true), "spread");
+  assert.equal(garmentVersionLayout("upperbody", 3, true), "spread");
   assert.equal(garmentVersionLayout("upperbody", 4, true), "spread");
   assert.equal(garmentVersionLayout("upperbody", 5, true), "spread");
-  assert.equal(garmentVersionLayout("upperbody", 6, true), "carousel");
-  assert.equal(garmentVersionLayout("wholebody_up", 3, true), "carousel");
+  assert.equal(garmentVersionLayout("upperbody", 6, true), "spread");
+  assert.equal(garmentVersionLayout("wholebody_up", 3, true), "spread");
+  assert.equal(garmentVersionLayout("shoes", 2, true), "spread");
   assert.equal(garmentVersionLayout("wholebody", 3, false), "carousel");
 
-  assert.equal(supportsGarmentVersionFan("upperbody", 3, true), true);
-  assert.equal(supportsGarmentVersionFan("wholebody", 2, true), true);
+  assert.equal(supportsGarmentVersionFan("upperbody", 3, true), false);
+  assert.equal(supportsGarmentVersionFan("wholebody", 2, true), false);
   assert.equal(supportsGarmentVersionFan("wholebody_up", 3, true), false);
   assert.equal(supportsGarmentVersionFan("upperbody", 1, true), false);
   assert.equal(supportsGarmentVersionFan("upperbody", 4, true), false);
@@ -104,10 +105,12 @@ test("positions expanded versions symmetrically around the center", () => {
   assert.equal(garmentVersionFanSlot(-1, 3), 0);
 });
 
-test("keeps four and five version spreads large, separated, and independently tilted", () => {
+test("keeps every horizontal version spread separated without rotation", () => {
+  assert.deepEqual(garmentVersionSpreadMetrics(2), { scale: 0.82, stepPx: 94 });
+  assert.deepEqual(garmentVersionSpreadMetrics(3), { scale: 0.74, stepPx: 76 });
   assert.deepEqual(garmentVersionSpreadMetrics(4), { scale: 0.68, stepPx: 62 });
   assert.deepEqual(garmentVersionSpreadMetrics(5), { scale: 0.62, stepPx: 58 });
-  assert.deepEqual(Array.from({ length: 4 }, (_, index) => garmentVersionSpreadAngle(index, 4)), [-2, 1, -1, 2]);
-  assert.deepEqual(Array.from({ length: 5 }, (_, index) => garmentVersionSpreadAngle(index, 5)), [-2, 1.5, 0, -1.5, 2]);
+  assert.deepEqual(garmentVersionSpreadMetrics(7), { scale: 0.54, stepPx: 50 });
+  assert.deepEqual(Array.from({ length: 5 }, (_, index) => garmentVersionSpreadAngle(index, 5)), [0, 0, 0, 0, 0]);
   assert.equal(garmentVersionSpreadAngle(5, 5), 0);
 });

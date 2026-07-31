@@ -91,9 +91,8 @@ export function moveGarmentVersion(ids, draggedId, targetId) {
 }
 
 export function garmentVersionLayout(part, versionCount, hasHeroImage = true) {
-  if (!hasHeroImage || !GARMENT_VERSION_FAN_PARTS.has(part) || !Number.isInteger(versionCount)) return "carousel";
-  if (versionCount > 1 && versionCount <= GARMENT_VERSION_FAN_MAX) return "fan";
-  if (versionCount > GARMENT_VERSION_FAN_MAX && versionCount <= GARMENT_VERSION_SPREAD_MAX) return "spread";
+  if (!hasHeroImage || !Number.isInteger(versionCount)) return "carousel";
+  if (versionCount > 1) return "spread";
   return "carousel";
 }
 
@@ -114,14 +113,17 @@ export function garmentVersionFanSlot(index, versionCount) {
 }
 
 export function garmentVersionSpreadMetrics(versionCount) {
-  return versionCount === 4
-    ? { scale: 0.68, stepPx: 62 }
-    : { scale: 0.62, stepPx: 58 };
+  if (versionCount <= 2) return { scale: 0.82, stepPx: 94 };
+  if (versionCount === 3) return { scale: 0.74, stepPx: 76 };
+  if (versionCount === 4) return { scale: 0.68, stepPx: 62 };
+  if (versionCount === 5) return { scale: 0.62, stepPx: 58 };
+  const extraVersions = Math.max(0, versionCount - 5);
+  return {
+    scale: Math.max(0.38, 0.62 - (extraVersions * 0.04)),
+    stepPx: Math.max(38, 58 - (extraVersions * 4)),
+  };
 }
 
 export function garmentVersionSpreadAngle(index, versionCount) {
-  const angles = versionCount === 4
-    ? [-2, 1, -1, 2]
-    : [-2, 1.5, 0, -1.5, 2];
-  return angles[index] ?? 0;
+  return 0;
 }

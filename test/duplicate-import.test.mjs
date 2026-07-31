@@ -254,10 +254,12 @@ test("retargets saved plan references when an existing garment is merged", () =>
         { itemId: "import-keeper", reason: "Layer" },
         { itemId: "import-discarded", reason: "Duplicate layer" },
       ],
+      garmentVariants: { "import-discarded": "navy-version" },
       outfitIdeas: [{ name: "Travel", itemIds: ["import-discarded", "import-shoes"] }],
     },
   }], "import-keeper", "import-discarded");
 
   assert.deepEqual(plans[0].result.recommendedItems.map((item) => item.itemId), ["import-keeper"]);
+  assert.deepEqual(plans[0].result.garmentVariants, { "import-keeper": "navy-version" });
   assert.deepEqual(plans[0].result.outfitIdeas[0].itemIds, ["import-keeper", "import-shoes"]);
 });

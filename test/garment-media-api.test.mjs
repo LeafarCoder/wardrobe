@@ -117,6 +117,22 @@ test("promotes a selected garment version and persists a complete thumbnail orde
         { id: "green", image: "/api/import/library/shirt-green.png" },
       ],
     }], null, 2));
+    const userStore = JSON.parse(await readFile(path.join(dataDir, "users.json"), "utf8"));
+    userStore.users[0].wardrobePlans = [{
+      id: "plan-variant-delete",
+      input: { kind: "trip", title: "Lisbon", location: "Lisbon" },
+      result: {
+        recommendedItems: [{ itemId: ITEM_ID, reason: "Light layer" }],
+        garmentVariants: { [ITEM_ID]: "navy" },
+        outfitIdeas: [{ name: "City walk", itemIds: [ITEM_ID] }],
+      },
+    }];
+    userStore.users[0].wardrobeOutfits = [{
+      id: "outfit-variant-delete",
+      name: "Navy shirt look",
+      garments: [{ itemId: ITEM_ID, variantId: "navy", ownerId: "default", wearerId: "default" }],
+    }];
+    await writeFile(path.join(dataDir, "users.json"), JSON.stringify(userStore, null, 2));
 
     const selectResponse = mockResponse();
     await api.handler(mockJsonRequest(
@@ -161,6 +177,42 @@ test("promotes a selected garment version and persists a complete thumbnail orde
     assert.equal(originalResponse.statusCode, 200);
     assert.equal(originalResponse.json().selectedColorVariantId, null);
     assert.deepEqual(originalResponse.json().colorVariantOrder, ["original", "green", "navy"]);
+
+    const selectedForDeleteResponse = mockResponse();
+    await api.handler(mockJsonRequest(
+      `/api/import/wardrobe/${ITEM_ID}/variants/selection`,
+      "PATCH",
+      { variantId: "navy" },
+    ), selectedForDeleteResponse, () => {});
+    assert.equal(selectedForDeleteResponse.statusCode, 200);
+    assert.equal(selectedForDeleteResponse.json().selectedColorVariantId, "navy");
+    assert.deepEqual(selectedForDeleteResponse.json().colorVariantOrder, ["navy", "original", "green"]);
+
+    const deleteResponse = mockResponse();
+    await api.handler(mockJsonRequest(
+      `/api/import/wardrobe/${ITEM_ID}/variants/navy`,
+      "DELETE",
+    ), deleteResponse, () => {});
+    assert.equal(deleteResponse.statusCode, 200);
+    assert.deepEqual(deleteResponse.json().item.colorVariants.map((variant) => variant.id), ["green"]);
+    assert.deepEqual(deleteResponse.json().item.colorVariantOrder, ["original", "green"]);
+    assert.equal(deleteResponse.json().item.selectedColorVariantId, null);
+    assert.equal(deleteResponse.json().user.wardrobePlans[0].result.garmentVariants[ITEM_ID], null);
+    assert.equal(deleteResponse.json().user.wardrobeOutfits[0].garments[0].variantId, null);
+
+    stored = JSON.parse(await readFile(path.join(dataDir, "library.json"), "utf8"));
+    assert.deepEqual(stored[0].colorVariants.map((variant) => variant.id), ["green"]);
+    const storedUsers = JSON.parse(await readFile(path.join(dataDir, "users.json"), "utf8"));
+    assert.equal(storedUsers.users[0].wardrobePlans[0].result.garmentVariants[ITEM_ID], null);
+    assert.equal(storedUsers.users[0].wardrobeOutfits[0].garments[0].variantId, null);
+
+    const missingResponse = mockResponse();
+    await api.handler(mockJsonRequest(
+      `/api/import/wardrobe/${ITEM_ID}/variants/navy`,
+      "DELETE",
+    ), missingResponse, () => {});
+    assert.equal(missingResponse.statusCode, 404);
+    assert.equal(missingResponse.json().code, "garment_variant_not_found");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

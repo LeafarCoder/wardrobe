@@ -108,6 +108,16 @@ const cleanText = (value, maxLength) => (
   typeof value === "string" ? value.trim().slice(0, maxLength) : ""
 );
 
+export function normalizePlannerGarmentVariants(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).flatMap(([rawItemId, rawVariantId]) => {
+    const itemId = cleanText(rawItemId, 100);
+    if (!itemId || (rawVariantId !== null && typeof rawVariantId !== "string")) return [];
+    const variantId = rawVariantId === null ? null : cleanText(rawVariantId, 80);
+    return variantId === "" && rawVariantId !== null ? [] : [[itemId, variantId]];
+  }).slice(0, 30));
+}
+
 export function normalizeGarmentFacetList(value, maxItems = 12) {
   const source = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
   const unique = new Map();
@@ -307,6 +317,7 @@ export function normalizeWardrobePlans(value = {}) {
         preview: cleanText(look.preview, 500) || null,
         model: cleanText(look.model, 180) || null,
         fallbackUsed: Boolean(look.fallbackUsed),
+        garmentVariants: normalizePlannerGarmentVariants(look.garmentVariants),
         context: normalizeModeledLookContext(look.context),
         generatedAt: cleanText(look.generatedAt, 40) || null,
       }), 12).filter((look) => look.id && look.image);
@@ -334,6 +345,7 @@ export function normalizeWardrobePlans(value = {}) {
           itemId: cleanText(item.itemId, 100),
           reason: cleanText(item.reason, 240),
         }), 30),
+        garmentVariants: normalizePlannerGarmentVariants(result.garmentVariants),
         outfitIdeas: normalizeItems(result.outfitIdeas, (item) => {
           const modeledLooks = normalizeModeledLooks(item);
           return {

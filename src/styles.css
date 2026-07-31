@@ -3012,6 +3012,10 @@ button { font: inherit; }
   background: rgba(25, 24, 22, .62);
 }
 
+.version-delete-overlay {
+  z-index: 140;
+}
+
 .source-photo-overlay {
   position: fixed;
   inset: 0;
@@ -3379,6 +3383,16 @@ button { font: inherit; }
 }
 .media-preview-dialog__vault:hover, .media-preview-dialog__vault:focus-visible { border-color: var(--ink); outline: none; }
 .media-preview-dialog__vault:disabled { opacity: .55; cursor: default; }
+
+.media-preview-dialog__version-delete {
+  border-color: rgba(143, 51, 45, .34);
+  color: #8f332d;
+}
+
+.media-preview-dialog__version-delete:hover,
+.media-preview-dialog__version-delete:focus-visible {
+  border-color: #8f332d;
+}
 
 .viewer-vault-button { color: var(--ink); }
 
@@ -3928,6 +3942,15 @@ button { font: inherit; }
   height: min(82%, 230px);
 }
 
+.version-delete-dialog__image {
+  padding: 18px;
+}
+
+.version-delete-dialog__image img {
+  width: min(82%, 300px);
+  height: min(82%, 230px);
+}
+
 .source-delete-dialog {
   width: min(560px, 100%);
 }
@@ -3944,6 +3967,14 @@ button { font: inherit; }
 
 .source-delete-dialog__body > p:last-of-type {
   max-width: 470px;
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.version-delete-dialog__body > p:last-child {
+  max-width: 360px;
   margin: 12px 0 0;
   color: var(--muted);
   font-size: 11px;
@@ -6899,24 +6930,86 @@ button { font: inherit; }
 .planner-garment-link {
   position: relative;
   min-width: 0;
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
   border: 1px solid var(--line);
-  padding: 10px;
+  padding: 0;
   background: transparent;
   color: var(--ink);
   text-align: left;
-  cursor: pointer;
 }
 .planner-garment-link:hover,
-.planner-garment-link:focus-visible { border-color: var(--ink); outline: none; }
+.planner-garment-link:focus-within { border-color: var(--ink); outline: none; }
 .planner-pack-list__swatch {
   width: 14px;
   height: 14px;
   flex: 0 0 14px;
   border: 1px solid rgba(25, 25, 25, .18);
   border-radius: 50%;
+}
+.planner-garment-link__media {
+  position: relative;
+  align-self: stretch;
+  min-height: 82px;
+  border-right: 1px solid var(--line);
+  background: #f1ece3;
+}
+.planner-garment-link__media > button {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  padding: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+.planner-garment-link__media img { width: 100%; height: 72px; display: block; object-fit: contain; }
+.planner-garment-link__details {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border: 0;
+  padding: 11px 10px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.planner-garment-link__version-nav {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+.planner-garment-link:hover .planner-garment-link__version-nav,
+.planner-garment-link:focus-within .planner-garment-link__version-nav { opacity: 1; }
+.planner-garment-link__version-nav button {
+  width: 25px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(25, 24, 22, .32);
+  padding: 0;
+  background: rgba(247, 243, 236, .92);
+  color: var(--ink);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.planner-garment-link__version-nav button:hover,
+.planner-garment-link__version-nav button:focus-visible { border-color: var(--ink); outline: none; }
+.planner-garment-link__version-nav span {
+  align-self: flex-end;
+  margin-bottom: 4px;
+  padding: 2px 4px;
+  background: rgba(247, 243, 236, .92);
+  color: var(--ink);
+  font-size: 8px;
 }
 .planner-garment-link__copy {
   min-width: 0;
@@ -6957,6 +7050,8 @@ button { font: inherit; }
 }
 .planner-garment-link:hover .planner-garment-tooltip,
 .planner-garment-link:focus-visible .planner-garment-tooltip { display: block; }
+.planner-garment-link.is-compact { display: inline-flex; width: auto; }
+.planner-garment-link.is-compact .planner-garment-link__details { padding: 5px 7px; }
 .planner-outfits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .planner-outfits article {
   min-width: 0;
@@ -7021,11 +7116,10 @@ button { font: inherit; }
 .planner-outfit-garments .planner-garment-link {
   align-items: center;
   border: 1px solid var(--line);
-  padding: 5px 7px;
+  padding: 0;
   background: transparent;
   color: var(--ink);
   font-size: 9px;
-  cursor: pointer;
 }
 .planner-outfit-garments .planner-garment-link strong { font-size: 9px; font-weight: 500; }
 .planner-outfit-garments .planner-garment-tooltip { right: auto; left: 0; }

@@ -5,12 +5,25 @@ import {
   collectFacetOptions,
   groupWardrobeItems,
   normalizeGarmentSeasons,
+  normalizePlannerGarmentVariants,
   normalizeSavedViews,
   normalizeWardrobeDisplayPreferences,
   normalizeWardrobePlans,
   WARDROBE_ITEM_TYPES,
   wardrobeItemMatches,
 } from "../src/wardrobe-discovery.js";
+
+test("normalizes planner garment version selections", () => {
+  assert.deepEqual(normalizePlannerGarmentVariants({
+    shirt: "navy",
+    trousers: null,
+    invalid: 42,
+    empty: "",
+  }), {
+    shirt: "navy",
+    trousers: null,
+  });
+});
 
 const wardrobe = [
   {
@@ -211,6 +224,7 @@ test("keeps multiple generated outfit images inside saved wardrobe plans", () =>
     id: "trip-look",
     input: { location: "Paris, France" },
     result: {
+      garmentVariants: { shirt: "navy", trousers: null },
       outfitIdeas: [{
         name: "Museum afternoon",
         itemIds: ["shirt", "trousers"],
@@ -221,6 +235,7 @@ test("keeps multiple generated outfit images inside saved wardrobe plans", () =>
             image: "/api/import/library/trip-look.png",
             preview: "/api/import/library/trip-look-preview.webp",
             model: "example/image-model",
+            garmentVariants: { shirt: "navy", trousers: null },
             generatedAt: "2026-07-24T12:00:00.000Z",
           },
           {
@@ -235,6 +250,8 @@ test("keeps multiple generated outfit images inside saved wardrobe plans", () =>
   }]);
 
   assert.deepEqual(plan.result.outfitIdeas[0].modeledLooks.map((look) => look.id), ["look-1", "look-2"]);
+  assert.deepEqual(plan.result.garmentVariants, { shirt: "navy", trousers: null });
+  assert.deepEqual(plan.result.outfitIdeas[0].modeledLooks[0].garmentVariants, { shirt: "navy", trousers: null });
   assert.equal(plan.result.outfitIdeas[0].modeledLooks[0].preview, "/api/import/library/trip-look-preview.webp");
   assert.equal(plan.result.outfitIdeas[0].modeledLook.id, "look-2");
 });
