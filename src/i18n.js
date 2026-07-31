@@ -1184,6 +1184,8 @@ const pt = {
   "Initial mask: {model}": "Máscara inicial: {model}",
   "Apply mask": "Aplicar máscara",
   "Background removed": "Fundo removido",
+  "Creating selection…": "A criar seleção…",
+  "The corrected garment image has been saved without using image-generation credits.": "A imagem corrigida da peça foi guardada sem utilizar créditos de geração de imagens.",
   "The edited mask is ready for review. No image-generation credits were used.": "A máscara editada está pronta para revisão. Não foram utilizados créditos de geração de imagens.",
   "Could not create the background selection": "Não foi possível criar a seleção do fundo",
   "Could not apply the background mask": "Não foi possível aplicar a máscara do fundo",

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, CrosshairSimple, DownloadSimple, Dress, Eye, EyeSlash, FilmStrip, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, Link, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, BookmarkSimple, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, Check, ClockCounterClockwise, CloudSun, CoatHanger, Crop, CrosshairSimple, DownloadSimple, Dress, Eraser, Eye, EyeSlash, FilmStrip, FunnelSimple, GoogleLogo, Handbag, ImageSquare, Info, Key, Link, ListBullets, ListNumbers, LockKey, MagnifyingGlass, MapPin, Palette, Pants, PencilSimple, Plus, Rows, Sneaker, Sparkle, SpinnerGap, SquaresFour, SuitcaseRolling, Tag, Trash, TShirt, UserCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { readableError, WardrobeImportFlow } from "./import-flow.jsx";
 import { BrandIcon } from "./BrandIcon.jsx";
 import { CareIcon } from "./CareIcon.jsx";
@@ -13,6 +13,7 @@ import {
 } from "./connection-paths.js";
 import { CITY_SUGGESTIONS } from "./city-suggestions.js";
 import { GarmentColorPreview } from "./GarmentColorPreview.jsx";
+import { GarmentMaskEditor } from "./GarmentMaskEditor.jsx";
 import { compareWardrobeColors } from "./color-organization.js";
 import { DayDatePicker } from "./DayDatePicker.jsx";
 import { formatDate, getLocale, LANGUAGE_OPTIONS, setLocale, tr, useLocale } from "./i18n.js";
@@ -1627,6 +1628,8 @@ function ItemViewer({
   onCenterGarmentRegeneration,
   onAcceptGarmentRegeneration,
   onDiscardGarmentRegeneration,
+  onStartGarmentMask,
+  onApplyGarmentMask,
   onCreateVariant,
   onSelectColorVersion,
   onReorderColorVersions,
@@ -1681,6 +1684,9 @@ function ItemViewer({
   const [garmentRegenerationBusy, setGarmentRegenerationBusy] = useState(false);
   const [garmentRegenerationError, setGarmentRegenerationError] = useState("");
   const [garmentRegenerationForm, setGarmentRegenerationForm] = useState(() => garmentRegenerationDraft(item));
+  const [garmentMaskDraft, setGarmentMaskDraft] = useState(null);
+  const [garmentMaskBusy, setGarmentMaskBusy] = useState(false);
+  const [garmentMaskError, setGarmentMaskError] = useState("");
   const [sourceCropVisible, setSourceCropVisible] = useState(false);
   const [sourceImageFrame, setSourceImageFrame] = useState(null);
   const [colorEditorOpen, setColorEditorOpen] = useState(false);
@@ -2556,6 +2562,8 @@ function ItemViewer({
     if (kind === "media" && !activeMedia) return;
     setMediaPreviewOpen(kind);
     if (kind === "garment") {
+      setGarmentMaskDraft(null);
+      setGarmentMaskError("");
       setGarmentRegenerationOpen(Boolean(item.garmentRegenerationCandidate));
       setGarmentRegenerationError("");
       if (item.garmentRegenerationCandidate) setGarmentRegenerationForm(garmentRegenerationDraft(item));
@@ -2570,6 +2578,8 @@ function ItemViewer({
     setModeledSettingsOpen(false);
     setGarmentRegenerationOpen(false);
     setGarmentRegenerationError("");
+    setGarmentMaskDraft(null);
+    setGarmentMaskError("");
     requestAnimationFrame(() => trigger?.focus({ preventScroll: true }));
   };
 
@@ -2679,6 +2689,45 @@ function ItemViewer({
       setGarmentRegenerationError(readableError(requestError));
     } finally {
       setGarmentRegenerationBusy(false);
+    }
+  };
+
+  const startGarmentMask = async () => {
+    if (garmentMaskBusy || !item.id.startsWith("import-")) return;
+    setGarmentMaskBusy(true);
+    setGarmentMaskError("");
+    try {
+      const mask = await onStartGarmentMask(item.id, {
+        versionId: activeColorVersion.id || GARMENT_ORIGINAL_VERSION_ID,
+      });
+      setGarmentMaskDraft(mask);
+    } catch (requestError) {
+      setGarmentMaskError(readableError(requestError));
+    } finally {
+      setGarmentMaskBusy(false);
+    }
+  };
+
+  const applySavedGarmentMask = async (mask) => {
+    if (garmentMaskBusy || !garmentMaskDraft) return;
+    setGarmentMaskBusy(true);
+    setGarmentMaskError("");
+    try {
+      await onApplyGarmentMask(item.id, {
+        ...mask,
+        sourceImage: garmentMaskDraft.sourceImage,
+        versionId: garmentMaskDraft.versionId,
+      });
+      setGarmentMaskDraft(null);
+      setViewerToast({
+        tone: "complete",
+        title: tr("Background removed"),
+        message: tr("The corrected garment image has been saved without using image-generation credits."),
+      });
+    } catch (requestError) {
+      setGarmentMaskError(readableError(requestError));
+    } finally {
+      setGarmentMaskBusy(false);
     }
   };
 
@@ -3193,7 +3242,19 @@ function ItemViewer({
               <X size={23} weight="light" aria-hidden="true" />
             </button>
           </header>
-          {mediaPreviewOpen === "garment" && garmentRegenerationOpen ? (
+          {mediaPreviewOpen === "garment" && garmentMaskDraft ? (
+            <div className="media-preview-dialog__body garment-regeneration">
+              <GarmentMaskEditor
+                sourceUrl={garmentMaskDraft.sourceUrl}
+                maskUrl={garmentMaskDraft.maskDataUrl}
+                model={garmentMaskDraft.model}
+                busy={garmentMaskBusy}
+                onCancel={() => setGarmentMaskDraft(null)}
+                onApply={applySavedGarmentMask}
+              />
+              {garmentMaskError && <p className="garment-regeneration__error" role="alert">{garmentMaskError}</p>}
+            </div>
+          ) : mediaPreviewOpen === "garment" && garmentRegenerationOpen ? (
             <div className="media-preview-dialog__body garment-regeneration">
               <div className="garment-regeneration__scroll">
                 <div className={`garment-regeneration__comparison${garmentRegenerationCandidate ? " has-candidate" : ""}`} aria-label={tr("Current and regenerated garment comparison")}>
@@ -3400,7 +3461,7 @@ function ItemViewer({
               </div>
             </div>
           ) : (
-          <div className={`media-preview-dialog__body${mediaPreviewOpen === "media" && garmentMedia.length > 1 ? " has-carousel" : ""}${mediaPreviewOpen === "garment" && colorVersions.length > 1 ? " has-version-gallery" : ""}${mediaPreviewOpen === "garment" && item.id.startsWith("import-") && sourcePhotos.length > 0 ? " has-actions" : ""}`}>
+          <div className={`media-preview-dialog__body${mediaPreviewOpen === "media" && garmentMedia.length > 1 ? " has-carousel" : ""}${mediaPreviewOpen === "garment" && colorVersions.length > 1 ? " has-version-gallery" : ""}${mediaPreviewOpen === "garment" && item.id.startsWith("import-") ? " has-actions" : ""}`}>
             <ProductStage
               className="media-preview-dialog__viewport"
               interactive
@@ -3658,12 +3719,19 @@ function ItemViewer({
                 </div>
               </aside>
             )}
-            {mediaPreviewOpen === "garment" && item.id.startsWith("import-") && sourcePhotos.length > 0 && (
+            {mediaPreviewOpen === "garment" && item.id.startsWith("import-") && (
               <footer className="media-preview-dialog__actions">
-                <button type="button" className="primary-button" onClick={openGarmentRegeneration}>
-                  <ArrowCounterClockwise size={16} aria-hidden="true" />
-                  {tr(garmentRegenerationCandidate ? "Review regenerated candidate" : "Regenerate from original photos")}
+                {garmentMaskError && <p className="garment-regeneration__error" role="alert">{garmentMaskError}</p>}
+                <button type="button" className="secondary-button" disabled={garmentMaskBusy} onClick={startGarmentMask}>
+                  {garmentMaskBusy ? <SpinnerGap className="modeled-request__spinner" size={16} aria-hidden="true" /> : <Eraser size={16} aria-hidden="true" />}
+                  {tr(garmentMaskBusy ? "Creating selection…" : "Fix background")}
                 </button>
+                {sourcePhotos.length > 0 && (
+                  <button type="button" className="primary-button" disabled={garmentMaskBusy} onClick={openGarmentRegeneration}>
+                    <ArrowCounterClockwise size={16} aria-hidden="true" />
+                    {tr(garmentRegenerationCandidate ? "Review regenerated candidate" : "Regenerate from original photos")}
+                  </button>
+                )}
               </footer>
             )}
           </div>
@@ -7874,6 +7942,20 @@ export function App() {
     return updated;
   };
 
+  const startGarmentMask = async (id, input) => profileApi(
+    `/api/import/wardrobe/${id}/mask/start?user=${encodeURIComponent(currentUserId)}`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+
+  const applyGarmentMask = async (id, input) => {
+    const updated = await profileApi(`/api/import/wardrobe/${id}/mask/apply?user=${encodeURIComponent(currentUserId)}`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    updateGarmentCollections(updated);
+    return updated;
+  };
+
   const deleteModeledLook = async (id, lookId) => {
     const updated = await profileApi(`/api/import/wardrobe/${id}/modeled/${encodeURIComponent(lookId)}?user=${encodeURIComponent(currentUserId)}`, {
       method: "DELETE",
@@ -8365,6 +8447,8 @@ export function App() {
           onCenterGarmentRegeneration={centerGarmentRegeneration}
           onAcceptGarmentRegeneration={acceptGarmentRegeneration}
           onDiscardGarmentRegeneration={discardGarmentRegeneration}
+          onStartGarmentMask={startGarmentMask}
+          onApplyGarmentMask={applyGarmentMask}
           onCreateVariant={createColorVariant}
           onSelectColorVersion={selectColorVersion}
           onReorderColorVersions={reorderColorVersions}

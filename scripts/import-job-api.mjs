@@ -6655,6 +6655,127 @@ Interpret this correction semantically in whatever language it is written. It ov
     return result.record;
   }
 
+  function importedGarmentMaskTarget(record, versionId) {
+    if (!versionId || versionId === GARMENT_ORIGINAL_VERSION_ID) {
+      return {
+        id: GARMENT_ORIGINAL_VERSION_ID,
+        image: record.image,
+        preview: record.imagePreview || record.image,
+        thumbnail: record.thumbnail || record.imagePreview || record.image,
+      };
+    }
+    const variant = garmentColorVariants(record).find((candidate) => candidate.id === versionId);
+    return variant || null;
+  }
+
+  async function startImportedGarmentMask(itemId, user, input = {}) {
+    const records = await loadImported();
+    const record = records.find((candidate) => candidate.id === itemId && candidate.userId === user.id);
+    if (!record) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+    const target = importedGarmentMaskTarget(record, input.versionId);
+    if (!target?.image) throw apiError("That garment version is no longer available.", 404, "garment_version_not_found");
+    const sourceName = path.basename(new URL(target.image, "http://localhost").pathname);
+    const sourceFile = path.join(libraryAssetDir, sourceName);
+    await readFile(sourceFile);
+    const temporary = await mkdtemp(path.join(tmpdir(), "wardrobe-rembg-"));
+    const maskFile = path.join(temporary, "mask.png");
+    try {
+      const model = await runRembgMask(sourceFile, maskFile);
+      const mask = await sharp(maskFile).removeAlpha().grayscale().png().toBuffer();
+      return {
+        sourceImage: target.image,
+        sourceUrl: withUser(target.image, user.id),
+        maskDataUrl: `data:image/png;base64,${mask.toString("base64")}`,
+        model,
+        versionId: target.id,
+      };
+    } finally {
+      await fsRm(temporary, { recursive: true, force: true });
+    }
+  }
+
+  async function applyImportedGarmentMask(itemId, user, input = {}) {
+    const decodedMask = decodeImage({ imageDataUrl: input.maskDataUrl });
+    const maskMetadata = await sharp(decodedMask.data).metadata();
+    if ((maskMetadata.width || 0) > 4096 || (maskMetadata.height || 0) > 4096) {
+      throw apiError("The edited mask is too large.", 413, "garment_mask_too_large");
+    }
+    const threshold = maskControlInteger(input.threshold, 128, 1, 254);
+    const edge = maskControlInteger(input.edge, 0, -8, 8);
+    const feather = maskControlInteger(input.feather, 1, 0, 8);
+    const createdAssets = [];
+    const result = await withLibrary(async () => {
+      const records = await loadImported();
+      const index = records.findIndex((record) => record.id === itemId && record.userId === user.id);
+      if (index < 0) throw apiError("Imported wardrobe item not found.", 404, "wardrobe_item_not_found");
+      const target = importedGarmentMaskTarget(records[index], input.versionId);
+      if (!target?.image) throw apiError("That garment version is no longer available.", 404, "garment_version_not_found");
+      if (String(input.sourceImage || "").split("?")[0] !== target.image.split("?")[0]) {
+        throw apiError("The garment image changed while its mask was open. Reopen the mask editor and try again.", 409, "garment_mask_source_changed");
+      }
+      const sourceName = path.basename(new URL(target.image, "http://localhost").pathname);
+      const source = await readFile(path.join(libraryAssetDir, sourceName));
+      const output = await applyGarmentMask(source, decodedMask.data, { threshold, edge, feather });
+      const failure = garmentCutoutTransparencyFailure(await garmentTransparencyStats(output));
+      if (failure) {
+        throw apiError(
+          failure === "opaque-border"
+            ? "The edited mask still leaves background around the garment. Remove more of the outer canvas before applying it."
+            : "The edited mask has not removed enough background yet.",
+          422,
+          "garment_background_not_transparent",
+        );
+      }
+      const outputName = `${itemId}-masked-${randomUUID()}.png`;
+      await atomicFile(path.join(libraryAssetDir, outputName), output);
+      const image = libraryAssetUrl(outputName);
+      createdAssets.push(image);
+      const [preview, thumbnail] = await Promise.all([
+        safeLibraryVariant(image, "preview", `${records[index].name} corrected garment`),
+        safeLibraryVariant(image, "thumbnail", `${records[index].name} corrected garment thumbnail`),
+      ]);
+      createdAssets.push(preview, thumbnail);
+      const removedAssets = [target.image, target.preview, target.thumbnail].filter(Boolean);
+      if (target.id === GARMENT_ORIGINAL_VERSION_ID) {
+        records[index] = {
+          ...records[index],
+          image,
+          imagePreview: preview || image,
+          thumbnail: thumbnail || preview || image,
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        records[index] = {
+          ...records[index],
+          colorVariants: garmentColorVariants(records[index]).map((variant) => variant.id === target.id ? {
+            ...variant,
+            image,
+            preview: preview || image,
+            thumbnail: thumbnail || preview || image,
+          } : variant),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      await saveImported(records);
+      const retained = new Set(importedRecordAssets(records[index]).map((asset) => asset.split("?")[0]));
+      return {
+        record: records[index],
+        removedAssets: removedAssets.filter((asset) => asset && !retained.has(asset.split("?")[0])),
+      };
+    }).catch(async (error) => {
+      await Promise.all(createdAssets.filter(Boolean).map((asset) => fsRm(
+        path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+        { force: true },
+      )));
+      throw error;
+    });
+    await Promise.all(result.removedAssets.map((asset) => fsRm(
+      path.join(libraryAssetDir, path.basename(new URL(asset, "http://localhost").pathname)),
+      { force: true },
+    )));
+    return result.record;
+  }
+
   async function generateImportedModeledLook(itemId, user, variantId = null, context = {}, payerProfile = null) {
     const lock = `library:${itemId}:modeled`;
     if (running.has(lock)) return running.get(lock);
@@ -9327,6 +9448,17 @@ Interpret this correction semantically in whatever language it is written. It ov
         return json(res, 200, { item: publicImportedRecord(updated, user.id) });
       }
       const garmentRegenerationMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/regeneration(?:\/(accept|center))?$/i);
+      const savedGarmentMaskMatch = url.pathname.match(/^\/api\/import\/wardrobe\/(import-[a-f0-9-]{36})\/mask\/(start|apply)$/i);
+      if (savedGarmentMaskMatch?.[2] === "start" && req.method === "POST") {
+        const input = await body(req, 16 * 1024);
+        const mask = await startImportedGarmentMask(savedGarmentMaskMatch[1], user, input);
+        return json(res, 200, mask);
+      }
+      if (savedGarmentMaskMatch?.[2] === "apply" && req.method === "POST") {
+        const input = await body(req);
+        const record = await applyImportedGarmentMask(savedGarmentMaskMatch[1], user, input);
+        return json(res, 200, publicImportedRecord(record, user.id));
+      }
       if (garmentRegenerationMatch && !garmentRegenerationMatch[2] && req.method === "POST") {
         const input = await body(req, 64 * 1024);
         const result = await generateImportedGarmentCandidate(
