@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  bestDuplicateCandidate,
   discardedAssetsAfterMerge,
   duplicateCandidateScore,
   garmentRegenerationCandidateForRecord,
@@ -13,6 +14,31 @@ import {
   sourcePhotosForRecord,
   wardrobePlansAfterGarmentMerge,
 } from "../scripts/import-job-api.mjs";
+
+test("never suggests a vaulted garment as an import duplicate", () => {
+  const metadata = {
+    name: "Teal linen button-down shirt",
+    part: "upperbody",
+    color: "#17666a",
+    brand: "Zara",
+    tags: ["button-down", "linen", "long-sleeve"],
+  };
+  const visible = {
+    id: "visible",
+    userId: "owner",
+    ...metadata,
+    color: "#557777",
+  };
+  const vaulted = {
+    id: "vaulted",
+    userId: "owner",
+    ...metadata,
+    vaultedAt: "2026-07-31T10:00:00.000Z",
+  };
+
+  assert.equal(bestDuplicateCandidate([vaulted], { userId: "owner", metadata }), null);
+  assert.equal(bestDuplicateCandidate([visible, vaulted], { userId: "owner", metadata })?.record.id, "visible");
+});
 
 test("preserves a reviewed garment failure and its explicit alternative model", () => {
   const candidate = garmentRegenerationCandidateForRecord({

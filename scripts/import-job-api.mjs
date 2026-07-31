@@ -1703,6 +1703,26 @@ export function duplicateCandidateScore(record = {}, metadata = {}) {
   };
 }
 
+export function bestDuplicateCandidate(records = [], job = {}) {
+  return records
+    .filter((record) => record.userId === job.userId && !isVaulted(record))
+    .map((record) => ({ record, match: duplicateCandidateScore(record, job.metadata) }))
+    .filter(({ match }) => (
+      match.compatible
+      && match.score >= 0.48
+      && (
+        match.nameSimilarity >= 0.22
+        || match.detailSimilarity >= 0.18
+        || match.descriptorSimilarity >= 0.24
+        || match.brandMatch
+      )
+    ))
+    .sort((first, second) => (
+      second.match.score - first.match.score
+      || String(second.record.updatedAt || "").localeCompare(String(first.record.updatedAt || ""))
+    ))[0] || null;
+}
+
 function storedAssetUrl(owner, value, userId) {
   if (!value) return value;
   const fileName = path.basename(new URL(value, "http://localhost").pathname);
@@ -5895,24 +5915,7 @@ export function wardrobeImportApi(options = {}) {
 
   async function findDuplicateReview(job) {
     const records = await loadImported();
-    const candidates = records
-      .filter((record) => record.userId === job.userId)
-      .map((record) => ({ record, match: duplicateCandidateScore(record, job.metadata) }))
-      .filter(({ match }) => (
-        match.compatible
-        && match.score >= 0.48
-        && (
-          match.nameSimilarity >= 0.22
-          || match.detailSimilarity >= 0.18
-          || match.descriptorSimilarity >= 0.24
-          || match.brandMatch
-        )
-      ))
-      .sort((first, second) => (
-        second.match.score - first.match.score
-        || String(second.record.updatedAt || "").localeCompare(String(first.record.updatedAt || ""))
-      ));
-    const best = candidates[0];
+    const best = bestDuplicateCandidate(records, job);
     if (!best) return null;
     const sources = sourcePhotosForRecord(best.record);
     return {
@@ -5949,7 +5952,9 @@ export function wardrobeImportApi(options = {}) {
     const merged = await withLibrary(async () => {
       const records = await loadImported();
       const index = records.findIndex((record) => (
-        record.id === job.duplicateReview.candidateId && record.userId === user.id
+        record.id === job.duplicateReview.candidateId
+        && record.userId === user.id
+        && !isVaulted(record)
       ));
       if (index < 0) {
         throw apiError("The matching wardrobe garment no longer exists. Keep this as a new garment instead.", 409, "duplicate_candidate_missing");
