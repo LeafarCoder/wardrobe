@@ -16,6 +16,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
     headOrientation: "camera",
     environmentType: "inside",
     setting: "living-room",
+    season: "autumn",
     weather: "sunny",
     expression: "smiling",
     additionalDirection: "  Carry a small bouquet.  ",
@@ -29,6 +30,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
     headOrientation: "camera",
     environmentType: "inside",
     setting: "living-room",
+    season: "autumn",
     weather: "sunny",
     expression: "smiling",
     backgroundReferenceId: "",
@@ -39,6 +41,7 @@ test("normalizes modeled-look direction and keeps settings contextual", () => {
 
   assert.equal(normalizeModeledLookContext({ environmentType: "outside", setting: "bedroom" }).setting, "");
   assert.equal(normalizeModeledLookContext({ environmentType: "invalid", setting: "forest" }).environmentType, "");
+  assert.equal(normalizeModeledLookContext({ season: "monsoon" }).season, "");
   assert.deepEqual(normalizeModeledLookContext(null), normalizeModeledLookContext());
 });
 
@@ -51,6 +54,7 @@ test("adds only selected creative direction to the modeled-look prompt", () => {
     headOrientation: "left",
     environmentType: "outside",
     setting: "forest",
+    season: "autumn",
     weather: "light-rain",
     expression: "smirking",
     additionalDirection: "Hold a closed umbrella.",
@@ -64,7 +68,9 @@ test("adds only selected creative direction to the modeled-look prompt", () => {
   assert.match(directed, /body shown from the side/);
   assert.match(directed, /head turned and looking to their left/);
   assert.match(directed, /a natural forest/);
+  assert.match(directed, /autumn, with seasonally appropriate light/);
   assert.match(directed, /a believable light rain/);
+  assert.match(directed, /plausible weather moment within the selected season/);
   assert.match(directed, /a subtle smirk/);
   assert.match(directed, /Additional user direction: Hold a closed umbrella\./);
 });
@@ -114,6 +120,7 @@ test("describes every selected modeled-look setting without translating free tex
     headOrientation: "camera",
     environmentType: "inside",
     setting: "living-room",
+    season: "winter",
     weather: "sunny",
     expression: "smiling",
     additionalDirection: "Carry the red book.",
@@ -124,6 +131,7 @@ test("describes every selected modeled-look setting without translating free tex
     { id: "bodyOrientation", label: "Body orientation", values: ["Three-quarters"], translateValues: true },
     { id: "headOrientation", label: "Head orientation", values: ["Looking at camera"], translateValues: true },
     { id: "environment", label: "Environment", values: ["Inside", "Living room"], translateValues: true },
+    { id: "season", label: "Season", values: ["Winter"], translateValues: true },
     { id: "weather", label: "Weather", values: ["Sunny"], translateValues: true },
     { id: "expression", label: "Expression", values: ["Smiling"], translateValues: true },
     { id: "additionalDirection", label: "More direction", values: ["Carry the red book."], translateValues: false },

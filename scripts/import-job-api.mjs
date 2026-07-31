@@ -2387,6 +2387,7 @@ export function buildOutfitStudioModeledPrompt(personReferenceCount = 1, profile
     modeledLookContextPrompt({
       environmentType: modeledContext.environmentType,
       setting: modeledContext.setting,
+      season: modeledContext.season,
       weather: modeledContext.weather,
       additionalDirection: modeledContext.additionalDirection || (!hasModeledContext ? presentation.direction : ""),
     }),

@@ -86,6 +86,12 @@ export const MODELED_LOOK_CONTEXT_OPTIONS = Object.freeze({
     { id: "old-town", label: "Old town", prompt: "a historic old-town street" },
     { id: "promenade", label: "Promenade", prompt: "an open waterfront promenade" },
   ]),
+  season: Object.freeze([
+    { id: "spring", label: "Spring", prompt: "spring, with seasonally appropriate light, vegetation, and atmosphere" },
+    { id: "summer", label: "Summer", prompt: "summer, with seasonally appropriate light, vegetation, and atmosphere" },
+    { id: "autumn", label: "Autumn", prompt: "autumn, with seasonally appropriate light, vegetation, and atmosphere" },
+    { id: "winter", label: "Winter", prompt: "winter, with seasonally appropriate light, vegetation, and atmosphere" },
+  ]),
   weather: Object.freeze([
     { id: "sunny", label: "Sunny", prompt: "sunny weather" },
     { id: "partly-cloudy", label: "Partly cloudy", prompt: "partly cloudy weather" },
@@ -126,6 +132,7 @@ export const EMPTY_MODELED_LOOK_CONTEXT = Object.freeze({
   headOrientation: "",
   environmentType: "",
   setting: "",
+  season: "",
   weather: "",
   expression: "",
   backgroundReferenceId: "",
@@ -186,6 +193,7 @@ export function normalizeModeledLookContext(input = {}) {
     headOrientation: validOption("headOrientation", source.headOrientation),
     environmentType,
     setting: environmentType ? validOption(settingGroup, source.setting) : "",
+    season: validOption("season", source.season),
     weather: validOption("weather", source.weather),
     expression: validOption("expression", source.expression),
     backgroundReferenceId: typeof source.backgroundReferenceId === "string"
@@ -215,7 +223,8 @@ export function modeledLookContextPrompt(input = {}) {
           ? optionPrompt(context.environmentType === "inside" ? "insideSetting" : "outsideSetting", context.setting)
           : optionPrompt("environmentType", context.environmentType)}.`
       : null,
-    context.weather ? `Weather and atmosphere: ${optionPrompt("weather", context.weather)}.` : null,
+    context.season ? `Season: ${optionPrompt("season", context.season)}.` : null,
+    context.weather ? `Weather and atmosphere: ${optionPrompt("weather", context.weather)}.${context.season ? " Treat this as a plausible weather moment within the selected season." : ""}` : null,
     context.expression ? `Expression: ${optionPrompt("expression", context.expression)}.` : null,
     ...context.people.map((person) => {
       const directions = PERSON_DIRECTION_FIELDS.flatMap((field) => (
@@ -250,6 +259,7 @@ export function modeledLookContextDetails(input = {}) {
         ? optionLabel(context.environmentType === "inside" ? "insideSetting" : "outsideSetting", context.setting)
         : "",
     ]),
+    translated("season", "Season", [optionLabel("season", context.season)]),
     translated("weather", "Weather", [optionLabel("weather", context.weather)]),
     translated("expression", "Expression", [optionLabel("expression", context.expression)]),
     context.backgroundReferenceId

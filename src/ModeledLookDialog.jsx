@@ -5,6 +5,7 @@ import {
   HandWaving,
   House,
   ImageSquare,
+  Leaf,
   PersonSimple,
   PersonSimpleRun,
   Scissors,
@@ -35,6 +36,7 @@ const GROUP_ICONS = {
   Environment: House,
   "Interior setting": House,
   "Open-air setting": Tree,
+  Season: Leaf,
   Weather: CloudSun,
   Style: Aperture,
 };
@@ -223,7 +225,7 @@ export function ModeledLookDialog({
           </details>
 
           <details className="modeled-context__section" open>
-            <summary><span>{tr("Scene")}</span><small>{tr("Place, room, weather, and atmosphere")}</small></summary>
+            <summary><span>{tr("Scene")}</span><small>{tr("Place, season, weather, and atmosphere")}</small></summary>
             <div className="modeled-context__section-body">
             <div className="modeled-context__scene-grid">
               <div>
@@ -238,6 +240,7 @@ export function ModeledLookDialog({
               )}
               </div>
               <div>
+                <ChoiceGroup label="Season" options={MODELED_LOOK_CONTEXT_OPTIONS.season} value={context.season} onChange={(value) => update("season", value)} />
                 <ChoiceGroup label="Weather" options={MODELED_LOOK_CONTEXT_OPTIONS.weather} value={context.weather} onChange={(value) => update("weather", value)} />
               </div>
             </div>

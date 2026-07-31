@@ -412,6 +412,8 @@ test("keeps connected people and their assigned garments distinct in Outfit Stud
       { name: "Cream dress", part: "wholebody", wearerName: "Sara" },
     ],
     {
+      season: "summer",
+      weather: "sunny",
       people: [
         { personId: "rafael", pose: "walking", gesture: "arms-crossed", hairstyle: "short", additionalDirection: "Look toward Sara." },
         { personId: "sara", pose: "standing", gesture: "tuck-hair", hairstyle: "ponytail", additionalDirection: "Hold Rafael's hand." },
@@ -427,6 +429,8 @@ test("keeps connected people and their assigned garments distinct in Outfit Stud
   assert.match(prompt, /never blend faces, bodies, ages, or features/i);
   assert.match(prompt, /Rafael: Pose: walking with a natural mid-step stride; arm and hand gesture: arms crossed in a relaxed, natural way/i);
   assert.match(prompt, /Sara: Pose: standing naturally; arm and hand gesture: one hand naturally tucking hair behind one ear/i);
+  assert.match(prompt, /summer, with seasonally appropriate light/);
+  assert.match(prompt, /plausible weather moment within the selected season/);
   assert.match(prompt, /Look toward Sara/);
   assert.match(prompt, /Hold Rafael's hand/);
 });

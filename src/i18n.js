@@ -24,6 +24,7 @@ const pt = {
   "Pose, orientation, hair, and expression": "Pose, orientação, cabelo e expressão",
   "Pose, gesture, orientation, hair, and expression": "Pose, gesto, orientação, cabelo e expressão",
   "Place, room, weather, and atmosphere": "Local, divisão, tempo e atmosfera",
+  "Place, season, weather, and atmosphere": "Local, estação, tempo e atmosfera",
   "Visual style and any final direction": "Estilo visual e indicações finais",
   "Direct each person separately while sharing one scene.": "Defina cada pessoa separadamente mantendo uma única cena.",
   "Use one of your own places as the scene reference. The people and garments will be composed naturally into it.": "Use um dos seus locais como referência de cena. As pessoas e as peças serão integradas nele de forma natural.",
