@@ -1098,6 +1098,9 @@ function ViewerToast({ toast, onDismiss }) {
 
 function readableModeledVideoError(error) {
   const message = typeof error === "string" ? error : error?.message || "";
+  if (/parameter\s+`?(?:ratio|aspect.?ratio)`?.*not valid|ratio specified.*not valid/i.test(message)) {
+    return tr("The selected video model does not support that aspect ratio. Choose one of the available ratios and try again.");
+  }
   if (/last frame image content.*cannot be mixed.*(?:first frame|reference image)/i.test(message)) {
     return tr("The selected video model cannot combine a final-frame image with a separate garment reference. Wardrobe will use the modeled look as the final frame and preserve the saved garment details through the prompt instead.");
   }

@@ -8,6 +8,7 @@ import {
   normalizeModeledVideoSettings,
   RECOMMENDED_VIDEO_MODEL,
   resolveModeledVideoAspectRatio,
+  sourceModeledVideoAspectRatio,
   VIDEO_AUDIO_OPTIONS,
   VIDEO_ASPECT_RATIO_OPTIONS,
   VIDEO_DURATION_OPTIONS,
@@ -49,11 +50,18 @@ export function ModeledVideoDialog({
   const durationIndex = Math.max(0, VIDEO_DURATION_OPTIONS.indexOf(settings.duration));
   const combinationSupported = selectedModel.durations.includes(settings.duration)
     && selectedModel.resolutions.includes(settings.resolution)
+    && (settings.aspectRatio === "original" || selectedModel.aspectRatios.includes(settings.aspectRatio))
     && selectedModel.frames.includes(settings.frameType);
-  const sourceAspectRatio = resolveModeledVideoAspectRatio("original", { imageRatio: look.context?.imageRatio });
+  const requestedSourceAspectRatio = sourceModeledVideoAspectRatio({ imageRatio: look.context?.imageRatio });
+  const sourceAspectRatio = resolveModeledVideoAspectRatio(
+    "original",
+    { imageRatio: look.context?.imageRatio },
+    selectedModel.aspectRatios,
+  );
   const selectedAspectRatio = resolveModeledVideoAspectRatio(
     selectedClip?.settings?.aspectRatio || settings.aspectRatio,
     { imageRatio: look.context?.imageRatio },
+    selectedModel.aspectRatios,
   );
   const estimate = useMemo(
     () => estimateVideoCost({ ...settings, sourceAspectRatio }),
@@ -177,12 +185,18 @@ export function ModeledVideoDialog({
             <fieldset className="modeled-video-fieldset">
               <legend>{tr("Aspect ratio")}</legend>
               <div className="modeled-video-options is-ratio">
-                {VIDEO_ASPECT_RATIO_OPTIONS.map((option) => (
-                  <button type="button" className={settings.aspectRatio === option.id ? "is-selected" : ""} onClick={() => update("aspectRatio", option.id)} key={option.id}>
-                    {settings.aspectRatio === option.id && <Check size={12} weight="bold" />}
-                    <span><strong>{tr(option.label)}</strong><small>{tr(option.description)}</small></span>
-                  </button>
-                ))}
+                {VIDEO_ASPECT_RATIO_OPTIONS.map((option) => {
+                  const supported = option.id === "original" || selectedModel.aspectRatios.includes(option.id);
+                  const description = option.id === "original" && requestedSourceAspectRatio !== sourceAspectRatio
+                    ? tr("Closest supported ratio: {ratio}", { ratio: sourceAspectRatio })
+                    : tr(supported ? option.description : "Unavailable for this model");
+                  return (
+                    <button type="button" className={settings.aspectRatio === option.id ? "is-selected" : ""} disabled={!supported} onClick={() => update("aspectRatio", option.id)} key={option.id}>
+                      {settings.aspectRatio === option.id && <Check size={12} weight="bold" />}
+                      <span><strong>{tr(option.label)}</strong><small>{description}</small></span>
+                    </button>
+                  );
+                })}
               </div>
             </fieldset>
 

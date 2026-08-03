@@ -7003,7 +7003,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       imageRatio: look.context?.imageRatio,
       width: imageMetadata.width,
       height: imageMetadata.height,
-    });
+    }, selectedModel.aspectRatios);
     const garmentVariant = look.variantId
       ? garmentColorVariants(record).find((candidate) => candidate.id === look.variantId)
       : null;
@@ -7057,9 +7057,12 @@ Interpret this correction semantically in whatever language it is written. It ov
     }
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.id) {
-      const message = upstreamProviderErrorMessage(result)
+      const providerMessage = upstreamProviderErrorMessage(result)
         || result.error?.message
         || "OpenRouter could not start this video generation.";
+      const message = /parameter\s+`?(?:ratio|aspect.?ratio)`?.*not valid|ratio specified.*not valid/i.test(providerMessage)
+        ? "The selected video model does not support that aspect ratio. Choose one of the available ratios and try again."
+        : providerMessage;
       throw apiError(message, response.status || 502, "video_submit_failed");
     }
 
@@ -7146,21 +7149,33 @@ Interpret this correction semantically in whatever language it is written. It ov
       let hoverVideoUrl = null;
       let hoverVideoName = null;
       if (status === "completed") {
-        const contentUrl = result.unsigned_urls?.[0]
-          || `${provider.baseUrl}/videos/${encodeURIComponent(clip.upstreamJobId)}/content?index=0`;
-        const contentResponse = await fetchRequest(contentUrl, {
-          headers: contentUrl.startsWith(provider.baseUrl) ? openRouterHeaders(provider) : undefined,
-        });
-        if (!contentResponse.ok) {
-          throw apiError("The generated video was ready but could not be downloaded.", 502, "video_download_failed");
+        const authenticatedContentUrl = `${provider.baseUrl}/videos/${encodeURIComponent(clip.upstreamJobId)}/content?index=0`;
+        const contentUrls = [...new Set([result.unsigned_urls?.[0], authenticatedContentUrl].filter(Boolean))];
+        let bytes = null;
+        for (const contentUrl of contentUrls) {
+          let contentResponse;
+          try {
+            contentResponse = await fetchRequest(contentUrl, {
+              headers: contentUrl.startsWith(provider.baseUrl) ? openRouterHeaders(provider) : undefined,
+            });
+          } catch {
+            continue;
+          }
+          if (!contentResponse.ok) continue;
+          const contentLength = Number(contentResponse.headers.get("content-length"));
+          if (Number.isFinite(contentLength) && contentLength > 250 * 1024 * 1024) {
+            throw apiError("The generated video is too large to save.", 413, "video_too_large");
+          }
+          const candidateBytes = Buffer.from(await contentResponse.arrayBuffer());
+          if (!candidateBytes.length) continue;
+          if (candidateBytes.length > 250 * 1024 * 1024) {
+            throw apiError("The generated video is too large to save.", 413, "video_too_large");
+          }
+          bytes = candidateBytes;
+          break;
         }
-        const contentLength = Number(contentResponse.headers.get("content-length"));
-        if (Number.isFinite(contentLength) && contentLength > 250 * 1024 * 1024) {
-          throw apiError("The generated video is too large to save.", 413, "video_too_large");
-        }
-        const bytes = Buffer.from(await contentResponse.arrayBuffer());
-        if (!bytes.length || bytes.length > 250 * 1024 * 1024) {
-          throw apiError("The generated video is empty or too large to save.", 502, "video_invalid_content");
+        if (!bytes) {
+          throw apiError("The generated video was ready, but OpenRouter did not provide a downloadable file. Try checking the clip again.", 502, "video_download_failed");
         }
         videoName = `${itemId}-modeled-${lookId}-video-${clipId}.mp4`;
         await atomicFile(path.join(libraryAssetDir, videoName), bytes);

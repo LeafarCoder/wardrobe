@@ -12,9 +12,14 @@ export const VIDEO_ASPECT_RATIO_OPTIONS = Object.freeze([
   { id: "4:5", label: "Social portrait", description: "4:5" },
   { id: "9:16", label: "Story portrait", description: "9:16" },
   { id: "3:4", label: "Photo portrait", description: "3:4" },
+  { id: "4:3", label: "Classic landscape", description: "4:3" },
   { id: "16:9", label: "Widescreen", description: "16:9" },
   { id: "3:2", label: "Photo landscape", description: "3:2" },
 ]);
+
+const SEEDANCE_ASPECT_RATIOS = Object.freeze(["1:1", "3:4", "9:16", "4:3", "16:9"]);
+const VEO_ASPECT_RATIOS = Object.freeze(["9:16", "16:9"]);
+const GROK_ASPECT_RATIOS = Object.freeze(["1:1", "3:4", "9:16", "4:3", "16:9"]);
 
 const MODELED_IMAGE_VIDEO_RATIOS = Object.freeze({
   square: "1:1",
@@ -78,6 +83,7 @@ const VIDEO_MODELS = [
     pricing: "Estimated from video tokens · audio disabled",
     durations: VIDEO_DURATION_OPTIONS,
     resolutions: ["480p", "720p", "1080p"],
+    aspectRatios: SEEDANCE_ASPECT_RATIOS,
     frames: ["first_frame", "last_frame"],
     videoTokenPrice: 0.0000012,
     videoTokenPriceWithAudio: 0.0000024,
@@ -91,6 +97,7 @@ const VIDEO_MODELS = [
     pricing: "720p $0.03/s · 1080p $0.05/s · audio disabled",
     durations: [4, 6, 8],
     resolutions: ["720p", "1080p"],
+    aspectRatios: VEO_ASPECT_RATIOS,
     frames: ["first_frame", "last_frame"],
     perSecond: { "720p": 0.03, "1080p": 0.05 },
     perSecondWithAudio: { "720p": 0.05, "1080p": 0.08 },
@@ -104,6 +111,7 @@ const VIDEO_MODELS = [
     pricing: "480p $0.05/s · 720p $0.07/s · $0.002 image input",
     durations: VIDEO_DURATION_OPTIONS,
     resolutions: ["480p", "720p"],
+    aspectRatios: GROK_ASPECT_RATIOS,
     frames: ["first_frame"],
     perSecond: { "480p": 0.05, "720p": 0.07 },
     perImage: 0.002,
@@ -117,6 +125,7 @@ const VIDEO_MODELS = [
     pricing: "Estimated from video tokens · audio disabled",
     durations: VIDEO_DURATION_OPTIONS,
     resolutions: ["480p", "720p"],
+    aspectRatios: SEEDANCE_ASPECT_RATIOS,
     frames: ["first_frame", "last_frame"],
     videoTokenPrice: 0.0000056,
     videoTokenPriceWithAudio: 0.0000056,
@@ -130,6 +139,7 @@ const VIDEO_MODELS = [
     pricing: "720p $0.08/s · 1080p $0.10/s · audio disabled",
     durations: [4, 6, 8],
     resolutions: ["720p", "1080p"],
+    aspectRatios: VEO_ASPECT_RATIOS,
     frames: ["first_frame", "last_frame"],
     perSecond: { "720p": 0.08, "1080p": 0.10 },
     perSecondWithAudio: { "720p": 0.10, "1080p": 0.12 },
@@ -143,6 +153,7 @@ const VIDEO_MODELS = [
     pricing: "Estimated from video tokens · audio disabled",
     durations: VIDEO_DURATION_OPTIONS,
     resolutions: ["480p", "720p", "1080p"],
+    aspectRatios: SEEDANCE_ASPECT_RATIOS,
     frames: ["first_frame", "last_frame"],
     videoTokenPrice: 0.000007,
     videoTokenPriceWithAudio: 0.000007,
@@ -154,6 +165,7 @@ export const VIDEO_GENERATION_MODELS = Object.freeze(VIDEO_MODELS.map((model) =>
   ...model,
   durations: Object.freeze([...model.durations]),
   resolutions: Object.freeze([...model.resolutions]),
+  aspectRatios: Object.freeze([...model.aspectRatios]),
   frames: Object.freeze([...model.frames]),
   ...(model.perSecond ? { perSecond: Object.freeze({ ...model.perSecond }) } : {}),
   ...(model.perSecondWithAudio ? { perSecondWithAudio: Object.freeze({ ...model.perSecondWithAudio }) } : {}),
@@ -187,9 +199,17 @@ export function sourceModeledVideoAspectRatio({ imageRatio, width, height } = {}
     .sort((first, second) => first.difference - second.difference)[0]?.id || "9:16";
 }
 
-export function resolveModeledVideoAspectRatio(value, source = {}) {
+export function resolveModeledVideoAspectRatio(value, source = {}, supportedRatios = null) {
   const selected = VIDEO_ASPECT_RATIO_OPTIONS.some((option) => option.id === value) ? value : "original";
-  return selected === "original" ? sourceModeledVideoAspectRatio(source) : selected;
+  const requested = selected === "original" ? sourceModeledVideoAspectRatio(source) : selected;
+  const supported = Array.isArray(supportedRatios) && supportedRatios.length
+    ? supportedRatios.filter((ratio) => ratioNumber(ratio))
+    : VIDEO_ASPECT_RATIO_OPTIONS.filter((option) => option.id !== "original").map((option) => option.id);
+  if (supported.includes(requested)) return requested;
+  const requestedNumber = ratioNumber(requested) || (9 / 16);
+  return supported
+    .map((ratio) => ({ ratio, difference: Math.abs(Math.log(requestedNumber / ratioNumber(ratio))) }))
+    .sort((first, second) => first.difference - second.difference)[0]?.ratio || "9:16";
 }
 
 export function videoModel(modelId) {
@@ -204,7 +224,11 @@ export function estimateVideoCost({ model = RECOMMENDED_VIDEO_MODEL, duration = 
   if (Number.isFinite(fixedRate)) return (fixedRate * Number(duration)) + (selected.perImage || 0);
   const dimensions = VIDEO_RESOLUTION_OPTIONS.find((option) => option.id === resolution);
   if (!dimensions || !Number.isFinite(selected.videoTokenPrice)) return null;
-  const resolvedRatio = ratioNumber(aspectRatio === "original" ? sourceAspectRatio : aspectRatio) || (9 / 16);
+  const resolvedRatio = ratioNumber(resolveModeledVideoAspectRatio(
+    aspectRatio,
+    { imageRatio: null, width: ratioNumber(sourceAspectRatio), height: 1 },
+    selected.aspectRatios,
+  )) || (9 / 16);
   const shortSide = dimensions.width;
   const longSide = Math.ceil((shortSide * Math.max(resolvedRatio, 1 / resolvedRatio)) / 2) * 2;
   const pixelCount = shortSide * longSide;
@@ -225,7 +249,7 @@ export function normalizeModeledVideoSettings(value = {}, preferredModel = RECOM
     model: selected.id,
     duration: selected.durations.includes(duration) ? duration : selected.durations[0],
     resolution: selected.resolutions.includes(resolution) ? resolution : selected.resolutions[0],
-    aspectRatio: VIDEO_ASPECT_RATIO_OPTIONS.some((option) => option.id === aspectRatio) ? aspectRatio : "original",
+    aspectRatio: aspectRatio === "original" || selected.aspectRatios.includes(aspectRatio) ? aspectRatio : "original",
     frameType: selected.frames.includes(frameType) ? frameType : selected.frames[0],
     movement: VIDEO_MOVEMENT_OPTIONS.some((option) => option.id === movement) ? movement : VIDEO_MOVEMENT_OPTIONS[0].id,
     objectDescription: typeof input.objectDescription === "string" ? input.objectDescription.trim().slice(0, 200) : "",

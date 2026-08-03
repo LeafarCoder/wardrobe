@@ -26,6 +26,7 @@ test("recommends the least expensive flexible video model", () => {
   assert.equal(model.id, "bytedance/seedance-1-5-pro");
   assert.deepEqual(model.durations, [4, 6, 8, 10]);
   assert.deepEqual(model.resolutions, ["480p", "720p", "1080p"]);
+  assert.deepEqual(model.aspectRatios, ["1:1", "3:4", "9:16", "4:3", "16:9"]);
   assert.deepEqual(model.frames, ["first_frame", "last_frame"]);
 });
 
@@ -34,7 +35,11 @@ test("preserves the modeled photo ratio by default and accepts explicit video ra
   assert.equal(sourceModeledVideoAspectRatio({ width: 1600, height: 900 }), "16:9");
   assert.equal(resolveModeledVideoAspectRatio("original", { width: 900, height: 1600 }), "9:16");
   assert.equal(resolveModeledVideoAspectRatio("1:1", { width: 1600, height: 900 }), "1:1");
+  assert.equal(resolveModeledVideoAspectRatio("original", { imageRatio: "photo-landscape" }, videoModel(RECOMMENDED_VIDEO_MODEL).aspectRatios), "4:3");
+  assert.equal(resolveModeledVideoAspectRatio("4:5", {}, videoModel(RECOMMENDED_VIDEO_MODEL).aspectRatios), "3:4");
   assert.equal(normalizeModeledVideoSettings({}, RECOMMENDED_VIDEO_MODEL).aspectRatio, "original");
+  assert.equal(normalizeModeledVideoSettings({ aspectRatio: "4:5" }, RECOMMENDED_VIDEO_MODEL).aspectRatio, "original");
+  assert.equal(normalizeModeledVideoSettings({ aspectRatio: "3:4" }, RECOMMENDED_VIDEO_MODEL).aspectRatio, "3:4");
 });
 
 test("selects the newest completed clip for silent hover playback", () => {

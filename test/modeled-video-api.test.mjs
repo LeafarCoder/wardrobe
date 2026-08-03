@@ -80,6 +80,9 @@ test("submits, polls, downloads, and persists a modeled-look video", async () =>
         }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (String(url) === "https://video.example/result.mp4") {
+        return new Response("expired", { status: 403 });
+      }
+      if (String(url).endsWith("/videos/video-job-one/content?index=0")) {
         return new Response(videoBytes, {
           status: 200,
           headers: { "content-type": "video/mp4", "content-length": String(videoBytes.length) },
