@@ -23,7 +23,7 @@ import { ModeledLookDialog } from "./ModeledLookDialog.jsx";
 import { ModeledLookHoverVideo } from "./ModeledLookHoverVideo.jsx";
 import { ModeledVideoDialog } from "./ModeledVideoDialog.jsx";
 import { modeledLookContextDetails } from "./modeled-look-context.js";
-import { isPortraitModeledMedia, latestCompletedModeledVideo } from "./video-generation.js";
+import { latestCompletedModeledVideo } from "./video-generation.js";
 import { warmVideo } from "./video-preload.js";
 import { imageFallbackToast, withoutFallbackNotice } from "./image-fallback-notice.js";
 import { OptimizedImage } from "./OptimizedImage.jsx";
@@ -1684,7 +1684,8 @@ function ItemViewer({
   const [modeledSettingsOpen, setModeledSettingsOpen] = useState(false);
   const [modeledVideoOpen, setModeledVideoOpen] = useState(false);
   const [modeledVideoHoverSurface, setModeledVideoHoverSurface] = useState(null);
-  const [activeModeledMediaPortrait, setActiveModeledMediaPortrait] = useState(false);
+  const [activeModeledMediaRatio, setActiveModeledMediaRatio] = useState(null);
+  const [activeModeledVideoRatio, setActiveModeledVideoRatio] = useState(null);
   const [garmentRegenerationOpen, setGarmentRegenerationOpen] = useState(false);
   const [garmentRegenerationBusy, setGarmentRegenerationBusy] = useState(false);
   const [garmentRegenerationError, setGarmentRegenerationError] = useState("");
@@ -1737,7 +1738,12 @@ function ItemViewer({
   const activeModeledLook = activeMedia?.kind === GARMENT_MEDIA_GENERATED ? activeMedia.data : null;
   const activeModeledVideo = useMemo(() => latestCompletedModeledVideo(activeModeledLook), [activeModeledLook]);
   const isActiveMediaGenerated = activeMedia?.kind === GARMENT_MEDIA_GENERATED;
-  const hasPortraitModeledVideo = Boolean(activeModeledVideo && activeModeledMediaPortrait);
+  const hasPortraitModeledVideo = Boolean(activeModeledVideo && activeModeledMediaRatio > 1);
+  const modeledVideoExpanded = Boolean(
+    activeModeledVideo
+    && activeModeledVideoRatio
+    && modeledVideoHoverSurface === "panel",
+  );
   const modeledSettingsRecorded = Boolean(activeModeledLook && Object.hasOwn(activeModeledLook, "context"));
   const activeModeledSettings = useMemo(
     () => modeledLookContextDetails(activeModeledLook?.context),
@@ -2054,7 +2060,8 @@ function ItemViewer({
 
   useEffect(() => {
     setModeledSettingsOpen(false);
-    setActiveModeledMediaPortrait(false);
+    setActiveModeledMediaRatio(null);
+    setActiveModeledVideoRatio(null);
   }, [activeMediaId]);
 
   useLayoutEffect(() => {
@@ -3001,7 +3008,11 @@ function ItemViewer({
         <>
           {garmentIdentityHeader}
           <div
-            className={`modeled-hero${hasPortraitModeledVideo ? " has-portrait-video" : ""}`}
+            className={`modeled-hero${hasPortraitModeledVideo ? " has-portrait-video" : ""}${modeledVideoExpanded ? " is-video-expanded" : ""}`}
+            style={activeModeledVideo ? {
+              "--modeled-image-media-height": `${(activeModeledMediaRatio || 1) * 100}cqi`,
+              "--modeled-video-media-height": `${(activeModeledVideoRatio || activeModeledMediaRatio || 1) * 100}cqi`,
+            } : undefined}
             onMouseEnter={() => activeModeledVideo && setModeledVideoHoverSurface("panel")}
             onMouseLeave={() => setModeledVideoHoverSurface((surface) => surface === "panel" ? null : surface)}
           >
@@ -3016,10 +3027,11 @@ function ItemViewer({
               alt={tr("{name} photo {current} of {total}", { name: draft.name || type, current: activeMediaIndex + 1, total: garmentMedia.length })}
               style={!isActiveMediaGenerated ? { objectPosition: originalHeroPosition } : undefined}
               onLoad={isActiveMediaGenerated
-                ? (event) => setActiveModeledMediaPortrait(isPortraitModeledMedia(
-                  event.currentTarget.naturalWidth,
-                  event.currentTarget.naturalHeight,
-                ))
+                ? (event) => setActiveModeledMediaRatio(
+                  event.currentTarget.naturalWidth > 0
+                    ? event.currentTarget.naturalHeight / event.currentTarget.naturalWidth
+                    : null,
+                )
                 : measureOriginalHero}
               role="button"
               tabIndex={0}
@@ -3042,6 +3054,7 @@ function ItemViewer({
                 src={activeModeledVideo.hoverVideo || activeModeledVideo.video}
                 active={modeledVideoHoverSurface === "panel"}
                 className="modeled-hover-video--panel"
+                onMetadata={({ width, height }) => setActiveModeledVideoRatio(width > 0 ? height / width : null)}
               />
             )}
             {isActiveMediaGenerated && (
@@ -3508,6 +3521,7 @@ function ItemViewer({
                   src={activeModeledVideo.hoverVideo || activeModeledVideo.video}
                   active={modeledVideoHoverSurface === "dialog"}
                   className="modeled-hover-video--dialog"
+                  onMetadata={({ width, height }) => setActiveModeledVideoRatio(width > 0 ? height / width : null)}
                 />
               )}
               {mediaPreviewOpen === "media" && isActiveMediaGenerated && (

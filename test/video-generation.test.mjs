@@ -8,7 +8,9 @@ import {
   normalizeModeledVideoClip,
   normalizeModeledVideoSettings,
   RECOMMENDED_VIDEO_MODEL,
+  resolveModeledVideoAspectRatio,
   reverseModeledVideoTime,
+  sourceModeledVideoAspectRatio,
   videoModel,
 } from "../src/video-generation.js";
 
@@ -25,6 +27,14 @@ test("recommends the least expensive flexible video model", () => {
   assert.deepEqual(model.durations, [4, 6, 8, 10]);
   assert.deepEqual(model.resolutions, ["480p", "720p", "1080p"]);
   assert.deepEqual(model.frames, ["first_frame", "last_frame"]);
+});
+
+test("preserves the modeled photo ratio by default and accepts explicit video ratios", () => {
+  assert.equal(sourceModeledVideoAspectRatio({ imageRatio: "photo-landscape" }), "3:2");
+  assert.equal(sourceModeledVideoAspectRatio({ width: 1600, height: 900 }), "16:9");
+  assert.equal(resolveModeledVideoAspectRatio("original", { width: 900, height: 1600 }), "9:16");
+  assert.equal(resolveModeledVideoAspectRatio("1:1", { width: 1600, height: 900 }), "1:1");
+  assert.equal(normalizeModeledVideoSettings({}, RECOMMENDED_VIDEO_MODEL).aspectRatio, "original");
 });
 
 test("selects the newest completed clip for silent hover playback", () => {
@@ -73,6 +83,17 @@ test("estimates duration, resolution, and audio-sensitive video cost", () => {
   assert.ok(Math.abs(withAudio - 0.23058) < 0.00001);
   assert.equal(estimateVideoCost({ model: "google/veo-3.1-lite", duration: 4, resolution: "720p" }), 0.12);
   assert.equal(estimateVideoCost({ model: "google/veo-3.1-lite", duration: 10, resolution: "720p" }), null);
+  assert.ok(estimateVideoCost({
+    model: "bytedance/seedance-1-5-pro",
+    duration: 4,
+    resolution: "480p",
+    aspectRatio: "1:1",
+  }) < estimateVideoCost({
+    model: "bytedance/seedance-1-5-pro",
+    duration: 4,
+    resolution: "480p",
+    aspectRatio: "9:16",
+  }));
 });
 
 test("normalizes video controls against the preferred model capabilities", () => {

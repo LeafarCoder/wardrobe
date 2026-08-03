@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { reverseModeledVideoTime } from "./video-generation.js";
 import { warmedVideoSource, warmVideo } from "./video-preload.js";
 
-export function ModeledLookHoverVideo({ src, active, className = "" }) {
+export function ModeledLookHoverVideo({ src, active, className = "", onMetadata }) {
   const videoRef = useRef(null);
   const reverseFrameRef = useRef(null);
   const activeRef = useRef(Boolean(active));
@@ -102,6 +102,10 @@ export function ModeledLookHoverVideo({ src, active, className = "" }) {
       preload="auto"
       tabIndex={-1}
       aria-hidden="true"
+      onLoadedMetadata={(event) => onMetadata?.({
+        width: event.currentTarget.videoWidth,
+        height: event.currentTarget.videoHeight,
+      })}
       onEnded={playBackward}
       onPlaying={() => activeRef.current && setVisible(true)}
     />

@@ -7,7 +7,9 @@ import {
   estimateVideoCost,
   normalizeModeledVideoSettings,
   RECOMMENDED_VIDEO_MODEL,
+  resolveModeledVideoAspectRatio,
   VIDEO_AUDIO_OPTIONS,
+  VIDEO_ASPECT_RATIO_OPTIONS,
   VIDEO_DURATION_OPTIONS,
   VIDEO_FRAME_OPTIONS,
   VIDEO_MOVEMENT_OPTIONS,
@@ -48,7 +50,15 @@ export function ModeledVideoDialog({
   const combinationSupported = selectedModel.durations.includes(settings.duration)
     && selectedModel.resolutions.includes(settings.resolution)
     && selectedModel.frames.includes(settings.frameType);
-  const estimate = useMemo(() => estimateVideoCost(settings), [settings]);
+  const sourceAspectRatio = resolveModeledVideoAspectRatio("original", { imageRatio: look.context?.imageRatio });
+  const selectedAspectRatio = resolveModeledVideoAspectRatio(
+    selectedClip?.settings?.aspectRatio || settings.aspectRatio,
+    { imageRatio: look.context?.imageRatio },
+  );
+  const estimate = useMemo(
+    () => estimateVideoCost({ ...settings, sourceAspectRatio }),
+    [settings, sourceAspectRatio],
+  );
 
   useEffect(() => closeRef.current?.focus({ preventScroll: true }), []);
 
@@ -90,13 +100,13 @@ export function ModeledVideoDialog({
           <div>
             <p>{tr("Modeled look video")}</p>
             <h2 id="modeled-video-title">{tr("Bring this look to life")}</h2>
-            <span>{tr("Direct a short vertical fashion clip while preserving the person, outfit, and scene.")}</span>
+            <span>{tr("Direct a short fashion clip while preserving the person, outfit, and scene.")}</span>
           </div>
           <button ref={closeRef} type="button" onClick={onClose} aria-label={tr("Close video options")}><X size={21} /></button>
         </header>
 
         <div className="modeled-video-dialog__body">
-          <aside className="modeled-video-dialog__preview">
+          <aside className="modeled-video-dialog__preview" style={{ "--modeled-video-preview-ratio": selectedAspectRatio.replace(":", " / ") }}>
             {selectedClip?.status === "completed" && selectedClip.video ? (
               <video src={selectedClip.video} controls playsInline preload="metadata" aria-label={tr("Generated video for {name}", { name: itemName })} />
             ) : (
@@ -161,6 +171,18 @@ export function ModeledVideoDialog({
                     </button>
                   );
                 })}
+              </div>
+            </fieldset>
+
+            <fieldset className="modeled-video-fieldset">
+              <legend>{tr("Aspect ratio")}</legend>
+              <div className="modeled-video-options is-ratio">
+                {VIDEO_ASPECT_RATIO_OPTIONS.map((option) => (
+                  <button type="button" className={settings.aspectRatio === option.id ? "is-selected" : ""} onClick={() => update("aspectRatio", option.id)} key={option.id}>
+                    {settings.aspectRatio === option.id && <Check size={12} weight="bold" />}
+                    <span><strong>{tr(option.label)}</strong><small>{tr(option.description)}</small></span>
+                  </button>
+                ))}
               </div>
             </fieldset>
 

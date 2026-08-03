@@ -98,7 +98,7 @@ test("submits, polls, downloads, and persists a modeled-look video", async () =>
     ]);
     videoBytes = await readFile(providerVideo);
     const modeledImage = await sharp({
-      create: { width: 90, height: 160, channels: 3, background: "#c6b7aa" },
+      create: { width: 160, height: 90, channels: 3, background: "#c6b7aa" },
     }).png().toBuffer();
     const garmentImage = await sharp({
       create: { width: 90, height: 160, channels: 3, background: "#233f58" },
@@ -139,6 +139,7 @@ test("submits, polls, downloads, and persists a modeled-look video", async () =>
     assert.equal(submittedPayload.model, "bytedance/seedance-1-5-pro");
     assert.equal(submittedPayload.duration, 6);
     assert.equal(submittedPayload.resolution, "720p");
+    assert.equal(submittedPayload.aspect_ratio, "16:9");
     assert.equal(submittedPayload.generate_audio, true);
     assert.equal(submittedPayload.frame_images[0].frame_type, "last_frame");
     assert.match(submittedPayload.frame_images[0].image_url.url, /^data:image\/png;base64,/);

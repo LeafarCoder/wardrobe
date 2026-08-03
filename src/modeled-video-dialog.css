@@ -47,9 +47,9 @@
 }
 
 .modeled-video-dialog__preview { min-height: 0; padding: 24px; overflow-y: auto; background: #e9e3dc; }
-.modeled-video-dialog__preview > div:first-child { position: relative; overflow: hidden; aspect-ratio: 9 / 16; background: #d5cec6; border-radius: 18px; box-shadow: 0 16px 44px rgb(56 45 37 / 17%); }
+.modeled-video-dialog__preview > div:first-child { position: relative; overflow: hidden; aspect-ratio: var(--modeled-video-preview-ratio, 9 / 16); background: #d5cec6; border-radius: 18px; box-shadow: 0 16px 44px rgb(56 45 37 / 17%); }
 .modeled-video-dialog__preview img,
-.modeled-video-dialog__preview video { width: 100%; aspect-ratio: 9 / 16; display: block; object-fit: cover; background: #171513; border-radius: 18px; }
+.modeled-video-dialog__preview video { width: 100%; aspect-ratio: var(--modeled-video-preview-ratio, 9 / 16); display: block; object-fit: contain; background: #171513; border-radius: 18px; }
 
 .modeled-video-dialog__progress { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 28px; color: #fff; text-align: center; background: rgb(25 22 20 / 62%); backdrop-filter: blur(5px); }
 .modeled-video-dialog__progress small { max-width: 240px; color: rgb(255 255 255 / 78%); line-height: 1.45; }
@@ -76,6 +76,7 @@
 
 .modeled-video-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .modeled-video-options.is-compact { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.modeled-video-options.is-ratio { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .modeled-video-options.is-movement,
 .modeled-video-options.is-audio { grid-template-columns: 1fr; }
 .modeled-video-options button { position: relative; min-height: 44px; display: flex; align-items: center; gap: 7px; padding: 10px 12px; color: #554e49; text-align: left; background: #fff; border: 1px solid #d9d1c9; border-radius: 11px; }

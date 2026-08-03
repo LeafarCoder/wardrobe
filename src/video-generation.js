@@ -6,6 +6,25 @@ export const VIDEO_RESOLUTION_OPTIONS = Object.freeze([
   { id: "1080p", label: "1080p", width: 1080, height: 1920 },
 ]);
 
+export const VIDEO_ASPECT_RATIO_OPTIONS = Object.freeze([
+  { id: "original", label: "Same as modeled photo", description: "Preserve the source composition" },
+  { id: "1:1", label: "Square", description: "1:1" },
+  { id: "4:5", label: "Social portrait", description: "4:5" },
+  { id: "9:16", label: "Story portrait", description: "9:16" },
+  { id: "3:4", label: "Photo portrait", description: "3:4" },
+  { id: "16:9", label: "Widescreen", description: "16:9" },
+  { id: "3:2", label: "Photo landscape", description: "3:2" },
+]);
+
+const MODELED_IMAGE_VIDEO_RATIOS = Object.freeze({
+  square: "1:1",
+  "instagram-portrait": "4:5",
+  portrait: "9:16",
+  "photo-portrait": "3:4",
+  landscape: "16:9",
+  "photo-landscape": "3:2",
+});
+
 export const VIDEO_FRAME_OPTIONS = Object.freeze([
   { id: "first_frame", label: "Start from this image", description: "Use the modeled look as the opening frame." },
   { id: "last_frame", label: "End on this image", description: "Build the motion so it resolves into the modeled look." },
@@ -143,17 +162,41 @@ export const VIDEO_GENERATION_MODELS = Object.freeze(VIDEO_MODELS.map((model) =>
 export const RECOMMENDED_VIDEO_MODEL = VIDEO_GENERATION_MODELS[0].id;
 
 export const VIDEO_GENERATION_TRANSLATION_KEYS = Object.freeze([
+  ...VIDEO_ASPECT_RATIO_OPTIONS.flatMap((option) => [option.label, option.description]),
   ...VIDEO_FRAME_OPTIONS.flatMap((option) => [option.label, option.description]),
   ...VIDEO_MOVEMENT_OPTIONS.map((option) => option.label),
   ...VIDEO_AUDIO_OPTIONS.map((option) => option.label),
   ...VIDEO_GENERATION_MODELS.flatMap((model) => [model.badge, model.note]),
 ]);
 
+function ratioNumber(value) {
+  const match = /^(\d+):(\d+)$/.exec(String(value || ""));
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  return width > 0 && height > 0 ? width / height : null;
+}
+
+export function sourceModeledVideoAspectRatio({ imageRatio, width, height } = {}) {
+  if (MODELED_IMAGE_VIDEO_RATIOS[imageRatio]) return MODELED_IMAGE_VIDEO_RATIOS[imageRatio];
+  const measured = Number(width) > 0 && Number(height) > 0 ? Number(width) / Number(height) : null;
+  if (!measured) return "9:16";
+  return VIDEO_ASPECT_RATIO_OPTIONS
+    .filter((option) => option.id !== "original")
+    .map((option) => ({ id: option.id, difference: Math.abs(Math.log(measured / ratioNumber(option.id))) }))
+    .sort((first, second) => first.difference - second.difference)[0]?.id || "9:16";
+}
+
+export function resolveModeledVideoAspectRatio(value, source = {}) {
+  const selected = VIDEO_ASPECT_RATIO_OPTIONS.some((option) => option.id === value) ? value : "original";
+  return selected === "original" ? sourceModeledVideoAspectRatio(source) : selected;
+}
+
 export function videoModel(modelId) {
   return VIDEO_GENERATION_MODELS.find((model) => model.id === modelId) || VIDEO_GENERATION_MODELS[0];
 }
 
-export function estimateVideoCost({ model = RECOMMENDED_VIDEO_MODEL, duration = 4, resolution = "480p", audio = false } = {}) {
+export function estimateVideoCost({ model = RECOMMENDED_VIDEO_MODEL, duration = 4, resolution = "480p", aspectRatio = "original", sourceAspectRatio = "9:16", audio = false } = {}) {
   const selected = videoModel(model);
   if (!selected.durations.includes(Number(duration)) || !selected.resolutions.includes(resolution)) return null;
   const withAudio = audio === true && selected.audio;
@@ -161,7 +204,11 @@ export function estimateVideoCost({ model = RECOMMENDED_VIDEO_MODEL, duration = 
   if (Number.isFinite(fixedRate)) return (fixedRate * Number(duration)) + (selected.perImage || 0);
   const dimensions = VIDEO_RESOLUTION_OPTIONS.find((option) => option.id === resolution);
   if (!dimensions || !Number.isFinite(selected.videoTokenPrice)) return null;
-  const videoTokens = (dimensions.width * dimensions.height * Number(duration) * 24) / 1024;
+  const resolvedRatio = ratioNumber(aspectRatio === "original" ? sourceAspectRatio : aspectRatio) || (9 / 16);
+  const shortSide = dimensions.width;
+  const longSide = Math.ceil((shortSide * Math.max(resolvedRatio, 1 / resolvedRatio)) / 2) * 2;
+  const pixelCount = shortSide * longSide;
+  const videoTokens = (pixelCount * Number(duration) * 24) / 1024;
   const tokenPrice = withAudio ? selected.videoTokenPriceWithAudio : selected.videoTokenPrice;
   return (videoTokens * tokenPrice) + (selected.perImage || 0);
 }
@@ -171,12 +218,14 @@ export function normalizeModeledVideoSettings(value = {}, preferredModel = RECOM
   const selected = videoModel(preferredModel);
   const duration = Number(input.duration);
   const resolution = typeof input.resolution === "string" ? input.resolution : "";
+  const aspectRatio = typeof input.aspectRatio === "string" ? input.aspectRatio : "";
   const frameType = typeof input.frameType === "string" ? input.frameType : "";
   const movement = typeof input.movement === "string" ? input.movement : "";
   return {
     model: selected.id,
     duration: selected.durations.includes(duration) ? duration : selected.durations[0],
     resolution: selected.resolutions.includes(resolution) ? resolution : selected.resolutions[0],
+    aspectRatio: VIDEO_ASPECT_RATIO_OPTIONS.some((option) => option.id === aspectRatio) ? aspectRatio : "original",
     frameType: selected.frames.includes(frameType) ? frameType : selected.frames[0],
     movement: VIDEO_MOVEMENT_OPTIONS.some((option) => option.id === movement) ? movement : VIDEO_MOVEMENT_OPTIONS[0].id,
     objectDescription: typeof input.objectDescription === "string" ? input.objectDescription.trim().slice(0, 200) : "",

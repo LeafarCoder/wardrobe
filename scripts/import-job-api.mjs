@@ -98,6 +98,7 @@ import {
   normalizeModeledVideoClip,
   normalizeModeledVideoSettings,
   RECOMMENDED_VIDEO_MODEL,
+  resolveModeledVideoAspectRatio,
   videoModel,
 } from "../src/video-generation.js";
 import {
@@ -6997,6 +6998,12 @@ Interpret this correction semantically in whatever language it is written. It ov
 
     const imageName = path.basename(new URL(look.image, "http://localhost").pathname);
     const imageBytes = await readFile(path.join(libraryAssetDir, imageName));
+    const imageMetadata = await sharp(imageBytes).metadata();
+    const outputAspectRatio = resolveModeledVideoAspectRatio(settings.aspectRatio, {
+      imageRatio: look.context?.imageRatio,
+      width: imageMetadata.width,
+      height: imageMetadata.height,
+    });
     const garmentVariant = look.variantId
       ? garmentColorVariants(record).find((candidate) => candidate.id === look.variantId)
       : null;
@@ -7009,7 +7016,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       prompt,
       duration: settings.duration,
       resolution: settings.resolution,
-      aspect_ratio: "9:16",
+      aspect_ratio: outputAspectRatio,
       generate_audio: settings.audio,
       frame_images: [{
         type: "image_url",
