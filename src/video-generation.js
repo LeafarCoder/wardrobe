@@ -27,7 +27,7 @@ const MODELED_IMAGE_VIDEO_RATIOS = Object.freeze({
 
 export const VIDEO_FRAME_OPTIONS = Object.freeze([
   { id: "first_frame", label: "Start from this image", description: "Use the modeled look as the opening frame." },
-  { id: "last_frame", label: "End on this image", description: "Build the motion so it resolves into the modeled look." },
+  { id: "last_frame", label: "End on this image", description: "Resolve into the modeled look. Separate garment references are unavailable with a final frame." },
 ]);
 
 export const VIDEO_MOVEMENT_OPTIONS = Object.freeze([
@@ -236,7 +236,7 @@ export function normalizeModeledVideoSettings(value = {}, preferredModel = RECOM
   };
 }
 
-export function modeledVideoPrompt(settings = {}, { garmentReference = false } = {}) {
+export function modeledVideoPrompt(settings = {}, { garmentReference = false, garmentDescription = "" } = {}) {
   const normalized = normalizeModeledVideoSettings(settings, settings.model);
   const movement = VIDEO_MOVEMENT_OPTIONS.find((option) => option.id === normalized.movement);
   const objectDirection = movement?.objectDescription && normalized.objectDescription
@@ -254,6 +254,9 @@ export function modeledVideoPrompt(settings = {}, { garmentReference = false } =
     frameDirection,
     garmentReference
       ? "The separate reference image shows the exact clean garment, including details that may be hidden in the modeled frame. Use it only to preserve the garment's construction, front, back, fabric, colors, and trim as the person moves; do not turn the product cutout into a scene or an additional frame."
+      : null,
+    !garmentReference && garmentDescription
+      ? `Garment fidelity context from the saved wardrobe item: ${garmentDescription}. Preserve these details throughout the motion.`
       : null,
     movement?.prompt,
     objectDirection,

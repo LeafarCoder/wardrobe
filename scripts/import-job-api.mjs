@@ -7007,10 +7007,24 @@ Interpret this correction semantically in whatever language it is written. It ov
     const garmentVariant = look.variantId
       ? garmentColorVariants(record).find((candidate) => candidate.id === look.variantId)
       : null;
+    const includeGarmentReference = settings.frameType !== "last_frame";
     const garmentAsset = garmentVariant?.image || record.image;
     const garmentName = path.basename(new URL(garmentAsset, "http://localhost").pathname);
-    const garmentBytes = await readFile(path.join(libraryAssetDir, garmentName));
-    const prompt = modeledVideoPrompt(settings, { garmentReference: true });
+    const garmentBytes = includeGarmentReference
+      ? await readFile(path.join(libraryAssetDir, garmentName))
+      : null;
+    const garmentDescription = [
+      record.name,
+      record.part,
+      garmentVariant?.primaryColor || record.color,
+      garmentVariant?.secondaryColor || record.secondaryColor,
+      ...(Array.isArray(record.materials) ? record.materials : []),
+      ...(Array.isArray(record.tags) ? record.tags : []),
+    ].filter(Boolean).join(", ");
+    const prompt = modeledVideoPrompt(settings, {
+      garmentReference: includeGarmentReference,
+      garmentDescription: includeGarmentReference ? "" : garmentDescription,
+    });
     const requestPayload = {
       model: settings.model,
       prompt,
@@ -7023,10 +7037,12 @@ Interpret this correction semantically in whatever language it is written. It ov
         image_url: { url: `data:image/png;base64,${imageBytes.toString("base64")}` },
         frame_type: settings.frameType,
       }],
-      input_references: [{
-        type: "image_url",
-        image_url: { url: `data:${imageMime(garmentName)};base64,${garmentBytes.toString("base64")}` },
-      }],
+      ...(includeGarmentReference ? {
+        input_references: [{
+          type: "image_url",
+          image_url: { url: `data:${imageMime(garmentName)};base64,${garmentBytes.toString("base64")}` },
+        }],
+      } : {}),
     };
     const startedAt = Date.now();
     let response;

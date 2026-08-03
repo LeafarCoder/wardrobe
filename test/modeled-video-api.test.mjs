@@ -143,12 +143,30 @@ test("submits, polls, downloads, and persists a modeled-look video", async () =>
     assert.equal(submittedPayload.generate_audio, true);
     assert.equal(submittedPayload.frame_images[0].frame_type, "last_frame");
     assert.match(submittedPayload.frame_images[0].image_url.url, /^data:image\/png;base64,/);
-    assert.equal(submittedPayload.input_references.length, 1);
-    assert.match(submittedPayload.input_references[0].image_url.url, /^data:image\/png;base64,/);
-    assert.notEqual(submittedPayload.input_references[0].image_url.url, submittedPayload.frame_images[0].image_url.url);
+    assert.equal(Object.hasOwn(submittedPayload, "input_references"), false);
     assert.match(submittedPayload.prompt, /red umbrella/i);
     assert.match(submittedPayload.prompt, /city traffic/i);
-    assert.match(submittedPayload.prompt, /exact clean garment/i);
+    assert.match(submittedPayload.prompt, /garment fidelity context/i);
+    assert.match(submittedPayload.prompt, /Editorial coat/i);
+
+    const firstFrameResponse = mockResponse();
+    await api.handler(mockRequest(
+      `/api/import/wardrobe/${ITEM_ID}/modeled/${LOOK_ID}/videos`,
+      "POST",
+      {
+        duration: 4,
+        resolution: "480p",
+        frameType: "first_frame",
+        movement: "turn-to-camera",
+      },
+    ), firstFrameResponse, () => {});
+    assert.equal(firstFrameResponse.statusCode, 202);
+    const firstFramePayload = JSON.parse(calls[1].options.body);
+    assert.equal(firstFramePayload.frame_images[0].frame_type, "first_frame");
+    assert.equal(firstFramePayload.input_references.length, 1);
+    assert.match(firstFramePayload.input_references[0].image_url.url, /^data:image\/png;base64,/);
+    assert.notEqual(firstFramePayload.input_references[0].image_url.url, firstFramePayload.frame_images[0].image_url.url);
+    assert.match(firstFramePayload.prompt, /exact clean garment/i);
 
     const pollResponse = mockResponse();
     await api.handler(mockRequest(

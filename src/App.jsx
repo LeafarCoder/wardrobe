@@ -1096,6 +1096,14 @@ function ViewerToast({ toast, onDismiss }) {
   );
 }
 
+function readableModeledVideoError(error) {
+  const message = typeof error === "string" ? error : error?.message || "";
+  if (/last frame image content.*cannot be mixed.*(?:first frame|reference image)/i.test(message)) {
+    return tr("The selected video model cannot combine a final-frame image with a separate garment reference. Wardrobe will use the modeled look as the final frame and preserve the saved garment details through the prompt instead.");
+  }
+  return readableError(error);
+}
+
 function ItemEditor({
   draft,
   setDraft,
@@ -2201,13 +2209,25 @@ function ItemViewer({
 
   const generateModeledVideo = async (settings) => {
     if (!activeModeledLook) throw new Error(tr("Choose a modeled look first."));
-    const result = await onGenerateModeledVideo(item.id, activeModeledLook.id, settings);
-    return { clipId: result.clipId };
+    try {
+      const result = await onGenerateModeledVideo(item.id, activeModeledLook.id, settings);
+      return { clipId: result.clipId };
+    } catch (requestError) {
+      const message = readableModeledVideoError(requestError);
+      setViewerToast({ title: tr("Could not start the video"), message });
+      throw new Error(message);
+    }
   };
 
   const pollModeledVideo = async (clipId) => {
     if (!activeModeledLook) throw new Error(tr("Choose a modeled look first."));
-    return onPollModeledVideo(item.id, activeModeledLook.id, clipId);
+    try {
+      return await onPollModeledVideo(item.id, activeModeledLook.id, clipId);
+    } catch (requestError) {
+      const message = readableModeledVideoError(requestError);
+      setViewerToast({ title: tr("Could not check the video"), message });
+      throw new Error(message);
+    }
   };
 
   const selectColorVersion = async (index, versions = colorVersions) => {

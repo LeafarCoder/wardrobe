@@ -2498,7 +2498,7 @@ button { font: inherit; }
   position: fixed;
   top: 24px;
   right: calc(var(--viewer-width) + 24px);
-  z-index: 150;
+  z-index: 180;
   width: min(390px, calc(100vw - var(--viewer-width) - 48px));
   min-height: 68px;
   display: grid;

@@ -140,3 +140,13 @@ test("describes the garment as a separate fidelity reference instead of another 
   assert.match(prompt, /separate reference image shows the exact clean garment/i);
   assert.match(prompt, /do not turn the product cutout into a scene or an additional frame/i);
 });
+
+test("uses wardrobe garment context when a final frame forbids separate references", () => {
+  const prompt = modeledVideoPrompt(
+    { model: RECOMMENDED_VIDEO_MODEL, frameType: "last_frame" },
+    { garmentDescription: "Editorial coat, navy wool, tailored" },
+  );
+  assert.match(prompt, /garment fidelity context/i);
+  assert.match(prompt, /Editorial coat, navy wool, tailored/i);
+  assert.doesNotMatch(prompt, /separate reference image/i);
+});
