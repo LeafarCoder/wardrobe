@@ -1215,6 +1215,18 @@ button { font: inherit; }
   gap: 9px;
 }
 
+.profile-ai-resolution-setting {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, .9fr);
+  gap: 13px 20px;
+  margin-bottom: 9px;
+  border: 1px solid var(--ink);
+  padding: 15px 16px;
+}
+
+.profile-ai-resolution-setting h3 { margin: 0 0 4px; font-size: 12px; font-weight: 620; }
+.profile-ai-resolution-setting p { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
+
 .profile-ai-task {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(220px, .9fr);
@@ -7448,6 +7460,7 @@ button { font: inherit; }
   .profile-account-card { grid-template-columns: auto 1fr; }
   .profile-account-card__copy { grid-column: 2; }
   .profile-reference-grid { max-width: 320px; }
+  .profile-ai-resolution-setting,
   .profile-ai-task { grid-template-columns: 1fr; }
   .profile-ai-task aside { grid-column: 1; }
   .gallery-controls { margin-top: 38px; }

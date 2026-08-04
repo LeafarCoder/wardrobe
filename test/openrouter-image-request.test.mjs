@@ -771,17 +771,29 @@ test("starts Seedream landscape fallbacks at a route-compatible pixel count", ()
   );
 });
 
-test("keeps Gemini image fallbacks within Google's supported resolution tiers", () => {
+test("uses each Gemini image model's supported resolution tiers", () => {
   assert.equal(
     openRouterImageResolution("google/gemini-3-pro-image", "1024x1536", "4K", "4K"),
-    "2K",
+    "4K",
   );
   assert.equal(
     openRouterImageResolution("google/gemini-3.1-flash-image", "1024x1536", "4K", "4K"),
-    "2K",
+    "4K",
+  );
+  assert.equal(
+    openRouterImageResolution("google/gemini-3.1-flash-image", "1024x1536", "512", "512"),
+    "512",
   );
   assert.equal(
     openRouterImageResolution("google/gemini-3.1-flash-lite-image", "1024x1024", "1K", "1K"),
+    "1K",
+  );
+  assert.equal(
+    openRouterImageResolution("google/gemini-3.1-flash-lite-image", "1024x1024", "4K", "4K"),
+    "1K",
+  );
+  assert.equal(
+    openRouterImageResolution("google/gemini-3-pro-image", "1024x1024", "512", "512"),
     "1K",
   );
 });

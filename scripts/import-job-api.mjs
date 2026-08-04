@@ -238,6 +238,8 @@ export function providerWithProfilePreferences(provider = {}, profile = {}, paye
     modeledFallbackModels: fallbackModels("modeledFallbackModel", provider.modeledFallbackModels || provider.imageFallbackModels || []),
     modeledMultiReferenceModel: preferences.modeledMultiReferenceModel || provider.modeledMultiReferenceModel,
     modeledMultiReferenceFallbackModels: fallbackModels("modeledMultiReferenceFallbackModel", provider.modeledMultiReferenceFallbackModels || provider.imageFallbackModels || []),
+    imageResolution: preferences.imageResolution,
+    imageFallbackResolution: preferences.imageResolution,
     videoModel: preferences.videoModel || provider.videoModel,
     plannerModel: preferences.plannerModel || provider.plannerModel || provider.visionModel,
     plannerFallbackModels: fallbackModels("plannerFallbackModel", provider.plannerFallbackModels || []),
@@ -3636,21 +3638,18 @@ export function isImageResolutionTooSmall(result) {
 
 export function openRouterImageResolution(model, size, configuredResolution, fallback = "1K") {
   const normalized = normalizeOpenRouterResolution(configuredResolution, fallback);
-  // Seedream 4.5 currently rejects its normalized 2K landscape output
-  // (2048x1366) because it falls below the route's 3,686,400-pixel minimum.
-  // Starting at 4K avoids a known failed request; square 2K output is large
-  // enough and can keep the cheaper configured resolution semantics.
-  if (model === "bytedance-seed/seedream-4.5" && size !== "1024x1024") {
+  // Seedream 4.5 requires at least 3,686,400 output pixels. Its square 2K
+  // output clears that threshold; normalized non-square outputs need 4K.
+  if (model === "bytedance-seed/seedream-4.5") {
+    const minimum = size === "1024x1024" ? "2K" : "4K";
     const index = OPENROUTER_RESOLUTION_TIERS.indexOf(normalized);
-    return index < OPENROUTER_RESOLUTION_TIERS.indexOf("4K") ? "4K" : normalized;
+    return index < OPENROUTER_RESOLUTION_TIERS.indexOf(minimum) ? minimum : normalized;
   }
-  // OpenRouter's Google routes currently expose Gemini 3 image generation at
-  // 1K and 2K. A shared 4K fallback setting must not make an otherwise valid
-  // multi-reference request unroutable when Wardrobe switches to Gemini.
-  if (/^google\/gemini-3(?:\.1)?-.*-image$/i.test(model)) {
-    const index = OPENROUTER_RESOLUTION_TIERS.indexOf(normalized);
-    return index > OPENROUTER_RESOLUTION_TIERS.indexOf("2K") ? "2K" : normalized;
-  }
+  // Gemini 3.1 Flash Image (Nano Banana 2) supports every normalized tier,
+  // including 512 and 4K. Flash Lite supports only 1K, while Gemini 3 Pro
+  // supports 1K, 2K, and 4K.
+  if (/^google\/gemini-3\.1-flash-lite-image$/i.test(model)) return "1K";
+  if (/^google\/gemini-3-pro-image$/i.test(model) && normalized === "512") return "1K";
   return normalized;
 }
 

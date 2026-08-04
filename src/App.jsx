@@ -37,7 +37,7 @@ import {
   OPENROUTER_KEY_REQUIRED_EVENT,
 } from "./openrouter-key.js";
 import { ProductStage } from "./ProductStage.jsx";
-import { aiModelLabel, AI_TASKS, formatAiCost, normalizeAiPreferences, recommendedAiOption } from "./ai-preferences.js";
+import { AI_IMAGE_RESOLUTIONS, aiModelLabel, AI_TASKS, formatAiCost, normalizeAiPreferences, recommendedAiOption } from "./ai-preferences.js";
 import { garmentVariationColors, normalizeHexColor } from "./garment-recolor.js";
 import {
   CARE_GROUPS,
@@ -5353,6 +5353,26 @@ function ProfileAiEditor({ value, user, onChange, apiKey, onApiKeyChange }) {
         </div>
         <span><Sparkle size={15} weight="fill" /> {tr("{count} AI tasks", { count: AI_TASKS.length })}</span>
       </div>
+      <article className="profile-ai-resolution-setting">
+        <div>
+          <h3>{tr("Generated image resolution")}</h3>
+          <p>{tr("Used for clean garment images and modeled looks. If a model cannot generate the selected size, Wardrobe uses its closest supported resolution.")}</p>
+        </div>
+        <div className="profile-ai-model-field">
+          <span>{tr("Default resolution")}</span>
+          <LightSelect
+            value={preferences.imageResolution}
+            onChange={(imageResolution) => onChange(normalizeAiPreferences({ ...preferences, imageResolution }))}
+            options={AI_IMAGE_RESOLUTIONS.map((option) => ({
+              value: option.id,
+              label: option.label,
+              meta: tr(option.note),
+            }))}
+            ariaLabel={tr("Default resolution")}
+            className="profile-ai-model-select"
+          />
+        </div>
+      </article>
       <div className="profile-ai-task-list">
         {AI_TASKS.map((task) => {
           const selectedOption = task.options.find((option) => option.id === preferences[task.id]);

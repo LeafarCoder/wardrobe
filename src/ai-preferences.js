@@ -1,5 +1,14 @@
 import { RECOMMENDED_VIDEO_MODEL, VIDEO_GENERATION_MODELS } from "./video-generation.js";
 
+export const AI_IMAGE_RESOLUTIONS = Object.freeze([
+  Object.freeze({ id: "512", label: "512 px", note: "Lowest cost and fastest for previews." }),
+  Object.freeze({ id: "1K", label: "1K", note: "Standard detail for everyday generated images." }),
+  Object.freeze({ id: "2K", label: "2K", note: "More detail for larger displays and crops." }),
+  Object.freeze({ id: "4K", label: "4K", note: "Maximum detail with higher generation cost and latency." }),
+]);
+
+export const DEFAULT_AI_IMAGE_RESOLUTION = "512";
+
 export const AI_TASKS = [
   {
     id: "analysisModel",
@@ -90,9 +99,10 @@ export const AI_TASKS = [
   },
 ];
 
-export const DEFAULT_AI_PREFERENCES = Object.freeze(Object.fromEntries(
-  AI_TASKS.flatMap((task) => [[task.id, ""], [task.fallbackId, ""]]),
-));
+export const DEFAULT_AI_PREFERENCES = Object.freeze({
+  imageResolution: DEFAULT_AI_IMAGE_RESOLUTION,
+  ...Object.fromEntries(AI_TASKS.flatMap((task) => [[task.id, ""], [task.fallbackId, ""]])),
+});
 
 export const LEGACY_AI_MODEL_IDS = Object.freeze({
   "google/gemini-3.1-flash": "google/gemini-3.6-flash",
@@ -103,17 +113,27 @@ export function migrateAiModelId(model) {
   return LEGACY_AI_MODEL_IDS[normalized] || normalized;
 }
 
+export function normalizeAiImageResolution(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return AI_IMAGE_RESOLUTIONS.some((option) => option.id.toUpperCase() === normalized)
+    ? AI_IMAGE_RESOLUTIONS.find((option) => option.id.toUpperCase() === normalized).id
+    : DEFAULT_AI_IMAGE_RESOLUTION;
+}
+
 export function normalizeAiPreferences(value = {}) {
   const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  return Object.fromEntries(AI_TASKS.flatMap((task) => {
-    const model = migrateAiModelId(input[task.id]);
-    const preferred = task.options.some((option) => option.id === model) ? model : "";
-    const fallbackModel = migrateAiModelId(input[task.fallbackId]);
-    const fallback = fallbackModel !== preferred && task.options.some((option) => option.id === fallbackModel)
-      ? fallbackModel
-      : "";
-    return [[task.id, preferred], [task.fallbackId, fallback]];
-  }));
+  return {
+    imageResolution: normalizeAiImageResolution(input.imageResolution),
+    ...Object.fromEntries(AI_TASKS.flatMap((task) => {
+      const model = migrateAiModelId(input[task.id]);
+      const preferred = task.options.some((option) => option.id === model) ? model : "";
+      const fallbackModel = migrateAiModelId(input[task.fallbackId]);
+      const fallback = fallbackModel !== preferred && task.options.some((option) => option.id === fallbackModel)
+        ? fallbackModel
+        : "";
+      return [[task.id, preferred], [task.fallbackId, fallback]];
+    })),
+  };
 }
 
 export function aiModelLabel(model) {

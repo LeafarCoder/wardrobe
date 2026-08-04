@@ -13,6 +13,7 @@ import { providerWithProfilePreferences } from "../scripts/import-job-api.mjs";
 
 test("normalizes independent model choices for every AI task", () => {
   const preferences = normalizeAiPreferences({
+    imageResolution: "2k",
     analysisModel: "google/gemini-3.1-flash",
     garmentModel: "black-forest-labs/flux.2-klein-4b",
     modeledModel: "google/gemini-3.1-flash-lite-image",
@@ -23,11 +24,17 @@ test("normalizes independent model choices for every AI task", () => {
   });
 
   assert.equal(preferences.analysisModel, "google/gemini-3.6-flash");
+  assert.equal(preferences.imageResolution, "2K");
   assert.equal(preferences.garmentModel, "black-forest-labs/flux.2-klein-4b");
   assert.equal(preferences.modeledMultiReferenceModel, "google/gemini-3.1-flash-image");
   assert.equal(preferences.modeledMultiReferenceFallbackModel, "");
   assert.equal(preferences.plannerModel, "");
   assert.equal(preferences.plannerFallbackModel, "google/gemini-2.5-flash-lite");
+});
+
+test("defaults generated images to the lowest Nano Banana 2 resolution", () => {
+  assert.equal(normalizeAiPreferences({}).imageResolution, "512");
+  assert.equal(normalizeAiPreferences({ imageResolution: "8K" }).imageResolution, "512");
 });
 
 test("migrates the retired Gemini 3.1 Flash id to a live higher-quality route", () => {
@@ -86,6 +93,7 @@ test("applies personal model choices only to OpenRouter and language to every pr
     language: "pt-PT",
     aiPreferences: {
       analysisModel: "google/gemini-3.1-flash",
+      imageResolution: "4K",
       garmentModel: "",
       modeledModel: "google/gemini-3.1-flash-image",
       modeledMultiReferenceModel: "",
@@ -97,6 +105,8 @@ test("applies personal model choices only to OpenRouter and language to every pr
 
   const selected = providerWithProfilePreferences(base, profile);
   assert.equal(selected.visionModel, "google/gemini-3.6-flash");
+  assert.equal(selected.imageResolution, "4K");
+  assert.equal(selected.imageFallbackResolution, "4K");
   assert.equal(selected.garmentModel, "default/garment");
   assert.equal(selected.modeledModel, "google/gemini-3.1-flash-image");
   assert.equal(selected.modeledMultiReferenceModel, "default/multi");
