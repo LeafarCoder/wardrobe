@@ -3,7 +3,14 @@ import { ArrowCounterClockwise, Check, Eraser, PencilSimple, X } from "@phosphor
 import { tr } from "./i18n.js";
 
 const loadBitmap = async (url) => {
-  const response = await fetch(url);
+  const requestUrl = new URL(url, window.location.origin);
+  // Hosted wardrobe assets normally redirect to a short-lived object-storage
+  // URL. Ask the API to proxy editor inputs so fetch/createImageBitmap can read
+  // their pixels without depending on the bucket's CORS configuration.
+  if (requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith("/api/")) {
+    requestUrl.searchParams.set("inline", "1");
+  }
+  const response = await fetch(requestUrl, { credentials: "same-origin" });
   if (!response.ok) throw new Error(tr("The mask image could not be loaded."));
   return createImageBitmap(await response.blob());
 };

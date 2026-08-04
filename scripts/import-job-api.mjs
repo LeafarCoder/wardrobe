@@ -117,7 +117,7 @@ import {
   selectedImportGenerationCandidate,
 } from "../src/import-candidates.js";
 import { createDatabasePool, verifyDatabase } from "./db.mjs";
-import { createObjectStorage } from "./object-storage.mjs";
+import { createObjectStorage, objectBodyBytes } from "./object-storage.mjs";
 import { PostgresRepository } from "./postgres-repository.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -4694,15 +4694,25 @@ export function wardrobeImportApi(options = {}) {
     }
   };
 
-  const redirectStoredAsset = async (res, ownerUserId, fileName) => {
+  const redirectStoredAsset = async (res, ownerUserId, fileName, inline = false) => {
     if (objectStorageDriver() !== "s3" || !databasePool) return false;
     const result = await databasePool.query(
-      `SELECT object_key FROM assets
+      `SELECT object_key, content_type FROM assets
        WHERE owner_user_id = $1 AND original_name = $2 AND deleted_at IS NULL
        ORDER BY created_at DESC LIMIT 1`,
       [ownerUserId, fileName],
     );
     if (!result.rows[0]) return false;
+    if (inline) {
+      const stored = await objectStorage.get(result.rows[0].object_key);
+      const bytes = await objectBodyBytes(stored.Body);
+      res.statusCode = 200;
+      res.setHeader("Content-Type", result.rows[0].content_type || stored.ContentType || imageMime(fileName));
+      res.setHeader("Content-Length", bytes.length);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.end(bytes);
+      return true;
+    }
     res.statusCode = 302;
     res.setHeader("Location", await objectStorage.signedUrl(result.rows[0].object_key, 300));
     res.setHeader("Cache-Control", "private, no-store");
@@ -8441,7 +8451,7 @@ Interpret this correction semantically in whatever language it is written. It ov
           throw apiError("Private object storage is not configured.", 503, "object_storage_unavailable");
         }
         const assetResult = await databasePool.query(
-          `SELECT id, owner_user_id, object_key, media_kind, cache_policy
+          `SELECT id, owner_user_id, object_key, media_kind, content_type, cache_policy
            FROM assets WHERE id = $1::uuid AND deleted_at IS NULL`,
           [privateAssetMatch[1]],
         );
@@ -8455,6 +8465,15 @@ Interpret this correction semantically in whatever language it is written. It ov
           || (permission && connectionCanShare(profileStore.connections, asset.owner_user_id, signedInUserId, permission))
         );
         if (!allowed) throw apiError("Wardrobe image not found.", 404, "wardrobe_image_not_found");
+        if (url.searchParams.get("inline") === "1") {
+          const stored = await objectStorage.get(asset.object_key);
+          const bytes = await objectBodyBytes(stored.Body);
+          res.statusCode = 200;
+          res.setHeader("Content-Type", asset.content_type || stored.ContentType || "application/octet-stream");
+          res.setHeader("Content-Length", bytes.length);
+          res.setHeader("Cache-Control", "private, no-store");
+          return res.end(bytes);
+        }
         res.statusCode = 302;
         res.setHeader("Location", await objectStorage.signedUrl(asset.object_key, 300));
         res.setHeader(
@@ -8679,7 +8698,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const reference = target?.referenceImages?.[0];
         if (!reference) throw apiError("Profile image not found.", 404, "connection_avatar_not_found");
         const fileName = reference.avatarFileName || reference.fileName;
-        if (await redirectStoredAsset(res, target.id, fileName)) return;
+        if (await redirectStoredAsset(res, target.id, fileName, url.searchParams.get("inline") === "1")) return;
         const file = path.join(profileReferenceDir(target.id), fileName);
         const details = await stat(file);
         res.setHeader("Content-Type", fileName === reference.avatarFileName ? "image/webp" : reference.mime || imageMime(file));
@@ -8843,7 +8862,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const reference = profile?.referenceImages?.find((candidate) => profileReferenceAssetNames(candidate).includes(referenceMatch[2]));
         if (!reference) throw apiError("Reference photo not found.", 404, "reference_not_found");
         const fileName = referenceMatch[2];
-        if (await redirectStoredAsset(res, profile.id, fileName)) return;
+        if (await redirectStoredAsset(res, profile.id, fileName, url.searchParams.get("inline") === "1")) return;
         const file = path.join(profileReferenceDir(profile.id), fileName);
         const details = await stat(file);
         const isAvatar = fileName === reference.avatarFileName;
@@ -8865,7 +8884,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const reference = profile?.backgroundReferences?.find((candidate) => profileBackgroundAssetNames(candidate).includes(backgroundMatch[2]));
         if (!reference) throw apiError("Background photo not found.", 404, "background_reference_not_found");
         const fileName = backgroundMatch[2];
-        if (await redirectStoredAsset(res, profile.id, fileName)) return;
+        if (await redirectStoredAsset(res, profile.id, fileName, url.searchParams.get("inline") === "1")) return;
         const file = path.join(profileBackgroundDir(profile.id), fileName);
         const details = await stat(file);
         const isPreview = fileName === reference.previewFileName;
@@ -9959,7 +9978,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         const assetOwnerId = ownedAssets.get(user.id)?.has(requestedAsset)
           ? user.id
           : sharedOwnerId || user.id;
-        if (await redirectStoredAsset(res, assetOwnerId, requestedAsset)) return;
+        if (await redirectStoredAsset(res, assetOwnerId, requestedAsset, url.searchParams.get("inline") === "1")) return;
         const file = path.join(libraryAssetDir, path.basename(libraryAssetMatch[1]));
         const details = await stat(file);
         const isOptimized = file.endsWith(".webp") || file.endsWith(".mp4");
@@ -10011,7 +10030,7 @@ Interpret this correction semantically in whatever language it is written. It ov
       if (assetMatch && req.method === "GET") {
         const assetJob = await loadJob(assetMatch[1]);
         if (!assetJob || assetJob.userId !== user.id) throw apiError("Import image not found.", 404, "import_image_not_found");
-        if (await redirectStoredAsset(res, assetJob.userId, assetMatch[2])) return;
+        if (await redirectStoredAsset(res, assetJob.userId, assetMatch[2], url.searchParams.get("inline") === "1")) return;
         const file = path.join(jobsDir, assetMatch[1], path.basename(assetMatch[2]));
         await stat(file);
         res.setHeader("Content-Type", file.endsWith(".svg") ? "image/svg+xml" : "image/png");
