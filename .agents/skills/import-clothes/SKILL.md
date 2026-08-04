@@ -94,6 +94,8 @@ For each generated item, crop the strongest view with about 12% padding and pres
 
 Use Imagegen with the primary crop and only a genuinely complementary second crop. Ask for the complete empty item centered on a perfectly uniform chroma background with generous padding and no shadow. State the exact source-supported construction and all uncertain details that must be omitted.
 
+Present the empty garment in its intended worn silhouette, like a polished online-store cutout. Correct accidental lay-flat creases, rumpling, bunching, and collapsed areas while preserving material-appropriate drape and every intentional pleat, gather, crease, and texture. Let the garment fall under natural downward gravity and add only enough three-dimensional form to communicate its cut and fit. Never stretch or reshape its construction or proportions, and never show or imply a body, mannequin, hanger, stuffing, or other support.
+
 Default to `#00ff00`; use `#ff00ff` for green garments unless magenta is prominent. Otherwise choose a maximally distant saturated RGB key. Never use a key color present in the garment.
 
 Save generated chroma images to `$WORK/chroma/SLUG.png`. Compare every result against its source before accepting it.

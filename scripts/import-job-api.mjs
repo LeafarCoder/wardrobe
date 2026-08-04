@@ -2633,6 +2633,8 @@ Primary request: Reconstruct ONLY the complete standalone ${name} as a clean, fr
 
 Product fidelity: Preserve the exact primary color ${primary}${secondary}, material and texture, ${direction.preserve}, pattern, and distinctive details (${details}). Preserve any clearly legible existing graphic or logo exactly, but do not invent or reinterpret uncertain logos, text, pockets, seams, hardware, colors, or decoration.
 
+Shape and presentation — mandatory: Present the empty product in its intended worn silhouette, like a polished online-store cutout. Correct temporary creases, rumpling, bunching, and collapsed distortions caused by folding or photographing it laid flat. Let the fabric settle under natural downward gravity so its panels, sleeves, straps, legs, and hem fall into their designed shape. Preserve material-appropriate drape and every intentional pleat, gather, crease, or texture. Add only enough three-dimensional form to communicate the product's natural cut and fit; do not stretch, reshape, tailor, or change its proportions, and do not show or imply a body, skin, mannequin, hanger, stuffing, or other support.
+
 Color control — mandatory: The saved primary color is ${primary}. Make it the unmistakable dominant color of the requested product, even if a surrounding garment in a reference image has another stronger color. ${secondaryDirection} ${accessoryColorDirection}
 
 Composition: Centered straight-on product view. Keep the entire product inside the frame with generous, even padding on every side. No cropping or truncation.

@@ -325,6 +325,23 @@ test("asks the generator for transparency and explicitly rejects neutral substit
   assert.match(prompt, /checked programmatically and will be rejected if its canvas remains opaque/i);
 });
 
+test("presents laid-flat garments with a smooth natural worn silhouette", () => {
+  const prompt = buildGarmentPrompt({
+    name: "Printed midi dress",
+    part: "wholebody",
+    color: "#d8cbb4",
+    tags: ["midi", "gathered sleeves"],
+  }, "#00ffff");
+
+  assert.match(prompt, /Shape and presentation — mandatory/i);
+  assert.match(prompt, /intended worn silhouette, like a polished online-store cutout/i);
+  assert.match(prompt, /temporary creases, rumpling, bunching, and collapsed distortions/i);
+  assert.match(prompt, /natural downward gravity/i);
+  assert.match(prompt, /Preserve material-appropriate drape and every intentional pleat, gather, crease, or texture/i);
+  assert.match(prompt, /do not stretch, reshape, tailor, or change its proportions/i);
+  assert.match(prompt, /do not show or imply a body, skin, mannequin, hanger, stuffing, or other support/i);
+});
+
 test("forbids painting the checkerboard that editors use to display transparency", () => {
   const prompt = buildGarmentPrompt({
     name: "Red beret",
