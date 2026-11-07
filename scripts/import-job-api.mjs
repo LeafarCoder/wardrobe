@@ -118,6 +118,9 @@ import {
 } from "../src/import-candidates.js";
 import { createDatabasePool, verifyDatabase } from "./db.mjs";
 import { createObjectStorage, objectBodyBytes } from "./object-storage.mjs";
+import { MediaIndex } from "./media-index.mjs";
+import { mediaObjectKey } from "./media-layout.mjs";
+import { garmentMediaContexts, profileMediaContexts, jobMediaContexts, jobMediaAssetNames, mergeMediaContexts } from "./media-contexts.mjs";
 import { PostgresRepository } from "./postgres-repository.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -1808,6 +1811,14 @@ export function importedRecordAssets(record = {}) {
     regenerationCandidate?.preview,
     regenerationCandidate?.thumbnail,
   ].filter(Boolean))];
+}
+
+export function garmentStorageContexts(record) {
+  return garmentMediaContexts(record, { assets: importedRecordAssets(record), sources: sourcePhotosForRecord(record), looks: modeledLooksForRecord(record), candidate: garmentRegenerationCandidateForRecord(record) });
+}
+
+export function libraryStorageContexts(records = []) {
+  return mergeMediaContexts(...records.map(garmentStorageContexts));
 }
 
 export function discardedAssetsAfterMerge(mergedRecord = {}, discardedRecord = {}) {
@@ -4382,6 +4393,7 @@ export function wardrobeImportApi(options = {}) {
   let databasePool;
   let repository;
   let objectStorage;
+  let mediaIndex;
   let initialization;
   let usageWriteQueue = Promise.resolve();
   let importHistoryWriteQueue = Promise.resolve();
@@ -4405,7 +4417,18 @@ export function wardrobeImportApi(options = {}) {
 
   const hydrateMediaFile = async (file) => {
     const media = mediaPath(file);
-    if (!media || objectStorageDriver() !== "s3" || !databasePool) return false;
+    if (!media || objectStorageDriver() !== "s3") return false;
+    if (mediaIndex) {
+      const entry = await mediaIndex.byPath(path.relative(dataDir, media.absolute).split(path.sep).join("/"));
+      if (!entry) return false;
+      const stored = await objectStorage.get(entry.object_key);
+      const bytes = await objectBodyBytes(stored.Body);
+      if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) throw new Error("Stored media checksum mismatch");
+      await mkdir(path.dirname(media.absolute), { recursive: true });
+      await atomicFile(media.absolute, bytes);
+      return true;
+    }
+    if (!databasePool) return false;
     const result = await databasePool.query(
       `SELECT object_key FROM assets
        WHERE original_name = $1 AND deleted_at IS NULL
@@ -4500,6 +4523,14 @@ export function wardrobeImportApi(options = {}) {
 
   async function rm(file, options = {}) {
     const media = mediaPath(file);
+    if (media?.kind === "library" && mediaIndex && !options.recursive) {
+      const users = await loadUsersStore();
+      const references = canonicalStorageContexts(await readLibraryRecords(), users?.users || []);
+      if (references.has(path.relative(dataDir, media.absolute).split(path.sep).join("/"))) return;
+    }
+    if (media && mediaIndex) {
+      await mediaIndex.remove(path.relative(dataDir, media.absolute).split(path.sep).join("/"), objectStorage);
+    }
     if (media && objectStorageDriver() === "s3" && databasePool && !options.recursive) {
       const profileRelative = media.kind === "profile" ? path.relative(profilesDir, media.absolute).split(path.sep) : [];
       const ownerUserId = profileRelative.length > 2 ? profileRelative[0] : null;
@@ -4532,8 +4563,52 @@ export function wardrobeImportApi(options = {}) {
     role,
     mediaKind,
     cachePolicy = "private-no-store",
+    lookId = null,
+    links = null,
+    createdAt = null,
   }) => {
-    if (objectStorageDriver() !== "s3" || !databasePool) return null;
+    if (objectStorageDriver() !== "s3") return null;
+    if (mediaIndex) {
+      const sourcePath = path.relative(dataDir, file).split(path.sep).join("/");
+      if (!mediaPath(file)) throw new Error("Media path is outside the data directories");
+      const prior = await mediaIndex.byPath(sourcePath);
+      if (prior?.owner_user_id && prior.owner_user_id !== ownerUserId) throw new Error("Conflicting media ownership");
+      const contextMatches = prior?.layout_version === 2 && prior.owner_user_id === ownerUserId
+        && prior.media_kind === mediaKind && prior.cache_policy === cachePolicy
+        && prior.entity_type === entityType && prior.entity_id === entityId && prior.role === role && prior.look_id === lookId
+        && JSON.stringify(prior.links) === JSON.stringify(links);
+      let details;
+      try { details = await fsStat(file); }
+      catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        if (!prior || contextMatches) return prior?.id || null;
+        if (!(await hydrateMediaFile(file))) return prior.id;
+        details = await fsStat(file);
+      }
+      if (contextMatches && prior.byte_size === details.size && prior.local_mtime_ms === details.mtimeMs) return prior.id;
+      const bytes = await fsReadFile(file);
+      const digest = createHash("sha256").update(bytes).digest("hex");
+      const assetId = prior?.id || randomUUID();
+      const layout = mediaObjectKey({ ownerUserId, entityType, entityId, role, assetId, sha256: digest, fileName: path.basename(file), lookId });
+      const objectKey = layout.key;
+      if (prior?.sha256 !== digest || prior?.object_key !== objectKey || prior?.cache_policy !== cachePolicy) {
+        await objectStorage.put(objectKey, bytes, {
+          contentType: imageMime(file), sha256: digest,
+          cacheControl: cachePolicy === "private-immutable" ? "private, max-age=31536000, immutable" : "private, no-store",
+        });
+      }
+      const entry = await mediaIndex.put({
+        id: assetId, layout_version: layout.layoutVersion, category: layout.category,
+        entity_type: entityType, entity_id: entityId, role, look_id: lookId, links,
+        created_at: prior?.created_at || createdAt || details.birthtime.toISOString(),
+        previous_object_keys: [...new Set([...(prior?.previous_object_keys || []), ...(prior?.object_key && prior.object_key !== objectKey ? [prior.object_key] : [])])],
+        source_path: sourcePath, object_key: objectKey, owner_user_id: ownerUserId,
+        original_name: path.basename(file), content_type: imageMime(file), media_kind: mediaKind,
+        byte_size: bytes.length, sha256: digest, cache_policy: cachePolicy, local_mtime_ms: details.mtimeMs,
+      });
+      return entry.id;
+    }
+    if (!databasePool) return null;
     let bytes;
     try {
       bytes = await readFile(file);
@@ -4552,13 +4627,7 @@ export function wardrobeImportApi(options = {}) {
     let assetId = prior.rows[0]?.id;
     if (!assetId) {
       assetId = randomUUID();
-      const objectKey = [
-        "users",
-        encodeURIComponent(ownerUserId),
-        entityType,
-        encodeURIComponent(String(entityId)),
-        `${digest.slice(0, 16)}-${fileName}`,
-      ].join("/");
+      const objectKey = mediaObjectKey({ ownerUserId, entityType, entityId, role, assetId, sha256: digest, fileName, lookId }).key;
       const contentType = imageMime(file);
       const cacheControl = cachePolicy === "private-immutable"
         ? "private, max-age=31536000, immutable"
@@ -4580,123 +4649,59 @@ export function wardrobeImportApi(options = {}) {
     return assetId;
   };
 
+  const canonicalStorageContexts = (records, profiles) => mergeMediaContexts(
+    libraryStorageContexts(records), ...profiles.map(profileMediaContexts),
+  );
+
   const syncProfileAssets = async (store) => {
     if (objectStorageDriver() !== "s3") return;
-    for (const profile of store.users || []) {
+    const profiles = store.users || [];
+    const canonical = canonicalStorageContexts(await readLibraryRecords(), profiles);
+    for (const profile of profiles) {
       profile.assetIds = { ...(profile.assetIds || {}) };
-      for (const reference of profile.referenceImages || []) {
-        const referenceDir = profileReferenceDir(profile.id);
-        const referenceAssetId = await registerLocalAsset({
-          file: path.join(referenceDir, reference.fileName),
-          ownerUserId: profile.id,
-          entityType: "profile",
-          entityId: profile.id,
-          role: "reference",
-          mediaKind: "profile-reference",
-        });
-        if (referenceAssetId) profile.assetIds[reference.fileName] = referenceAssetId;
-        if (reference.avatarFileName) {
-          const avatarAssetId = await registerLocalAsset({
-            file: path.join(referenceDir, reference.avatarFileName),
-            ownerUserId: profile.id,
-            entityType: "profile",
-            entityId: profile.id,
-            role: "avatar",
-            mediaKind: "profile-avatar",
-            cachePolicy: "private-immutable",
-          });
-          if (avatarAssetId) profile.assetIds[reference.avatarFileName] = avatarAssetId;
-        }
-      }
-      for (const reference of profile.backgroundReferences || []) {
-        const backgroundDir = profileBackgroundDir(profile.id);
-        for (const fileName of profileBackgroundAssetNames(reference)) {
-          const assetId = await registerLocalAsset({
-            file: path.join(backgroundDir, fileName),
-            ownerUserId: profile.id,
-            entityType: "profile",
-            entityId: profile.id,
-            role: fileName === reference.previewFileName ? "background-preview" : "background",
-            mediaKind: "profile-background",
-            ...(fileName === reference.previewFileName ? { cachePolicy: "private-immutable" } : {}),
-          });
-          if (assetId) profile.assetIds[fileName] = assetId;
-        }
-      }
-      for (const asset of [
-        ...wardrobePlanAssets(profile.wardrobePlans),
-        ...wardrobeOutfitAssets(profile.wardrobeOutfits),
-      ]) {
-        const fileName = path.basename(new URL(asset, "http://localhost").pathname);
-        const assetId = await registerLocalAsset({
-          file: path.join(libraryAssetDir, fileName),
-          ownerUserId: profile.id,
-          entityType: "profile",
-          entityId: profile.id,
-          role: "generated-look",
-          mediaKind: "modeled-look",
-          cachePolicy: fileName.endsWith(".webp") ? "private-immutable" : "private-no-store",
-        });
-        if (assetId) profile.assetIds[fileName] = assetId;
+      for (const ownContext of profileMediaContexts(profile).values()) {
+        const context = canonical.get(ownContext.sourcePath);
+        const assetId = await registerLocalAsset({ file: path.join(dataDir, context.sourcePath), ...context });
+        if (assetId) profile.assetIds[context.fileName] = assetId;
       }
     }
   };
 
   const syncGarmentAssets = async (records) => {
     if (objectStorageDriver() !== "s3") return;
+    const users = await loadUsersStore();
+    const canonical = canonicalStorageContexts(records, users?.users || []);
+    const assetIds = new Map();
+    for (const ownContext of libraryStorageContexts(records).values()) {
+      const context = canonical.get(ownContext.sourcePath);
+      const assetId = await registerLocalAsset({ file: path.join(dataDir, context.sourcePath), ...context });
+      if (assetId) assetIds.set(context.fileName, assetId);
+    }
     for (const record of records) {
       record.assetIds = { ...(record.assetIds || {}) };
       for (const asset of importedRecordAssets(record)) {
         const fileName = path.basename(new URL(asset, "http://localhost").pathname);
-        const immutable = fileName.endsWith(".webp") || fileName.endsWith(".mp4");
-        const assetId = await registerLocalAsset({
-          file: path.join(libraryAssetDir, fileName),
-          ownerUserId: record.userId,
-          entityType: "garment",
-          entityId: record.id,
-          role: fileName.endsWith("-hover.mp4") ? "hover-video" : fileName.endsWith(".webp") ? "derivative" : "source",
-          mediaKind: fileName.endsWith(".mp4") ? "modeled-video" : fileName.endsWith(".webp") ? "garment-derivative" : "garment-media",
-          cachePolicy: immutable ? "private-immutable" : "private-no-store",
-        });
-        if (assetId) record.assetIds[fileName] = assetId;
+        if (assetIds.has(fileName)) record.assetIds[fileName] = assetIds.get(fileName);
       }
     }
   };
 
-  const jobAssetNames = (job) => new Set([
-      ...Object.values(job.internal || {}).filter((value) => typeof value === "string" && /\.[a-z0-9]+$/i.test(value)),
-      ...Object.values(job.stages || {}).flatMap((stage) => {
-        const urls = [
-          stage?.assetUrl,
-          stage?.failedAssetUrl,
-          stage?.cleanupPreviewUrl,
-          stage?.maskSourceUrl,
-          stage?.maskUrl,
-          ...importGenerationCandidates(stage || {}).map((candidate) => candidate.assetUrl),
-        ].filter(Boolean);
-        return urls.map((value) => path.basename(new URL(value, "http://localhost").pathname));
-      }),
-    ]);
+  const jobAssetNames = jobMediaAssetNames;
 
   const syncJobAssets = async (job) => {
     if (objectStorageDriver() !== "s3") return;
     job.assetIds = { ...(job.assetIds || {}) };
-    for (const fileName of jobAssetNames(job)) {
-      const assetId = await registerLocalAsset({
-        file: path.join(jobsDir, job.id, fileName),
-        ownerUserId: job.userId,
-        entityType: "job",
-        entityId: job.id,
-        role: fileName,
-        mediaKind: "import-job",
-      });
-      if (assetId) job.assetIds[fileName] = assetId;
+    for (const context of jobMediaContexts(job).values()) {
+      const assetId = await registerLocalAsset({ file: path.join(dataDir, context.sourcePath), ...context });
+      if (assetId) job.assetIds[context.fileName] = assetId;
     }
   };
 
   const redirectStoredAsset = async (res, ownerUserId, fileName, inline = false) => {
-    if (objectStorageDriver() !== "s3" || !databasePool) return false;
-    const result = await databasePool.query(
+    if (objectStorageDriver() !== "s3" || (!databasePool && !mediaIndex)) return false;
+    const result = mediaIndex
+      ? { rows: [await mediaIndex.byName(ownerUserId, fileName)].filter(Boolean) }
+      : await databasePool.query(
       `SELECT object_key, content_type FROM assets
        WHERE owner_user_id = $1 AND original_name = $2 AND deleted_at IS NULL
        ORDER BY created_at DESC LIMIT 1`,
@@ -4815,11 +4820,17 @@ export function wardrobeImportApi(options = {}) {
     res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
     if (requestIsSecure(req)) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     if (setting("NODE_ENV") === "production" || setting("RAILWAY_ENVIRONMENT_NAME")) {
-      let storageOrigin = "";
+      const storageOrigins = new Set();
       try {
-        storageOrigin = new URL(setting("WARDROBE_MEDIA_S3_PUBLIC_ENDPOINT") || setting("WARDROBE_MEDIA_S3_ENDPOINT")).origin;
+        const endpoint = new URL(setting("WARDROBE_MEDIA_S3_PUBLIC_ENDPOINT") || setting("WARDROBE_MEDIA_S3_ENDPOINT"));
+        storageOrigins.add(endpoint.origin);
+        if (setting("WARDROBE_MEDIA_S3_FORCE_PATH_STYLE", "true").toLowerCase() === "false" && setting("WARDROBE_MEDIA_S3_BUCKET")) {
+          endpoint.hostname = `${setting("WARDROBE_MEDIA_S3_BUCKET")}.${endpoint.hostname}`;
+          storageOrigins.add(endpoint.origin);
+        }
       } catch {}
-      res.setHeader("Content-Security-Policy", `default-src 'self'; img-src 'self' data: blob:${storageOrigin ? ` ${storageOrigin}` : ""}; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'${storageOrigin ? ` ${storageOrigin}` : ""}; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
+      const storageSources = [...storageOrigins].map((origin) => ` ${origin}`).join("");
+      res.setHeader("Content-Security-Policy", `default-src 'self'; img-src 'self' data: blob:${storageSources}; media-src 'self' blob:${storageSources}; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'${storageSources}; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     }
   };
   const modelReferenceSettings = () => {
@@ -5103,7 +5114,7 @@ export function wardrobeImportApi(options = {}) {
         garmentModel: migrateAiModelId(setting("OPENROUTER_GARMENT_MODEL", imageModel || "bytedance-seed/seedream-4.5")),
         modeledModel: migrateAiModelId(setting("OPENROUTER_MODELED_MODEL", imageModel || "google/gemini-3.1-flash-image")),
         modeledMultiReferenceModel: migrateAiModelId(setting("OPENROUTER_MODELED_MULTI_REFERENCE_MODEL", "google/gemini-3.1-flash-image")),
-        videoModel: setting("OPENROUTER_VIDEO_MODEL", RECOMMENDED_VIDEO_MODEL),
+        videoModel: migrateAiModelId(setting("OPENROUTER_VIDEO_MODEL", RECOMMENDED_VIDEO_MODEL)),
         imageFallbackModels: parseModelList(setting("OPENROUTER_IMAGE_FALLBACK_MODELS", "bytedance-seed/seedream-4.5")),
         imageQuality: setting("OPENROUTER_IMAGE_QUALITY", "auto"),
         imageResolution: setting("OPENROUTER_IMAGE_RESOLUTION", "1K"),
@@ -5309,6 +5320,7 @@ export function wardrobeImportApi(options = {}) {
       await repository.saveUsersStore(normalizedStore);
       return;
     }
+    if (mediaIndex) await syncProfileAssets(store);
     await atomicJson(usersFile, {
       version: 2,
       currentUserId: store.currentUserId,
@@ -5879,6 +5891,7 @@ export function wardrobeImportApi(options = {}) {
       await syncJobAssets(job);
       return repository.saveJob(job);
     }
+    if (mediaIndex) await syncJobAssets(job);
     job.updatedAt = new Date().toISOString();
     await atomicJson(path.join(jobsDir, job.id, "job.json"), job);
   }
@@ -5941,6 +5954,7 @@ export function wardrobeImportApi(options = {}) {
       libraryCache = null;
       return;
     }
+    if (mediaIndex) await syncGarmentAssets(records);
     await atomicJson(importedFile, records);
     try {
       const details = await stat(importedFile);
@@ -8447,10 +8461,12 @@ Interpret this correction semantically in whatever language it is written. It ov
       const payerProfile = signedInIdentity;
       const privateAssetMatch = url.pathname.match(/^\/api\/assets\/([a-f0-9-]{36})$/i);
       if (privateAssetMatch && req.method === "GET") {
-        if (!databasePool || objectStorageDriver() !== "s3") {
+        if ((!databasePool && !mediaIndex) || objectStorageDriver() !== "s3") {
           throw apiError("Private object storage is not configured.", 503, "object_storage_unavailable");
         }
-        const assetResult = await databasePool.query(
+        const assetResult = mediaIndex
+          ? { rows: [await mediaIndex.byId(privateAssetMatch[1])].filter(Boolean) }
+          : await databasePool.query(
           `SELECT id, owner_user_id, object_key, media_kind, content_type, cache_policy
            FROM assets WHERE id = $1::uuid AND deleted_at IS NULL`,
           [privateAssetMatch[1]],
@@ -10520,8 +10536,8 @@ Interpret this correction semantically in whatever language it is written. It ov
       importHistoryFile = path.join(dataDir, "import-history.json");
       await mkdir(jobsDir, { recursive: true });
       await mkdir(libraryAssetDir, { recursive: true });
-      if ((persistenceDriver() === "postgres") !== (objectStorageDriver() === "s3")) {
-        throw new Error("Production persistence requires WARDROBE_PERSISTENCE_DRIVER=postgres and WARDROBE_OBJECT_STORAGE_DRIVER=s3 together");
+      if (persistenceDriver() === "postgres" && objectStorageDriver() !== "s3") {
+        throw new Error("PostgreSQL persistence requires WARDROBE_OBJECT_STORAGE_DRIVER=s3");
       }
       if (persistenceDriver() === "postgres") {
         databasePool = createDatabasePool(options.env || process.env);
@@ -10530,18 +10546,29 @@ Interpret this correction semantically in whatever language it is written. It ov
       } else if (persistenceDriver() !== "filesystem") {
         throw new Error(`Unsupported WARDROBE_PERSISTENCE_DRIVER: ${persistenceDriver()}`);
       }
-      objectStorage = createObjectStorage({
+      objectStorage = options.objectStorage || createObjectStorage({
         env: options.env || process.env,
         root: path.join(dataDir, "objects"),
       });
       await objectStorage.ready();
+      if (persistenceDriver() === "filesystem" && objectStorageDriver() === "s3") {
+        mediaIndex = new MediaIndex(path.join(dataDir, "media-index.json"));
+        const entries = await mediaIndex.all();
+        if (!entries.length && (await readdir(libraryAssetDir)).length) {
+          throw new Error("Run npm run media:migrate and media:verify before enabling S3 for an existing library");
+        }
+        if (entries.length) {
+          const migration = await fsReadFile(path.join(dataDir, "media-migration.json"), "utf8").then(JSON.parse).catch(() => null);
+          if (!migration?.ok || !migration?.verifiedAt) throw new Error("Run npm run media:verify before enabling S3 for an existing library");
+        }
+      }
       await initializeUsers();
       if (objectStorageDriver() === "filesystem") {
         await backfillProfileReferenceAvatars();
         await backfillLibraryVariants();
       }
       await backfillModeledVideoPreviews();
-      for (const job of await listJobs()) {
+      for (const job of maintenanceEnabled() ? [] : await listJobs()) {
         if (job.status === "complete") {
           try {
             const includeModeled = Boolean(job.stages.modeled?.assetUrl);

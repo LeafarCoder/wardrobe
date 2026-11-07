@@ -21,11 +21,11 @@ test("recognizes portrait modeled media from its intrinsic dimensions", () => {
   assert.equal(isPortraitModeledMedia(0, 1600), false);
 });
 
-test("recommends the least expensive flexible video model", () => {
+test("recommends the supported economical replacement video model", () => {
   const model = videoModel(RECOMMENDED_VIDEO_MODEL);
-  assert.equal(model.id, "bytedance/seedance-1-5-pro");
+  assert.equal(model.id, "bytedance/seedance-2.0-mini");
   assert.deepEqual(model.durations, [4, 6, 8, 10]);
-  assert.deepEqual(model.resolutions, ["480p", "720p", "1080p"]);
+  assert.deepEqual(model.resolutions, ["480p", "720p"]);
   assert.deepEqual(model.aspectRatios, ["1:1", "3:4", "9:16", "4:3", "16:9"]);
   assert.deepEqual(model.frames, ["first_frame", "last_frame"]);
 });
@@ -65,6 +65,14 @@ test("preserves a lightweight hover derivative on normalized clips", () => {
   assert.equal(clip.hoverVideo, "/hover.mp4");
 });
 
+test("migrates retired selections without relabeling historical clips", () => {
+  assert.equal(normalizeModeledVideoSettings({ resolution: "1080p" }, "bytedance/seedance-1-5-pro").model, "bytedance/seedance-2.0-mini");
+  const old = normalizeModeledVideoClip({ id: "old-clip", model: "bytedance/seedance-1-5-pro", status: "completed", settings: { duration: 10, resolution: "1080p" } });
+  assert.equal(old.model, "bytedance/seedance-1-5-pro");
+  assert.equal(old.settings.resolution, "1080p");
+  assert.equal(old.settings.duration, 10);
+});
+
 test("steps completed hover clips backward without crossing the first frame", () => {
   assert.equal(reverseModeledVideoTime(2, 1 / 24), 2 - (1 / 24));
   assert.equal(reverseModeledVideoTime(0.02, 1 / 24), 0);
@@ -73,28 +81,28 @@ test("steps completed hover clips backward without crossing the first frame", ()
 
 test("estimates duration, resolution, and audio-sensitive video cost", () => {
   const silent = estimateVideoCost({
-    model: "bytedance/seedance-1-5-pro",
+    model: "bytedance/seedance-2.0-mini",
     duration: 10,
     resolution: "480p",
     audio: false,
   });
   const withAudio = estimateVideoCost({
-    model: "bytedance/seedance-1-5-pro",
+    model: "bytedance/seedance-2.0-mini",
     duration: 10,
     resolution: "480p",
     audio: true,
   });
-  assert.ok(Math.abs(silent - 0.11529) < 0.00001);
-  assert.ok(Math.abs(withAudio - 0.23058) < 0.00001);
+  assert.ok(Math.abs(silent - 0.33626) < 0.00001);
+  assert.ok(Math.abs(withAudio - 0.33626) < 0.00001);
   assert.equal(estimateVideoCost({ model: "google/veo-3.1-lite", duration: 4, resolution: "720p" }), 0.12);
   assert.equal(estimateVideoCost({ model: "google/veo-3.1-lite", duration: 10, resolution: "720p" }), null);
   assert.ok(estimateVideoCost({
-    model: "bytedance/seedance-1-5-pro",
+    model: "bytedance/seedance-2.0-mini",
     duration: 4,
     resolution: "480p",
     aspectRatio: "1:1",
   }) < estimateVideoCost({
-    model: "bytedance/seedance-1-5-pro",
+    model: "bytedance/seedance-2.0-mini",
     duration: 4,
     resolution: "480p",
     aspectRatio: "9:16",
@@ -121,7 +129,7 @@ test("normalizes video controls against the preferred model capabilities", () =>
 
 test("couples movement and sound directions in the generation prompt", () => {
   const prompt = modeledVideoPrompt({
-    model: "bytedance/seedance-1-5-pro",
+    model: "bytedance/seedance-2.0-mini",
     duration: 6,
     resolution: "720p",
     frameType: "first_frame",

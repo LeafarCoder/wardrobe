@@ -4,6 +4,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path";
 import {
   DeleteObjectCommand,
+  CopyObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
@@ -88,6 +89,21 @@ export class S3ObjectStorage {
     return this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: normalizeObjectKey(key) }));
   }
 
+  async copy(sourceKey, destinationKey, metadata = {}) {
+    const source = normalizeObjectKey(sourceKey);
+    const destination = normalizeObjectKey(destinationKey);
+    await this.client.send(new CopyObjectCommand({
+      Bucket: this.bucket, Key: destination,
+      CopySource: `${encodeURIComponent(this.bucket)}/${source.split("/").map(encodeURIComponent).join("/")}`,
+      ...(metadata.sha256 ? {
+        MetadataDirective: "REPLACE", Metadata: { sha256: metadata.sha256 },
+        ContentType: metadata.contentType || "application/octet-stream",
+        CacheControl: metadata.cacheControl || "private, no-store",
+      } : { MetadataDirective: "COPY" }),
+    }));
+    return { key: destination };
+  }
+
   async head(key) {
     const result = await this.client.send(new HeadObjectCommand({
       Bucket: this.bucket,
@@ -162,6 +178,10 @@ export class FilesystemObjectStorage {
   async get(key) {
     const file = this.resolve(key);
     return { Body: createReadStream(file), ...(await this.head(key)) };
+  }
+
+  async copy(sourceKey, destinationKey, metadata = {}) {
+    return this.put(destinationKey, await readFile(this.resolve(sourceKey)), metadata);
   }
 
   async head(key) {

@@ -109,7 +109,7 @@ The checked-in `.env.example` uses a low-cost OpenRouter mix:
 | Clean garment reconstruction | `black-forest-labs/flux.2-klein-4b` |
 | Modeled editorial image, one identity reference | `google/gemini-3.1-flash-lite-image` |
 | Modeled editorial image, two or three identity references | `google/gemini-3.1-flash-image` |
-| Modeled-look video | `bytedance/seedance-1-5-pro` |
+| Modeled-look video | `bytedance/seedance-2.0-mini` |
 
 Add your key and start the app:
 
@@ -135,7 +135,7 @@ custom domain to be the canonical identifier, and optionally change
 | Private | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-lite-image` | `google/gemini-3.1-flash-image` |
 | Highest fidelity | `google/gemini-3.1-flash-image` | `google/gemini-3.1-flash-image` | `google/gemini-3-pro-image` |
 
-The garment and modeled stages can use different image models because a clean single-product reconstruction is simpler than preserving both a person's identity and a garment in one scene. Wardrobe also selects the modeled-look model by profile: one identity reference uses `OPENROUTER_MODELED_MODEL`, while two or three references use `OPENROUTER_MODELED_MULTI_REFERENCE_MODEL`. Video uses `OPENROUTER_VIDEO_MODEL`; the default Seedance 1.5 Pro route is the lowest-cost listed model that supports all four UI durations, 480p–1080p, optional audio, and first- or last-frame control. The values below remain the server defaults; each person can override the six AI tasks from **Edit profile → AI & costs**.
+The garment and modeled stages can use different image models because a clean single-product reconstruction is simpler than preserving both a person's identity and a garment in one scene. Wardrobe also selects the modeled-look model by profile: one identity reference uses `OPENROUTER_MODELED_MODEL`, while two or three references use `OPENROUTER_MODELED_MULTI_REFERENCE_MODEL`. Video uses `OPENROUTER_VIDEO_MODEL`; the default Seedance 2.0 Mini route supports all four UI durations, 480p/720p, optional audio, and first- or last-frame control; choose another listed model for 1080p. The values below remain the server defaults; each person can override the six AI tasks from **Edit profile → AI & costs**.
 
 The profile selector lists only models compatible with each task: multimodal text-output models for photo analysis, text models for planning, and image-output models for garment reconstruction and modeled looks. Each task has a preferred model and an optional, distinct backup model. Each choice shows the current OpenRouter list price recorded when this release was built. OpenRouter may change prices later, and the exact returned request cost remains authoritative. The retired invalid ID `google/gemini-3.1-flash` is automatically migrated to `google/gemini-3.6-flash` in saved profiles and server environment values.
 
@@ -159,7 +159,7 @@ The planner asks OpenRouter for a JSON object and validates the returned structu
 | `OPENROUTER_GARMENT_MODEL` | `bytedance-seed/seedream-4.5` in `.env.example` |
 | `OPENROUTER_MODELED_MODEL` | `google/gemini-3.1-flash-lite-image` |
 | `OPENROUTER_MODELED_MULTI_REFERENCE_MODEL` | `google/gemini-3.1-flash-image` |
-| `OPENROUTER_VIDEO_MODEL` | `bytedance/seedance-1-5-pro` |
+| `OPENROUTER_VIDEO_MODEL` | `bytedance/seedance-2.0-mini` |
 | `OPENROUTER_IMAGE_FALLBACK_MODELS` | `bytedance-seed/seedream-4.5` |
 | `OPENROUTER_ALLOW_NON_ZDR_GARMENT` | `false` in `.env.example` |
 | `OPENROUTER_GARMENT_PROVIDER` | Automatic |
@@ -266,9 +266,12 @@ Add your own AI key to the new `.env`. Keep `data-before-restore` until you have
 
 ## Deploy privately on Railway
 
-Wardrobe supports two persistence configurations:
+Wardrobe supports three persistence configurations:
 
 - local development and tests: JSON plus filesystem storage under `data/`;
+- economical hosted deployment: JSON metadata on the existing volume plus a
+  private media bucket, with a hash-verified migration described in
+  [Private media bucket with JSON metadata](docs/railway-media-bucket.md);
 - production: PostgreSQL 18 plus a private S3-compatible media bucket.
 
 The production server exposes `/healthz` for process liveness and `/readyz` for

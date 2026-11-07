@@ -139,7 +139,7 @@ test("submits, polls, downloads, and persists a modeled-look video", async () =>
     assert.match(clipId, /^[a-f0-9-]{36}$/i);
     assert.equal(submitted.item.modeledLooks[0].videoClips[0].status, "pending");
     const submittedPayload = JSON.parse(calls[0].options.body);
-    assert.equal(submittedPayload.model, "bytedance/seedance-1-5-pro");
+    assert.equal(submittedPayload.model, "bytedance/seedance-2.0-mini");
     assert.equal(submittedPayload.duration, 6);
     assert.equal(submittedPayload.resolution, "720p");
     assert.equal(submittedPayload.aspect_ratio, "16:9");

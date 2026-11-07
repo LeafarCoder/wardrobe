@@ -105,6 +105,7 @@ export const DEFAULT_AI_PREFERENCES = Object.freeze({
 });
 
 export const LEGACY_AI_MODEL_IDS = Object.freeze({
+  "bytedance/seedance-1-5-pro": "bytedance/seedance-2.0-mini",
   "google/gemini-3.1-flash": "google/gemini-3.6-flash",
 });
 

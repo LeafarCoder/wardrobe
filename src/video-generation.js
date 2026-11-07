@@ -76,17 +76,17 @@ export const VIDEO_AUDIO_OPTIONS = Object.freeze([
 
 const VIDEO_MODELS = [
   {
-    id: "bytedance/seedance-1-5-pro",
-    label: "Seedance 1.5 Pro",
+    id: "bytedance/seedance-2.0-mini",
+    label: "Seedance 2.0 Mini",
     badge: "Recommended",
-    note: "Lowest-cost flexible choice. Supports every offered duration and resolution, plus first- or last-frame control.",
+    note: "Supports 4–10 second clips at 480p or 720p, with audio and first- or last-frame control.",
     pricing: "Estimated from video tokens · audio disabled",
     durations: VIDEO_DURATION_OPTIONS,
-    resolutions: ["480p", "720p", "1080p"],
+    resolutions: ["480p", "720p"],
     aspectRatios: SEEDANCE_ASPECT_RATIOS,
     frames: ["first_frame", "last_frame"],
-    videoTokenPrice: 0.0000012,
-    videoTokenPriceWithAudio: 0.0000024,
+    videoTokenPrice: 0.0000035,
+    videoTokenPriceWithAudio: 0.0000035,
     audio: true,
   },
   {
@@ -318,7 +318,15 @@ export function normalizeModeledVideoClip(value = {}) {
   const status = ["pending", "in_progress", "completed", "failed"].includes(value.status)
     ? value.status
     : "pending";
-  const settings = normalizeModeledVideoSettings(value.settings, value.model || value.settings?.model);
+  const savedModel = value.model || value.settings?.model;
+  const settings = normalizeModeledVideoSettings(value.settings, savedModel);
+  // Historical clips retain their provider provenance and 1080p settings.
+  // New requests resolve retired model preferences to the current default.
+  if (savedModel === "bytedance/seedance-1-5-pro") {
+    settings.model = savedModel;
+    if (VIDEO_DURATION_OPTIONS.includes(Number(value.settings?.duration))) settings.duration = Number(value.settings.duration);
+    if (["480p", "720p", "1080p"].includes(value.settings?.resolution)) settings.resolution = value.settings.resolution;
+  }
   return {
     id,
     status,

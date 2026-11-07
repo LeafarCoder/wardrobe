@@ -1870,6 +1870,7 @@ const pt = {
   Fast: "Rápido",
   "Better quality": "Melhor qualidade",
   "Best consistency": "Melhor consistência",
+  "Supports 4–10 second clips at 480p or 720p, with audio and first- or last-frame control.": "Suporta vídeos de 4–10 segundos a 480p ou 720p, com áudio e controlo do primeiro ou último fotograma.",
   "Lowest-cost flexible choice. Supports every offered duration and resolution, plus first- or last-frame control.": "Opção flexível de menor custo. Suporta todas as durações e resoluções disponíveis, além do controlo do primeiro ou último fotograma.",
   "Very economical at 720p and 1080p with strong image-to-video support. It does not support 10-second clips.": "Muito económico a 720p e 1080p, com bom suporte de imagem para vídeo. Não suporta vídeos de 10 segundos.",
   "Supports every duration at 480p or 720p, but the modeled look can only be used as the first frame.": "Suporta todas as durações a 480p ou 720p, mas o visual com modelo só pode ser usado como primeiro fotograma.",
