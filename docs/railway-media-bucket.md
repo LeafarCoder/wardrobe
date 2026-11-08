@@ -45,9 +45,8 @@ The migration intentionally preserves originals on the volume. It therefore
 adds a bucket copy initially, rather than immediately reducing volume charges.
 Filesystem rollback remains possible while those copies exist. After cutover,
 new media is uploaded to the bucket and also retained as a local working copy.
-Pruning verified local copies and bounding the hydrated working cache require a
-separate, explicit cleanup pass after a suitable rollback window. Do not delete
-the JSON catalog or detach the metadata volume.
+Remove verified local duplicates with the explicit cleanup procedure below.
+Do not delete the JSON catalog or detach the metadata volume.
 
 If rolling back after local copies have been pruned, reconstruct all required
 files from the catalog and bucket first. Do not simply switch drivers and assume
@@ -103,3 +102,39 @@ an unknown bucket object wholesale. Source files and the rollback map remain.
 After retiring old bucket duplicates, a rollback needs to copy the verified new
 objects back to the old keys before restoring the old catalog. Keep the
 reorganization journal even after cleanup.
+
+## Remove migrated media from the volume
+
+After the bucket and active application have been verified, preview cleanup:
+
+```sh
+npm run media:prune-local
+```
+
+The preview checks local hashes and bucket object metadata. It does not remove
+files. To apply, enable maintenance mode and restart/deploy the application,
+then run:
+
+```sh
+npm run media:prune-local -- --apply
+```
+
+Apply downloads every candidate bucket object and verifies its full SHA-256 and
+size before removing any local file. It refuses changed sources, changed
+catalogs, symlinks, non-media paths, and invalid entries. It only unlinks regular
+cataloged media under `imported/`, `profiles/`, and `jobs/`. It never invokes the
+application's deletion handler, deletes an S3 object, removes a catalog row, or
+deletes JSON, unknown files, directories, or the volume itself. The cleanup
+journal records what was verified and removed. Interrupted runs can be rerun;
+already absent local copies are skipped.
+
+Keep profiles, library records, job JSON, the AI ledger, `media-index.json`, and
+recovery journals on the volume. Once local media is removed, recovery requires
+the bucket and catalog together; switching back to filesystem mode first
+requires restoring media from the bucket.
+
+Bucket-backed reads and exports do not rebuild persistent local media. Tools
+that require paths use temporary working files, removed when their operation
+finishes. Newly uploaded media can be removed locally only after both its S3
+upload and the corresponding metadata commit succeed. Failed saves retain
+their local working copies for recovery.

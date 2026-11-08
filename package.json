@@ -27,6 +27,7 @@
     "media:reorganize": "node --env-file-if-exists=.env scripts/media-reorganization.mjs reorganize",
     "media:activate-layout": "node --env-file-if-exists=.env scripts/media-reorganization.mjs activate",
     "media:cleanup-legacy": "node --env-file-if-exists=.env scripts/media-reorganization.mjs cleanup",
+    "media:prune-local": "node --env-file-if-exists=.env scripts/media-volume-prune.mjs",
     "migrate:railway": "node --env-file-if-exists=.env scripts/railway-migration.mjs migrate",
     "migrate:verify": "node --env-file-if-exists=.env scripts/railway-migration.mjs verify",
     "migrate:export-files": "node --env-file-if-exists=.env scripts/railway-migration.mjs export-files",

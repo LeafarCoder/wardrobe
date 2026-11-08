@@ -4415,42 +4415,69 @@ export function wardrobeImportApi(options = {}) {
     return null;
   };
 
-  const hydrateMediaFile = async (file) => {
+  const storedMediaEntry = async (file) => {
     const media = mediaPath(file);
-    if (!media || objectStorageDriver() !== "s3") return false;
-    if (mediaIndex) {
-      const entry = await mediaIndex.byPath(path.relative(dataDir, media.absolute).split(path.sep).join("/"));
-      if (!entry) return false;
-      const stored = await objectStorage.get(entry.object_key);
-      const bytes = await objectBodyBytes(stored.Body);
-      if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) throw new Error("Stored media checksum mismatch");
-      await mkdir(path.dirname(media.absolute), { recursive: true });
-      await atomicFile(media.absolute, bytes);
-      return true;
-    }
-    if (!databasePool) return false;
+    if (!media || objectStorageDriver() !== "s3") return null;
+    if (mediaIndex) return mediaIndex.byPath(path.relative(dataDir, media.absolute).split(path.sep).join("/"));
+    if (!databasePool) return null;
     const result = await databasePool.query(
-      `SELECT object_key FROM assets
+      `SELECT object_key, byte_size, sha256, created_at FROM assets
        WHERE original_name = $1 AND deleted_at IS NULL
        ORDER BY created_at DESC LIMIT 1`,
       [media.fileName],
     );
-    if (!result.rows[0]) return false;
-    const object = await objectStorage.get(result.rows[0].object_key);
-    const bytes = Buffer.from(await object.Body.transformToByteArray());
-    await mkdir(path.dirname(media.absolute), { recursive: true });
-    await fsWriteFile(media.absolute, bytes);
-    return true;
+    return result.rows[0] || null;
+  };
+
+  const readStoredMedia = async (file) => {
+    const entry = await storedMediaEntry(file);
+    if (!entry) return null;
+    const stored = await objectStorage.get(entry.object_key);
+    const bytes = await objectBodyBytes(stored.Body);
+    if (Number(entry.byte_size) !== bytes.length || createHash("sha256").update(bytes).digest("hex") !== entry.sha256) {
+      throw new Error("Stored media checksum mismatch");
+    }
+    return { entry, bytes };
+  };
+
+  // Every managed path-only consumer gets an operation-private copy, including
+  // newly generated local files that post-commit cleanup may concurrently unlink.
+  const withMediaFile = async (file, task) => {
+    if (!mediaPath(file) || objectStorageDriver() !== "s3") return task(file);
+    const directory = await mkdtemp(path.join(tmpdir(), "wardrobe-media-work-"));
+    try {
+      const temporary = path.join(directory, path.basename(file));
+      await atomicFile(temporary, await readFile(file));
+      return await task(temporary);
+    } finally { await fsRm(directory, { recursive: true, force: true }); }
   };
 
   async function readFile(file, ...args) {
-    try {
-      return await fsReadFile(file, ...args);
-    } catch (error) {
-      if (error.code !== "ENOENT" || !(await hydrateMediaFile(file))) throw error;
-      return fsReadFile(file, ...args);
+    try { return await fsReadFile(file, ...args); }
+    catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const stored = await readStoredMedia(file);
+      if (!stored) throw error;
+      const encoding = typeof args[0] === "string" ? args[0] : args[0]?.encoding;
+      return encoding ? stored.bytes.toString(encoding) : stored.bytes;
     }
   }
+
+  const storedMediaStat = async (file) => {
+    const entry = await storedMediaEntry(file);
+    if (!entry) return null;
+    let head;
+    try { head = await objectStorage.head(entry.object_key); }
+    catch (error) {
+      if (error.$metadata?.httpStatusCode === 404 || ["NotFound", "NoSuchKey"].includes(error.name)) {
+        throw Object.assign(new Error("Media file not found"), { code: "ENOENT" });
+      }
+      throw error;
+    }
+    if (head.byteSize !== Number(entry.byte_size) || (head.sha256 && head.sha256 !== entry.sha256)) throw new Error("Stored media checksum mismatch");
+    const mtimeMs = Number.isFinite(entry.local_mtime_ms) ? entry.local_mtime_ms : Date.parse(entry.created_at) || new Date(head.updatedAt || Date.now()).getTime();
+    return { size: head.byteSize, mtimeMs, mtime: new Date(mtimeMs), birthtime: new Date(mtimeMs), isFile: () => true, isDirectory: () => false };
+  };
 
   const runRembgMask = (source, destination) => new Promise((resolve, reject) => {
     const python = String(setting("REMBG_PYTHON", "python3")).trim() || "python3";
@@ -4491,20 +4518,22 @@ export function wardrobeImportApi(options = {}) {
   });
 
   async function stat(file, ...args) {
-    try {
-      return await fsStat(file, ...args);
-    } catch (error) {
-      if (error.code !== "ENOENT" || !(await hydrateMediaFile(file))) throw error;
-      return fsStat(file, ...args);
+    try { return await fsStat(file, ...args); }
+    catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const stored = await storedMediaStat(file);
+      if (!stored) throw error;
+      return stored;
     }
   }
 
   async function lstat(file, ...args) {
-    try {
-      return await fsLstat(file, ...args);
-    } catch (error) {
-      if (error.code !== "ENOENT" || !(await hydrateMediaFile(file))) throw error;
-      return fsLstat(file, ...args);
+    try { return await fsLstat(file, ...args); }
+    catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const stored = await storedMediaStat(file);
+      if (!stored) throw error;
+      return stored;
     }
   }
 
@@ -4513,12 +4542,7 @@ export function wardrobeImportApi(options = {}) {
   }
 
   async function copyFile(source, destination, ...args) {
-    try {
-      return await fsCopyFile(source, destination, ...args);
-    } catch (error) {
-      if (error.code !== "ENOENT" || !(await hydrateMediaFile(source))) throw error;
-      return fsCopyFile(source, destination, ...args);
-    }
+    return withMediaFile(source, (local) => fsCopyFile(local, destination, ...args));
   }
 
   async function rm(file, options = {}) {
@@ -4566,6 +4590,7 @@ export function wardrobeImportApi(options = {}) {
     lookId = null,
     links = null,
     createdAt = null,
+    onUploaded = () => {},
   }) => {
     if (objectStorageDriver() !== "s3") return null;
     if (mediaIndex) {
@@ -4578,20 +4603,26 @@ export function wardrobeImportApi(options = {}) {
         && prior.entity_type === entityType && prior.entity_id === entityId && prior.role === role && prior.look_id === lookId
         && JSON.stringify(prior.links) === JSON.stringify(links);
       let details;
+      let bytes;
+      let localFilePresent = true;
       try { details = await fsStat(file); }
       catch (error) {
         if (error.code !== "ENOENT") throw error;
         if (!prior || contextMatches) return prior?.id || null;
-        if (!(await hydrateMediaFile(file))) return prior.id;
-        details = await fsStat(file);
+        const stored = await readStoredMedia(file);
+        if (!stored) return prior.id;
+        bytes = stored.bytes;
+        localFilePresent = false;
+        details = { size: bytes.length, mtimeMs: prior.local_mtime_ms, birthtime: new Date(prior.created_at || Date.now()) };
       }
       if (contextMatches && prior.byte_size === details.size && prior.local_mtime_ms === details.mtimeMs) return prior.id;
-      const bytes = await fsReadFile(file);
+      bytes ||= await fsReadFile(file);
       const digest = createHash("sha256").update(bytes).digest("hex");
       const assetId = prior?.id || randomUUID();
       const layout = mediaObjectKey({ ownerUserId, entityType, entityId, role, assetId, sha256: digest, fileName: path.basename(file), lookId });
       const objectKey = layout.key;
-      if (prior?.sha256 !== digest || prior?.object_key !== objectKey || prior?.cache_policy !== cachePolicy) {
+      const uploaded = prior?.sha256 !== digest || prior?.object_key !== objectKey || prior?.cache_policy !== cachePolicy;
+      if (uploaded) {
         await objectStorage.put(objectKey, bytes, {
           contentType: imageMime(file), sha256: digest,
           cacheControl: cachePolicy === "private-immutable" ? "private, max-age=31536000, immutable" : "private, no-store",
@@ -4606,6 +4637,7 @@ export function wardrobeImportApi(options = {}) {
         original_name: path.basename(file), content_type: imageMime(file), media_kind: mediaKind,
         byte_size: bytes.length, sha256: digest, cache_policy: cachePolicy, local_mtime_ms: details.mtimeMs,
       });
+      if (uploaded && localFilePresent) onUploaded({ file, sourcePath, objectKey, sha256: digest, byteSize: bytes.length });
       return entry.id;
     }
     if (!databasePool) return null;
@@ -4655,26 +4687,29 @@ export function wardrobeImportApi(options = {}) {
 
   const syncProfileAssets = async (store) => {
     if (objectStorageDriver() !== "s3") return;
+    const uploaded = [];
     const profiles = store.users || [];
     const canonical = canonicalStorageContexts(await readLibraryRecords(), profiles);
     for (const profile of profiles) {
       profile.assetIds = { ...(profile.assetIds || {}) };
       for (const ownContext of profileMediaContexts(profile).values()) {
         const context = canonical.get(ownContext.sourcePath);
-        const assetId = await registerLocalAsset({ file: path.join(dataDir, context.sourcePath), ...context });
+        const assetId = await registerLocalAsset({ file: path.join(dataDir, context.sourcePath), ...context, onUploaded: (entry) => uploaded.push(entry) });
         if (assetId) profile.assetIds[context.fileName] = assetId;
       }
     }
+    return uploaded;
   };
 
   const syncGarmentAssets = async (records) => {
     if (objectStorageDriver() !== "s3") return;
+    const uploaded = [];
     const users = await loadUsersStore();
     const canonical = canonicalStorageContexts(records, users?.users || []);
     const assetIds = new Map();
     for (const ownContext of libraryStorageContexts(records).values()) {
       const context = canonical.get(ownContext.sourcePath);
-      const assetId = await registerLocalAsset({ file: path.join(dataDir, context.sourcePath), ...context });
+      const assetId = await registerLocalAsset({ file: path.join(dataDir, context.sourcePath), ...context, onUploaded: (entry) => uploaded.push(entry) });
       if (assetId) assetIds.set(context.fileName, assetId);
     }
     for (const record of records) {
@@ -4684,16 +4719,37 @@ export function wardrobeImportApi(options = {}) {
         if (assetIds.has(fileName)) record.assetIds[fileName] = assetIds.get(fileName);
       }
     }
+    return uploaded;
   };
 
   const jobAssetNames = jobMediaAssetNames;
 
   const syncJobAssets = async (job) => {
     if (objectStorageDriver() !== "s3") return;
+    const uploaded = [];
     job.assetIds = { ...(job.assetIds || {}) };
     for (const context of jobMediaContexts(job).values()) {
-      const assetId = await registerLocalAsset({ file: path.join(dataDir, context.sourcePath), ...context });
+      const assetId = await registerLocalAsset({ file: path.join(dataDir, context.sourcePath), ...context, onUploaded: (entry) => uploaded.push(entry) });
       if (assetId) job.assetIds[context.fileName] = assetId;
+    }
+    return uploaded;
+  };
+
+  const releasePersistedMedia = async (uploaded = []) => {
+    if (!mediaIndex || objectStorageDriver() !== "s3") return;
+    for (const candidate of uploaded) {
+      try {
+        const entry = await mediaIndex.byPath(candidate.sourcePath);
+        if (!entry || entry.object_key !== candidate.objectKey || entry.sha256 !== candidate.sha256 || entry.byte_size !== candidate.byteSize) continue;
+        const before = await fsLstat(candidate.file);
+        if (!before.isFile() || before.isSymbolicLink() || before.size !== candidate.byteSize) continue;
+        const bytes = await fsReadFile(candidate.file);
+        const after = await fsLstat(candidate.file);
+        if (before.ino !== after.ino || before.mtimeMs !== after.mtimeMs || after.size !== bytes.length || createHash("sha256").update(bytes).digest("hex") !== candidate.sha256) continue;
+        await fsRm(candidate.file, { force: true });
+      } catch (error) {
+        if (error.code !== "ENOENT") console.warn(`[wardrobe] Could not release persisted media working file: ${cleanLogValue(error.message)}`);
+      }
     }
   };
 
@@ -5320,7 +5376,7 @@ export function wardrobeImportApi(options = {}) {
       await repository.saveUsersStore(normalizedStore);
       return;
     }
-    if (mediaIndex) await syncProfileAssets(store);
+    const uploaded = mediaIndex ? await syncProfileAssets(store) : [];
     await atomicJson(usersFile, {
       version: 2,
       currentUserId: store.currentUserId,
@@ -5328,6 +5384,7 @@ export function wardrobeImportApi(options = {}) {
       connectionInvites: normalizeConnectionInvites(store.connectionInvites),
       connections: normalizeAccountConnections(store.connections),
     });
+    await releasePersistedMedia(uploaded);
   }
 
   const connectionAvatarUrl = (userId) => `${USERS_ROOT}/connections/avatar/${encodeURIComponent(userId)}`;
@@ -5700,7 +5757,7 @@ export function wardrobeImportApi(options = {}) {
             throw error;
           });
           if (!avatarDetails || avatarDetails.mtimeMs < sourceDetails.mtimeMs) {
-            await writeImageVariant(sourceFile, avatarFile, "avatar");
+            await withMediaFile(sourceFile, (local) => writeImageVariant(local, avatarFile, "avatar"));
             generated += 1;
           }
           if (reference.avatarFileName !== avatarFileName) {
@@ -5891,9 +5948,10 @@ export function wardrobeImportApi(options = {}) {
       await syncJobAssets(job);
       return repository.saveJob(job);
     }
-    if (mediaIndex) await syncJobAssets(job);
+    const uploaded = mediaIndex ? await syncJobAssets(job) : [];
     job.updatedAt = new Date().toISOString();
     await atomicJson(path.join(jobsDir, job.id, "job.json"), job);
+    await releasePersistedMedia(uploaded);
   }
 
   async function listJobs() {
@@ -5954,7 +6012,7 @@ export function wardrobeImportApi(options = {}) {
       libraryCache = null;
       return;
     }
-    if (mediaIndex) await syncGarmentAssets(records);
+    const uploaded = mediaIndex ? await syncGarmentAssets(records) : [];
     await atomicJson(importedFile, records);
     try {
       const details = await stat(importedFile);
@@ -5962,6 +6020,7 @@ export function wardrobeImportApi(options = {}) {
     } catch {
       libraryCache = null;
     }
+    await releasePersistedMedia(uploaded);
   }
 
   async function libraryAssetIndex() {
@@ -6057,11 +6116,7 @@ export function wardrobeImportApi(options = {}) {
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
-    const bytes = await writeImageVariant(
-      sourceFile,
-      targetFile,
-      variant,
-    );
+    const bytes = await withMediaFile(sourceFile, (local) => writeImageVariant(local, targetFile, variant));
     console.info(`[wardrobe] Created ${variant} image ${targetName} (${Math.max(1, Math.round(bytes / 1024))} KB).`);
     return libraryAssetUrl(targetName, sourceVersion);
   }
@@ -6136,8 +6191,7 @@ export function wardrobeImportApi(options = {}) {
           const hoverName = `${path.parse(sourceName).name}-hover.mp4`;
           const hoverFile = path.join(libraryAssetDir, hoverName);
           try {
-            await stat(sourceFile);
-            await createHoverVideo(sourceFile, hoverFile);
+            await withMediaFile(sourceFile, (local) => createHoverVideo(local, hoverFile));
             look.videoClips[clipIndex] = normalizeModeledVideoClip({
               ...clip,
               hoverVideo: libraryAssetUrl(hoverName),
@@ -6763,11 +6817,10 @@ Interpret this correction semantically in whatever language it is written. It ov
     if (!target?.image) throw apiError("That garment version is no longer available.", 404, "garment_version_not_found");
     const sourceName = path.basename(new URL(target.image, "http://localhost").pathname);
     const sourceFile = path.join(libraryAssetDir, sourceName);
-    await readFile(sourceFile);
     const temporary = await mkdtemp(path.join(tmpdir(), "wardrobe-rembg-"));
     const maskFile = path.join(temporary, "mask.png");
     try {
-      const model = await runRembgMask(sourceFile, maskFile);
+      const model = await withMediaFile(sourceFile, (local) => runRembgMask(local, maskFile));
       const mask = await sharp(maskFile).removeAlpha().grayscale().png().toBuffer();
       return {
         sourceImage: target.image,
@@ -7207,10 +7260,7 @@ Interpret this correction semantically in whatever language it is written. It ov
         videoUrl = libraryAssetUrl(videoName);
         hoverVideoName = `${itemId}-modeled-${lookId}-video-${clipId}-hover.mp4`;
         try {
-          const created = await createHoverVideo(
-            path.join(libraryAssetDir, videoName),
-            path.join(libraryAssetDir, hoverVideoName),
-          );
+          const created = await withMediaFile(path.join(libraryAssetDir, videoName), (local) => createHoverVideo(local, path.join(libraryAssetDir, hoverVideoName)));
           if (created) hoverVideoUrl = libraryAssetUrl(hoverVideoName);
         } catch (error) {
           await rm(path.join(libraryAssetDir, hoverVideoName), { force: true }).catch(() => {});
@@ -8189,6 +8239,13 @@ Interpret this correction semantically in whatever language it is written. It ov
       yield { archivePath, buffer, size: buffer.length, modifiedAt: Date.now() };
     };
     const yieldFile = async function* (archivePath, absolute) {
+      if (mediaPath(absolute) && objectStorageDriver() === "s3") {
+        const stored = await readStoredMedia(absolute);
+        if (stored) {
+          yield { archivePath, buffer: stored.bytes, size: stored.bytes.length, modifiedAt: stored.entry.local_mtime_ms || Date.parse(stored.entry.created_at) || Date.now() };
+          return;
+        }
+      }
       let details;
       try {
         details = await lstat(absolute);
@@ -10292,10 +10349,9 @@ Interpret this correction semantically in whatever language it is written. It ov
         const sourceName = path.basename(new URL(sourceUrl, "http://localhost").pathname);
         const sourceFile = path.join(jobsDir, job.id, sourceName);
         if (maskAction[1] === "start") {
-          await readFile(sourceFile);
           const maskName = `garment-${stage.attempts}-mask-${randomUUID()}.png`;
           const maskFile = path.join(jobsDir, job.id, maskName);
-          const model = await runRembgMask(sourceFile, maskFile);
+          const model = await withMediaFile(sourceFile, (local) => runRembgMask(local, maskFile));
           const normalizedMask = await sharp(maskFile).removeAlpha().grayscale().png().toBuffer();
           await atomicFile(maskFile, normalizedMask);
           stage.maskSourceUrl = sourceUrl;
